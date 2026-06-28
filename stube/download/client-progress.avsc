@@ -1,0 +1,17 @@
+{
+  "type": "record",
+  "namespace": "stube.download",
+  "name": "ClientProgress",
+  "doc": "Periodic progress heartbeat emitted by download-gateway adapters while a download runs. High-volume firehose (topic stube.download.client.progress: 6 partitions, 1-day retention, keyed by the composite (adapter, client_id) so per-job ordering holds). Consumers: katalog-manager (DownloadJobs projection, last-write-wins by event-time; a terminal completed/failed is never overwritten by a late progress), acquire. The UI reads the projection snapshot, never this stream.",
+  "fields": [
+    {"name": "client_id", "type": "string", "doc": "Adapter-specific download identifier. NOT globally unique on its own — the partition key and the projection PK are the composite (adapter, client_id)."},
+    {"name": "adapter", "type": {"type": "enum", "name": "Adapter", "symbols": ["qbittorrent", "nzbget", "jdownloader", "odownloader"]}},
+    {"name": "state", "type": {"type": "enum", "name": "DownloadState", "symbols": ["queued", "downloading", "paused", "stalled"]}, "doc": "Intermediate (non-terminal) state. Terminal states ride on client-completed / client-failed, not here."},
+    {"name": "progress_pct", "type": "double", "doc": "0.0 - 100.0."},
+    {"name": "downloaded_bytes", "type": "long"},
+    {"name": "size_bytes", "type": ["null", "long"], "default": null, "doc": "Total size if known; null while still resolving."},
+    {"name": "speed_bps", "type": ["null", "long"], "default": null, "doc": "Current download rate in bytes/sec; null when paused/stalled."},
+    {"name": "eta_sec", "type": ["null", "int"], "default": null, "doc": "Estimated seconds remaining; null when indeterminate."},
+    {"name": "emitted_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

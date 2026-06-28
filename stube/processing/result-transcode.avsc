@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "namespace": "stube.processing",
+  "name": "ResultTranscode",
+  "doc": "Outcome of a TaskTranscode. Consumer is the packager service.",
+  "fields": [
+    {"name": "task_id", "type": "string"},
+    {"name": "item_id", "type": "string"},
+    {"name": "status", "type": {"type": "enum", "name": "TranscodeStatus", "symbols": ["ok", "partial", "failed", "skipped"]}},
+    {"name": "output_uris", "type": {"type": "array", "items": "string"}, "doc": "One URI per rendition. Empty on failure."},
+    {"name": "duration_ms", "type": "long"},
+    {"name": "worker_id", "type": "string"},
+    {"name": "error", "type": ["null", "string"], "default": null},
+    {"name": "finished_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

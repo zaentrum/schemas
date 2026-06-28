@@ -1,0 +1,31 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate every schema parses as Avro
+        run: |
+          python -m pip install --quiet fastavro
+          python - <<'PY'
+          import glob, sys
+          from fastavro.schema import load_schema
+          failed = False
+          for path in sorted(glob.glob("stube/**/*.avsc", recursive=True)):
+              try:
+                  load_schema(path)
+                  print(f"ok   {path}")
+              except Exception as exc:
+                  print(f"FAIL {path}: {exc}")
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY

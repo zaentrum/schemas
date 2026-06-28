@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "namespace": "stube.playback",
+  "name": "SessionStarted",
+  "doc": "Emitted by chino-stream / tv-stream / musig-stream when a client opens a new playback session.",
+  "fields": [
+    {"name": "session_id", "type": "string"},
+    {"name": "user_id", "type": "string"},
+    {"name": "item_id", "type": "string"},
+    {"name": "product", "type": {"type": "enum", "name": "Product", "symbols": ["chino", "tv", "musig"]}},
+    {"name": "client", "type": "string", "doc": "User-agent or client identifier — e.g. chino-web/1.4.0, chino-androidtv/0.2.1."},
+    {"name": "rendition", "type": ["null", "string"], "default": null},
+    {"name": "resume_position_ms", "type": ["null", "long"], "default": null},
+    {"name": "started_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

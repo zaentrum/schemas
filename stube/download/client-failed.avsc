@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "namespace": "stube.download",
+  "name": "ClientFailed",
+  "doc": "Emitted by download-gateway adapters when a download fails terminally (after the adapter's own retry budget is exhausted). Consumers: acquire (re-pick a different release / mark WantedItem stalled), notifications (user 'download failed'), katalog-manager (DownloadJobs projection -> failed state). Keyed by the composite (adapter, client_id).",
+  "fields": [
+    {"name": "client_id", "type": "string", "doc": "Adapter-specific download identifier. NOT globally unique on its own — the partition key and the projection PK are the composite (adapter, client_id)."},
+    {"name": "adapter", "type": {"type": "enum", "name": "Adapter", "symbols": ["qbittorrent", "nzbget", "jdownloader", "odownloader"]}},
+    {"name": "wanted_item_id", "type": ["null", "string"], "default": null, "doc": "If acquire requested this download, the WantedItem UUID; null for manual/operator-added jobs."},
+    {"name": "error", "type": "string", "doc": "Human-readable failure reason for the UI / notifications."},
+    {"name": "error_code", "type": ["null", "string"], "default": null, "doc": "Adapter-specific error code/category when available (e.g. jdownloader FinalLinkState)."},
+    {"name": "retriable", "type": "boolean", "default": false, "doc": "True if a retry (same release) could plausibly succeed; false if acquire should pick a different release."},
+    {"name": "failed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

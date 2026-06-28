@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "namespace": "stube.library",
+  "name": "ItemDeleted",
+  "doc": "Emitted when a library item is removed (soft- or hard-delete) so downstream consumers can purge caches and artwork.",
+  "fields": [
+    {"name": "item_id", "type": "string"},
+    {"name": "type", "type": "string"},
+    {"name": "reason", "type": "string", "doc": "user_request | duplicate | source_removed | retention_policy"},
+    {"name": "hard_delete", "type": "boolean", "default": false},
+    {"name": "deleted_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

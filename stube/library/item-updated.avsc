@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "namespace": "stube.library",
+  "name": "ItemUpdated",
+  "doc": "Emitted when any tracked field on a library item changes (title, year, artwork, enriched metadata).",
+  "fields": [
+    {"name": "item_id", "type": "string"},
+    {"name": "changed_fields", "type": {"type": "array", "items": "string"}, "doc": "Names of fields that changed in this update."},
+    {"name": "changed_by", "type": "string", "doc": "Service that issued the update — e.g. metadata-enricher, manual, katalog-ingest."},
+    {"name": "etag", "type": "string", "doc": "New ETag for optimistic concurrency control."},
+    {"name": "updated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

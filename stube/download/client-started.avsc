@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "namespace": "stube.download",
+  "name": "ClientStarted",
+  "doc": "Emitted by download-gateway adapters (qbittorrent, nzbget, jdownloader, odownloader) when a client begins a download (leaves the linkgrabber/queued stage). Consumers: acquire (fulfilment tracking), notifications (user 'download started'), katalog-manager (DownloadJobs projection). Keyed by the composite (adapter, client_id).",
+  "fields": [
+    {"name": "client_id", "type": "string", "doc": "Adapter-specific download identifier. NOT globally unique on its own — the partition key and the projection PK are the composite (adapter, client_id)."},
+    {"name": "adapter", "type": {"type": "enum", "name": "Adapter", "symbols": ["qbittorrent", "nzbget", "jdownloader", "odownloader"]}},
+    {"name": "wanted_item_id", "type": ["null", "string"], "default": null, "doc": "If acquire requested this download, the WantedItem UUID; null for manual/operator-added jobs."},
+    {"name": "title", "type": "string", "doc": "Human-readable label for the UI (release name / package name)."},
+    {"name": "size_bytes", "type": ["null", "long"], "default": null, "doc": "Total size if known at start; null while the linkgrabber is still resolving."},
+    {"name": "started_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

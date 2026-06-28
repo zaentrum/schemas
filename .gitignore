@@ -1,0 +1,12 @@
+# Avro-only repo — nothing to ignore in source control,
+# but keep editor / OS noise out.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Generated code from any local avro-tools runs
+/build/
+/dist/
+/generated/

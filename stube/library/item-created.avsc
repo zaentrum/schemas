@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "namespace": "stube.library",
+  "name": "ItemCreated",
+  "doc": "Emitted by katalog-manager-api when a new library item (movie/episode/album/track/book) is registered.",
+  "fields": [
+    {"name": "item_id", "type": "string", "doc": "Stable UUID assigned by the catalog."},
+    {"name": "type", "type": {"type": "enum", "name": "ItemType", "symbols": ["movie", "series", "season", "episode", "album", "track", "book"]}},
+    {"name": "title", "type": "string"},
+    {"name": "year", "type": ["null", "int"], "default": null},
+    {"name": "parent_id", "type": ["null", "string"], "default": null, "doc": "For episode -> season, season -> series, track -> album."},
+    {"name": "source", "type": "string", "doc": "Origin of the item — e.g. acquire, manual, import."},
+    {"name": "created_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

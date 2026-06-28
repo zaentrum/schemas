@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "namespace": "stube.notify",
+  "name": "UserPush",
+  "doc": "Fan-out request consumed by the notifications service. One event -> potentially many APNs/FCM/webpush deliveries.",
+  "fields": [
+    {"name": "notification_id", "type": "string"},
+    {"name": "user_id", "type": "string"},
+    {"name": "kind", "type": {"type": "enum", "name": "PushKind", "symbols": ["new_episode", "download_complete", "recommendation", "system"]}},
+    {"name": "title", "type": "string"},
+    {"name": "body", "type": "string"},
+    {"name": "deep_link", "type": ["null", "string"], "default": null, "doc": "Optional URL to open inside the client."},
+    {"name": "created_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

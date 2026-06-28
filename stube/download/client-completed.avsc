@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "namespace": "stube.download",
+  "name": "ClientCompleted",
+  "doc": "Emitted by download-gateway adapters (qbittorrent, nzbget, jdownloader, odownloader) when a client finishes a download. Consumer is acquire for post-processing routing.",
+  "fields": [
+    {"name": "client_id", "type": "string", "doc": "Adapter-specific download identifier."},
+    {"name": "adapter", "type": {"type": "enum", "name": "Adapter", "symbols": ["qbittorrent", "nzbget", "jdownloader", "odownloader"]}},
+    {"name": "wanted_item_id", "type": ["null", "string"], "default": null, "doc": "If this download was requested by acquire, the wantedItem UUID."},
+    {"name": "files", "type": {"type": "array", "items": "string"}, "doc": "Absolute paths of the completed files on shared storage."},
+    {"name": "size_bytes", "type": "long"},
+    {"name": "completed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "namespace": "stube.processing",
+  "name": "TaskTranscode",
+  "doc": "Work request sent to a transcoder worker. Consumer is the GPU transcoder service.",
+  "fields": [
+    {"name": "task_id", "type": "string"},
+    {"name": "item_id", "type": "string"},
+    {"name": "source_uri", "type": "string", "doc": "MinIO / NFS URI of the input media."},
+    {"name": "target_codec", "type": "string", "doc": "Typically hev1.1.6.L120.B0 — see katalog transcoder pipeline notes."},
+    {"name": "target_bitrate_kbps", "type": "int"},
+    {"name": "renditions", "type": {"type": "array", "items": "string"}, "doc": "List of rendition labels — e.g. 1080p, 720p, 480p."},
+    {"name": "priority", "type": "int", "default": 5, "doc": "1=urgent, 10=background."},
+    {"name": "created_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}
