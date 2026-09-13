@@ -120,6 +120,9 @@ records a `review` for a person. `tools/make-library-examples.py` regenerates
 v1 is a draft until a platform service adopts it. Every change is listed here;
 rebuild a library with the current migrator after one.
 
+- **2026-09-14** — no schema change; the migrator reports package audio titles
+  that claim more than the rendition carries, and interchangeable or
+  indistinguishable audio renditions, for building track menus.
 - **2026-09-13 (e)** — renditions require `purpose` and `purposeFrom`;
   `purposeFrom` gains `content` (a forced track recognised by its small number of
   events); subtitle streams record `events`; audio streams and renditions gain

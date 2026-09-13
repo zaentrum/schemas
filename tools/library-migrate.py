@@ -1099,6 +1099,31 @@ def main():
                 src_codec = src_audio[sidx]["codec"] if sidx is not None else None
                 if src_codec and src_codec != "aac" and (a.get("codec") or "").startswith("mp4a"):
                     losses.append({"kind": "audio-codec", "detail": f"{src_codec} -> {a['codec']}", "sourceStreamIndex": sidx})
+            # Menus built from legacy titles mislead: a title can name a format the package no longer carries,
+            # and several renditions can be indistinguishable once downmixed.
+            for a in audio:
+                c = claim(a.get("title"))
+                carried = "aac" if (a.get("codec") or "").startswith("mp4a") else (a.get("codec") or "")
+                if c and claim_contradicts(c, carried, a.get("channels") or 0):
+                    report["rendition-title-overclaims"].append(
+                        f"{item['title']}: {a['id']} titled '{a['title']}' carries {a.get('channels')}ch {a.get('codec')}")
+            groups = collections.defaultdict(list)
+            for a in audio:
+                if a.get("visible", True):
+                    # commentaries differ by what is said, so their titles keep them apart
+                    title_key = a.get("title") if a.get("purpose") == "commentary" else None
+                    groups[(primary_language(a.get("language")), a.get("variant"), a.get("purpose"), a.get("channels"), a.get("codec"), title_key)].append(a)
+            for key, members in groups.items():
+                if len(members) < 2:
+                    continue
+                if key[2] != "commentary" and all(claim(m.get("title")) for m in members):
+                    report["interchangeable-audio-renditions"].append(
+                        f"{item['title']}: {', '.join(m['id'] for m in members)} ({key[0]} {key[2]}) are all {key[3]}ch {key[4]} and titled "
+                        f"only by their former format; a menu offers them once")
+                else:
+                    report["indistinguishable-audio-renditions"].append(
+                        f"{item['title']}: {', '.join(m['id'] for m in members)} ({key[0]} {key[2]}, {key[3]}ch) cannot be told apart and may differ "
+                        f"in content (an untitled commentary); set their purpose or title by hand")
             if len(ren.get("audio") or []) < len(astreams):
                 more = src_audio_order[len(ren.get("audio") or []):]
                 dropped += more
