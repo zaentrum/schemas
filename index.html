@@ -24,15 +24,13 @@
   <p>Published contracts for the zaentrum media platform. Every schema URL below is its own <code>$id</code>, is served as JSON, and is stable for its major version.</p>
 
   <h2>Library storage — v1</h2>
-  <p>JSON Schema (draft 2020-12) for the on-storage library, where storage is the source of truth and databases are caches rebuilt from it.</p>
+  <p>JSON Schema (draft 2020-12) for the on-storage library, where storage is the source of truth and databases are caches rebuilt from it. Every item is a folder holding <code>manifest.json</code> and <code>metadata/metadata.json</code>.</p>
   <table>
-    <tr><td><a href="library/v1/work.schema.json">work.schema.json</a></td><td>What a thing is: a movie, series, episode or track. The entry point.</td></tr>
-    <tr><td><a href="library/v1/version.schema.json">version.schema.json</a></td><td>One cut or presentation of a work, and which artefact is its truth.</td></tr>
-    <tr><td><a href="library/v1/source.schema.json">source.schema.json</a></td><td>An original master file, present or deleted, with its full inventory.</td></tr>
-    <tr><td><a href="library/v1/package.schema.json">package.schema.json</a></td><td>A playable rendition and everything it lost relative to its source.</td></tr>
+    <tr><td><a href="library/v1/manifest.schema.json">manifest.schema.json</a></td><td>The entry point of a movie, series or episode: identity, reference ids, playback fields, and every version with what its original contained and what its package lost.</td></tr>
+    <tr><td><a href="library/v1/metadata.schema.json">metadata.schema.json</a></td><td>Every text and image of an item. The images sit next to it in <code>metadata/</code>.</td></tr>
     <tr><td><a href="library/v1/defs.schema.json">defs.schema.json</a></td><td>Shared definitions.</td></tr>
   </table>
-  <p style="margin-top:14px">Validate a document tree with <code>python tools/validate-library.py &lt;dir&gt;</code> from the <a href="https://github.com/zaentrum/schemas">repository</a>.</p>
+  <p style="margin-top:14px">Validate a tree with <code>python tools/validate-library.py &lt;dir&gt;</code> from the <a href="https://github.com/zaentrum/schemas">repository</a>. The format is described in the <a href="https://github.com/zaentrum/zaentrum/wiki/library">wiki</a>.</p>
 
   <h2>Event payloads</h2>
   <p>Avro schemas for the platform's Kafka events live in the <a href="https://github.com/zaentrum/schemas">repository</a> and are published to a schema registry.</p>

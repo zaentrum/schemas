@@ -1,0 +1,52 @@
+{
+  "schema": "zaentrum.library.manifest/1",
+  "version": 3,
+  "itemId": "eaab42be-cc21-5eef-b35e-1f479315b6c6",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "make-library-examples",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "make-library-examples",
+  "type": "series",
+  "title": "Example Show",
+  "year": 2024,
+  "externalIds": {},
+  "match": {
+    "status": "unmatched",
+    "decidedBy": "inferred"
+  },
+  "metadata": {
+    "file": "metadata/metadata.json"
+  },
+  "series": {
+    "defaultOrdering": "aired",
+    "seasons": [
+      {
+        "number": 1,
+        "tmdbSeason": null,
+        "episodes": [
+          {
+            "itemId": "453b1d03-1cde-5c3f-9683-011c2fa04d3e",
+            "path": "episodes/453b1d03-1cde-5c3f-9683-011c2fa04d3e/",
+            "episode": 1,
+            "episodeEnd": null
+          }
+        ]
+      }
+    ],
+    "masters": [
+      {
+        "fingerprint": "hevc/main10/10bit/hdr10/3840x2160",
+        "presentation": "colour hdr10",
+        "episodes": [
+          "453b1d03-1cde-5c3f-9683-011c2fa04d3e"
+        ]
+      }
+    ]
+  },
+  "processing": {},
+  "provenance": {
+    "migratedFrom": "scan",
+    "migratedAt": "2026-09-13T12:00:00Z"
+  }
+}

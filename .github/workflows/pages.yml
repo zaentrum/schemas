@@ -2,7 +2,7 @@ name: Publish schemas (Pages)
 
 # Serves the published contracts at https://zaentrum.github.io/schemas/.
 # Every schema's $id is its own URL here, e.g.
-#   https://zaentrum.github.io/schemas/library/v1/work.schema.json
+#   https://zaentrum.github.io/schemas/library/v1/manifest.schema.json
 # Only the landing page and library/ are published; tooling is not.
 
 on:

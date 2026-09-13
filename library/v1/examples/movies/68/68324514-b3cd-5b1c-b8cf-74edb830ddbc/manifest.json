@@ -1,0 +1,363 @@
+{
+  "schema": "zaentrum.library.manifest/1",
+  "version": 3,
+  "itemId": "68324514-b3cd-5b1c-b8cf-74edb830ddbc",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "make-library-examples",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "make-library-examples",
+  "type": "movie",
+  "title": "Tears of Steel",
+  "year": 2012,
+  "tmdbId": "133701",
+  "externalIds": {
+    "tmdbMovie": "133701",
+    "imdb": "tt2285752"
+  },
+  "match": {
+    "status": "matched",
+    "decidedBy": "tmdb"
+  },
+  "metadata": {
+    "file": "metadata/metadata.json"
+  },
+  "durationMs": 734000,
+  "packagedAt": "2026-09-01T10:00:00+00:00",
+  "packager": "packager example",
+  "renditions": {
+    "video": [
+      {
+        "id": "v0",
+        "dir": "hls/v0",
+        "codec": "hev1.1.6.L120.B0",
+        "width": 1920,
+        "height": 800,
+        "bitrateBps": 0,
+        "hdr": false,
+        "frameRate": "24/1",
+        "segments": 10,
+        "targetDuration": 6,
+        "dynamicRange": "sdr",
+        "sourceStreamIndex": 0
+      }
+    ],
+    "audio": [
+      {
+        "id": "a0",
+        "dir": "hls/a0",
+        "codec": "mp4a.40.2",
+        "language": "eng",
+        "title": "",
+        "default": true,
+        "channels": 2,
+        "bitrateBps": 192000,
+        "segments": 15,
+        "visible": true,
+        "sourceStreamIndex": 1,
+        "sourceChannels": 6
+      }
+    ]
+  },
+  "subtitles": [],
+  "trickplay": null,
+  "versions": [
+    {
+      "id": "e72c75e1-dc49-519d-9a80-d1a1b47b95bf",
+      "path": ".",
+      "label": null,
+      "primary": true,
+      "edition": {
+        "kind": "theatrical",
+        "label": null,
+        "decidedBy": "inferred",
+        "confidence": 0.6,
+        "evidence": [
+          {
+            "signal": "runtime",
+            "value": {
+              "measuredMs": 734000,
+              "referenceMs": 720000,
+              "deltaMs": 14000
+            },
+            "weight": 0.6
+          }
+        ],
+        "review": null
+      },
+      "presentation": {
+        "colour": "colour",
+        "dynamicRange": "sdr",
+        "stereo3d": "none",
+        "aspectRatio": "12:5"
+      },
+      "runtime": {
+        "measuredMs": 734000,
+        "referenceMs": 720000,
+        "deltaMs": 14000
+      },
+      "completeness": {
+        "status": "complete",
+        "evidence": []
+      },
+      "master": {
+        "fingerprint": "h264/high/8bit/sdr/1920x800",
+        "fidelity": "original"
+      },
+      "truth": {
+        "kind": "source",
+        "since": "2026-09-13T12:00:00Z",
+        "note": "the original still exists"
+      },
+      "sources": [
+        {
+          "id": "aaedd282-8697-55f0-8023-aa424e9f6b47",
+          "state": "present",
+          "file": {
+            "name": "Tears of Steel (2012) Bluray-1080p.mkv",
+            "kind": "stream-container",
+            "sizeBytes": 6300000000,
+            "mtime": "2026-09-13T12:00:00Z",
+            "fixity": {
+              "qh1": "sha256:8535192e9480974d49692f264f4eb961ccea30a75dabbe2dc392016de81d9650"
+            },
+            "origin": {
+              "libraryPath": "movies/Tears of Steel (2012)/Tears of Steel (2012) Bluray-1080p.mkv",
+              "folder": "movies/Tears of Steel (2012)"
+            },
+            "part": null
+          },
+          "labels": {
+            "quality": "Bluray-1080p",
+            "releaseSource": "bluray",
+            "resolution": "1080p",
+            "proper": false,
+            "revision": null,
+            "edition": null,
+            "folderEdition": null
+          },
+          "container": {
+            "format": "matroska,webm",
+            "durationMs": 734000,
+            "bitrate": null,
+            "title": null,
+            "muxingApp": null,
+            "writingApp": null,
+            "creationTime": null,
+            "tags": {}
+          },
+          "fidelity": {
+            "class": "original",
+            "evidence": []
+          },
+          "streams": [
+            {
+              "index": 0,
+              "type": "video",
+              "codec": "h264",
+              "language": null,
+              "languageRaw": null,
+              "title": null,
+              "dispositions": {
+                "default": true
+              },
+              "profile": "Main",
+              "level": null,
+              "bitDepth": 8,
+              "pixelFormat": "yuv420p",
+              "width": 1920,
+              "height": 800,
+              "sampleAspectRatio": "1:1",
+              "displayAspectRatio": null,
+              "frameRate": "24/1",
+              "fieldOrder": "progressive",
+              "bitrate": null,
+              "colour": {
+                "primaries": "bt709",
+                "transfer": "bt709",
+                "matrix": null,
+                "range": "tv"
+              },
+              "hdr": {
+                "format": "sdr",
+                "masteringDisplay": null,
+                "contentLightLevel": null,
+                "dolbyVision": null
+              },
+              "stereo3d": null,
+              "encoder": null
+            },
+            {
+              "index": 1,
+              "type": "audio",
+              "codec": "ac3",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": null,
+              "dispositions": {
+                "default": true,
+                "commentary": false
+              },
+              "profile": null,
+              "channels": 6,
+              "channelLayout": "5.1(side)",
+              "sampleRate": 48000,
+              "bitDepth": null,
+              "bitrate": null,
+              "lossless": false,
+              "objectAudio": "none",
+              "titleClaim": null,
+              "encoder": null
+            },
+            {
+              "index": 2,
+              "type": "subtitle",
+              "codec": "subrip",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": null,
+              "dispositions": {
+                "default": false
+              },
+              "form": "text",
+              "styled": false,
+              "variant": null
+            }
+          ],
+          "chapters": [
+            {
+              "startMs": 0,
+              "endMs": 300000,
+              "title": "Chapter 1"
+            },
+            {
+              "startMs": 300000,
+              "endMs": 734000,
+              "title": "Chapter 2"
+            }
+          ],
+          "segments": [],
+          "sidecars": [],
+          "subtitleDecisions": {
+            "defaultStreamIndex": null,
+            "decidedBy": null
+          },
+          "covers": [],
+          "essence": {
+            "maxAudioChannels": 6,
+            "surround": true,
+            "losslessAudio": false,
+            "objectAudio": false,
+            "maxVideoHeight": 1080,
+            "videoBitDepth": 8,
+            "hdr10Metadata": false,
+            "dolbyVision": false,
+            "stereo3d": false,
+            "interlaced": false,
+            "audioLanguages": [
+              "en"
+            ],
+            "subtitleLanguages": [
+              "en"
+            ],
+            "subtitleTracks": 1,
+            "imageSubtitles": false,
+            "styledSubtitles": false,
+            "fonts": false,
+            "chapters": true,
+            "commentaryTracks": 0
+          },
+          "probe": {
+            "tool": "ffprobe",
+            "version": null,
+            "at": "2026-09-13T12:00:00Z",
+            "file": "source/aaedd282-8697-55f0-8023-aa424e9f6b47/ffprobe.json",
+            "sha256": "sha256:2e0a0037efb951e09875384c555da1bc180c3a67b6149381e337be6a86ac14d9",
+            "note": null
+          }
+        }
+      ],
+      "package": {
+        "id": "5dd19038-1318-570c-95fd-28cc940cc22b",
+        "state": "complete",
+        "role": "derived",
+        "recipe": {
+          "video": "hevc re-encode",
+          "audio": "aac-lc 2ch 192k",
+          "subtitles": "text -> webvtt"
+        },
+        "fidelity": {
+          "lossless": false,
+          "droppedSourceStreams": [
+            2
+          ],
+          "losses": [
+            {
+              "kind": "audio-downmix",
+              "detail": "6ch -> 2ch (a0)",
+              "sourceStreamIndex": 1
+            },
+            {
+              "kind": "subtitle-dropped",
+              "detail": "1 of 1 source subtitle track(s) not packaged",
+              "sourceStreamIndex": 2
+            },
+            {
+              "kind": "chapters-dropped",
+              "detail": "chapters are not in the package",
+              "sourceStreamIndex": null
+            }
+          ]
+        },
+        "essence": {
+          "maxAudioChannels": 2,
+          "surround": false,
+          "losslessAudio": false,
+          "objectAudio": false,
+          "maxVideoHeight": 800,
+          "videoBitDepth": 8,
+          "hdr10Metadata": false,
+          "dolbyVision": false,
+          "stereo3d": false,
+          "interlaced": false,
+          "audioLanguages": [
+            "en"
+          ],
+          "subtitleLanguages": [],
+          "subtitleTracks": 0,
+          "imageSubtitles": false,
+          "styledSubtitles": false,
+          "fonts": false,
+          "chapters": false,
+          "commentaryTracks": 0
+        },
+        "chapters": [],
+        "decisions": {
+          "defaultAudio": "a0",
+          "defaultAudioSource": "manifest",
+          "defaultSubtitle": null,
+          "defaultSubtitleSource": null
+        }
+      },
+      "lostIfOriginalDeleted": [
+        "surround",
+        "chapters",
+        "audioChannels 6->2",
+        "subtitleLanguages en",
+        "subtitleTracks 1->0"
+      ]
+    }
+  ],
+  "processing": {
+    "package": {
+      "status": "done",
+      "at": "2026-09-13T12:00:00Z",
+      "attempts": 1,
+      "error": null
+    }
+  },
+  "provenance": {
+    "migratedFrom": "scan",
+    "migratedAt": "2026-09-13T12:00:00Z"
+  }
+}

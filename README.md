@@ -65,40 +65,45 @@ APICURIO_URL=https://apicurio.example/ GROUP_ID=zaentrum ./tools/publish-to-apic
 
 `library/` holds JSON Schemas (draft 2020-12) for the platform's on-storage
 library, where storage is the source of truth and databases are caches built
-from it.
+by reading it. Every item is a folder with two documents:
 
-| Document | What it describes |
+| Document | What it holds |
 |---|---|
-| `work.json` | What a thing *is*: a movie, series, episode or track. Titles in every language, external ids, credits, artwork, series seasons, episode numbering under every ordering scheme, curation. The entry point. |
-| `version.json` | One cut or presentation of a work: theatrical or director's cut, colour or black-and-white, SDR or HDR, 2D or 3D. Carries the evidence behind each conclusion and who decided it. |
-| `source.json` | The master file of a version: fixity, what its name and folder claimed, whether it is an original or already a re-encode, a full stream inventory, chapters, sidecars, and the verbatim probe output. |
-| `package.json` | A derived, disposable rendition, and above all what it *lost* relative to its source. |
+| `manifest.json` | The entry point. What the item is (type, primary title, reference ids), the playback fields a streaming service reads (unchanged from the version 2 package manifest), and for every version of a movie or episode what the original file contained and what the package carries and lost. |
+| `metadata/metadata.json` | Every text (localised titles, overviews, credits, dates, series and season details) and the list of images, which sit in the same `metadata/` folder. A re-sync from the reference database rewrites only this file. |
 
 Layout on storage:
 
-```
-works/<first 2 hex of id>/<workId>/
-  work.json
-  art/<kind>.<sha256 prefix>.<ext>
-  versions/<versionId>/
-    version.json
-    source.json
-    source/<original filename>
-    packages/<packageId>/package.json   (+ the playback manifest and segments)
-  episodes/<episodeId>/...              (series only, same shape)
+```mermaid
+flowchart LR
+  M["movies/&lt;aa&gt;/&lt;movieId&gt;/"] --> MM["manifest.json"]
+  M --> MD["metadata/ — metadata.json, poster.jpg, backdrop.jpg, logo.png"]
+  M --> MS["source/&lt;sourceId&gt;/ffprobe.json"]
+  M --> MP["hls/ · subs/ · trickplay/ · .complete"]
+  S["shows/&lt;aa&gt;/&lt;seriesId&gt;/"] --> SM["manifest.json — seasons and their episodes"]
+  S --> SD["metadata/ — series images, season-NN-poster.jpg"]
+  S --> E["episodes/&lt;episodeId&gt;/ — same shape as a movie"]
 ```
 
-Directories are keyed only by stable ids, never by titles or numbers, so a
-rename, renumbering or alternate episode order never moves a file. Numbers
-and titles live inside the documents.
+`<aa>` is the first two hex characters of the id. Folders are keyed only by
+stable ids, never by titles or numbers, so a rename, renumbering or alternate
+episode order never moves a file. A second version of a movie or episode
+(a director's cut, a black-and-white presentation) is stored in
+`versions/<versionId>/` inside the item folder with its own playback block.
 
-Validate documents:
+Validate a tree (schemas plus the cross-file rules: ids match folders, images
+match their hashes, a series lists exactly its episode folders):
 
 ```sh
 pip install "jsonschema>=4.23" referencing
-python tools/validate-library.py <directory-or-files>
+python tools/validate-library.py <root-with-movies-and-shows>
+python tools/validate-library.py --check-media <root>    # also require every playback path to exist
 ```
 
-`tools/library-migrate.py` is a reference migrator that builds these documents
+`tools/library-migrate.py` is a reference migrator that builds item folders
 from a legacy catalog export plus probe output. It never invents a value: a
 field the source data does not hold is left empty and reported.
+`tools/make-library-examples.py` regenerates `library/v1/examples`.
+
+The format is documented in the
+[zaentrum wiki](https://github.com/zaentrum/zaentrum/wiki/library).

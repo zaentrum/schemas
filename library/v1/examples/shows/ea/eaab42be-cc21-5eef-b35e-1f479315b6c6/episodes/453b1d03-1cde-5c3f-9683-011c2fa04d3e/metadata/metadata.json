@@ -1,0 +1,55 @@
+{
+  "schema": "zaentrum.library.metadata/1",
+  "itemId": "453b1d03-1cde-5c3f-9683-011c2fa04d3e",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "make-library-examples",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "make-library-examples",
+  "type": "episode",
+  "titles": {
+    "primary": "Pilot",
+    "original": null,
+    "sort": "pilot",
+    "qualifier": null,
+    "localized": {
+      "en": {
+        "title": "Pilot",
+        "sortTitle": "pilot",
+        "tagline": null,
+        "overview": "The first episode."
+      }
+    }
+  },
+  "genres": [],
+  "tags": [],
+  "rating": null,
+  "credits": [],
+  "episode": {
+    "airDate": "2024-01-10"
+  },
+  "images": [
+    {
+      "kind": "still",
+      "file": "still.jpg",
+      "sha256": "sha256:9650f149d622055c4b495e65e9148ebfc5e61b1bb00e83538e76afe48c496eaf",
+      "contentType": "image/jpeg",
+      "sizeBytes": 134,
+      "width": 1,
+      "height": 1,
+      "sourceUrl": null,
+      "fetchedAt": null,
+      "origin": "manual"
+    }
+  ],
+  "curation": {
+    "metadataLocked": false,
+    "lockedFields": [],
+    "notes": null
+  },
+  "fieldOrigins": {
+    "titles.primary": "manual",
+    "episode.airDate": "manual",
+    "images": "manual"
+  }
+}

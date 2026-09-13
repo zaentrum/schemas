@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/v1/metadata.schema.json",
+  "title": "metadata/metadata.json — every text and image of a library item",
+  "description": "Sits in the metadata/ folder of an item, next to the image files it lists. Holds what a reference database says about the item (titles, overviews, credits, dates, artwork) plus anything a person edited. A re-sync from the reference database rewrites this file only, using the ids in manifest.json, and leaves every locked field as it was. Per-user state (progress, lists) is never here.",
+  "type": "object",
+  "required": ["schema", "itemId", "rev", "createdAt", "updatedAt", "type", "titles", "images"],
+  "allOf": [
+    { "$ref": "defs.schema.json#/$defs/audit" },
+    {
+      "if": { "properties": { "type": { "const": "series" } } },
+      "then": { "required": ["series"], "not": { "anyOf": [{ "required": ["episode"] }, { "required": ["collection"] }] } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "episode" } } },
+      "then": { "not": { "anyOf": [{ "required": ["series"] }, { "required": ["collection"] }] } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "movie" } } },
+      "then": { "not": { "anyOf": [{ "required": ["series"] }, { "required": ["episode"] }] } }
+    }
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "schema": { "const": "zaentrum.library.metadata/1" },
+    "itemId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Equals the itemId of the manifest in the parent folder." },
+    "rev": true, "createdAt": true, "createdBy": true, "updatedAt": true, "updatedBy": true,
+    "type": { "enum": ["movie", "series", "episode"] },
+
+    "titles": {
+      "type": "object",
+      "required": ["primary"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "type": "string", "minLength": 1, "description": "Display title. May differ from the manifest title when a person edited it." },
+        "original": { "type": ["string", "null"], "description": "Title in the original language." },
+        "sort": { "type": ["string", "null"] },
+        "qualifier": { "type": ["string", "null"], "description": "Disambiguates remakes and local versions: 'US', 'UK', '2009'." },
+        "localized": {
+          "type": "object",
+          "description": "Keyed by BCP 47 language.",
+          "propertyNames": { "$ref": "defs.schema.json#/$defs/language" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": { "type": "string" },
+              "sortTitle": { "type": ["string", "null"] },
+              "tagline": { "type": ["string", "null"] },
+              "overview": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+
+    "releaseDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+    "genres": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "tags": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "rating": { "type": ["number", "null"], "minimum": 0, "maximum": 10 },
+    "contentRating": { "type": ["string", "null"], "description": "e.g. 'R', 'FSK 16'." },
+    "reference": {
+      "type": "object",
+      "description": "Facts as published. Deliberately separate from the manifest's MEASURED runtime: the reference database lists one runtime for every cut.",
+      "additionalProperties": false,
+      "properties": {
+        "runtimeMs": { "type": ["integer", "null"], "minimum": 0 },
+        "runtimeSource": { "enum": ["tmdb", "legacy-catalog", "manual", null] }
+      }
+    },
+
+    "credits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["personId", "name", "role"],
+        "additionalProperties": false,
+        "properties": {
+          "personId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Stable: person pages are user-facing URLs keyed by it." },
+          "name": { "type": "string" },
+          "role": { "type": "string", "description": "actor, director, writer, producer, ..." },
+          "character": { "type": ["string", "null"] },
+          "order": { "type": ["integer", "null"] },
+          "tmdbPerson": { "type": ["string", "null"], "pattern": "^[0-9]+$" }
+        }
+      }
+    },
+
+    "collection": {
+      "type": ["object", "null"],
+      "description": "Franchise membership of a movie.",
+      "additionalProperties": false,
+      "properties": {
+        "tmdbCollection": { "type": "string" },
+        "name": { "type": "string" },
+        "order": { "type": ["integer", "null"] }
+      }
+    },
+
+    "series": {
+      "type": "object",
+      "description": "Present only on a series: the series as a whole and each of its seasons.",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["returning", "ended", "canceled", "in-production", "unknown"] },
+        "firstAirDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+        "lastAirDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+        "network": { "type": ["string", "null"] },
+        "seasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["number"],
+            "additionalProperties": false,
+            "properties": {
+              "number": { "type": "integer", "minimum": 0, "description": "0 = specials." },
+              "name": { "type": ["string", "null"], "description": "Anthology and anime seasons carry their own titles." },
+              "overview": { "type": ["string", "null"] },
+              "airDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+              "episodeCountReference": { "type": ["integer", "null"], "description": "Episodes the reference database lists, to show gaps in what is on storage." }
+            }
+          }
+        }
+      }
+    },
+
+    "episode": {
+      "type": "object",
+      "description": "Present only on an episode. The episode's own name and overview are in titles.",
+      "additionalProperties": false,
+      "properties": {
+        "airDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] }
+      }
+    },
+
+    "images": {
+      "type": "array",
+      "description": "Every image file in this folder. A missing kind falls back to the parent at read time (an episode without a still shows its season poster, then the series poster); nothing is copied.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "file", "sha256", "contentType", "sizeBytes"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "enum": ["poster", "backdrop", "logo", "still", "banner", "thumb"] },
+          "file": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*(\\.[a-z]{2,3}(-[A-Za-z0-9]{2,8})?)?\\.(jpg|png|webp)$",
+            "description": "File name in this folder: '<kind>.jpg', 'season-01-poster.jpg', 'poster.de.jpg'. No subfolders."
+          },
+          "season": { "type": ["integer", "null"], "minimum": 0, "description": "On a series: the season this image belongs to; null for the series itself." },
+          "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
+          "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "Caches key on this, so a replaced image never serves stale." },
+          "contentType": { "enum": ["image/jpeg", "image/png", "image/webp"] },
+          "sizeBytes": { "type": "integer", "minimum": 0 },
+          "width": { "type": ["integer", "null"] },
+          "height": { "type": ["integer", "null"] },
+          "sourceUrl": { "type": ["string", "null"], "description": "Where the image came from, so the exact chosen image can be fetched again." },
+          "fetchedAt": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+          "origin": { "enum": ["legacy-catalog", "tmdb", "manual"] }
+        }
+      }
+    },
+
+    "curation": {
+      "type": "object",
+      "description": "Everything a person decided about the texts and images. A re-sync never overwrites a locked field.",
+      "additionalProperties": false,
+      "properties": {
+        "metadataLocked": { "type": "boolean" },
+        "lockedFields": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "fieldOrigins": {
+      "type": "object",
+      "description": "Where each value came from, keyed by field path. Lists only fields that are set.",
+      "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "file-tags", "manual"] }
+    }
+  }
+}

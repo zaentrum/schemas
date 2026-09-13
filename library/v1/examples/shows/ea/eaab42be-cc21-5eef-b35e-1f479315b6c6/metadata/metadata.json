@@ -1,0 +1,85 @@
+{
+  "schema": "zaentrum.library.metadata/1",
+  "itemId": "eaab42be-cc21-5eef-b35e-1f479315b6c6",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "make-library-examples",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "make-library-examples",
+  "type": "series",
+  "titles": {
+    "primary": "Example Show",
+    "original": null,
+    "sort": "example show",
+    "qualifier": "US",
+    "localized": {
+      "en": {
+        "title": "Example Show",
+        "sortTitle": "example show",
+        "tagline": null,
+        "overview": "A fictional series used to illustrate the library layout."
+      }
+    }
+  },
+  "genres": [
+    "Drama"
+  ],
+  "tags": [],
+  "rating": null,
+  "contentRating": null,
+  "credits": [],
+  "series": {
+    "status": "returning",
+    "firstAirDate": "2024-01-10",
+    "lastAirDate": "2024-03-06",
+    "network": null,
+    "seasons": [
+      {
+        "number": 1,
+        "name": "Season 1",
+        "overview": "The first season.",
+        "airDate": "2024-01-10",
+        "episodeCountReference": 8
+      }
+    ]
+  },
+  "images": [
+    {
+      "kind": "poster",
+      "file": "poster.jpg",
+      "sha256": "sha256:9650f149d622055c4b495e65e9148ebfc5e61b1bb00e83538e76afe48c496eaf",
+      "contentType": "image/jpeg",
+      "sizeBytes": 134,
+      "width": 1,
+      "height": 1,
+      "sourceUrl": null,
+      "fetchedAt": null,
+      "origin": "manual",
+      "season": null
+    },
+    {
+      "kind": "poster",
+      "file": "season-01-poster.jpg",
+      "sha256": "sha256:9650f149d622055c4b495e65e9148ebfc5e61b1bb00e83538e76afe48c496eaf",
+      "contentType": "image/jpeg",
+      "sizeBytes": 134,
+      "width": 1,
+      "height": 1,
+      "sourceUrl": null,
+      "fetchedAt": null,
+      "origin": "manual",
+      "season": 1
+    }
+  ],
+  "curation": {
+    "metadataLocked": false,
+    "lockedFields": [],
+    "notes": null
+  },
+  "fieldOrigins": {
+    "titles.primary": "manual",
+    "titles.qualifier": "filename",
+    "series": "manual",
+    "images": "manual"
+  }
+}

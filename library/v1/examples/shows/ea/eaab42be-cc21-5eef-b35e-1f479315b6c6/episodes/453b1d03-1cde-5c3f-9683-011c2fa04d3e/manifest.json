@@ -1,0 +1,602 @@
+{
+  "schema": "zaentrum.library.manifest/1",
+  "version": 3,
+  "itemId": "453b1d03-1cde-5c3f-9683-011c2fa04d3e",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "make-library-examples",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "make-library-examples",
+  "type": "episode",
+  "title": "Pilot",
+  "year": 2024,
+  "externalIds": {},
+  "match": {
+    "status": "unmatched",
+    "decidedBy": "inferred"
+  },
+  "metadata": {
+    "file": "metadata/metadata.json"
+  },
+  "seriesTitle": "Example Show",
+  "seasonNumber": 1,
+  "episodeNumber": 1,
+  "episodeCode": "S01E01",
+  "episode": {
+    "seriesId": "eaab42be-cc21-5eef-b35e-1f479315b6c6",
+    "coordinates": [
+      {
+        "scheme": "aired",
+        "season": 1,
+        "episode": 1,
+        "episodeEnd": null
+      },
+      {
+        "scheme": "file",
+        "season": 1,
+        "episode": 1,
+        "episodeEnd": null
+      }
+    ]
+  },
+  "durationMs": 2700000,
+  "packagedAt": "2026-09-01T10:00:00+00:00",
+  "packager": "packager example",
+  "renditions": {
+    "video": [
+      {
+        "id": "v0",
+        "dir": "hls/v0",
+        "codec": "hev1.1.6.L120.B0",
+        "width": 3840,
+        "height": 2160,
+        "bitrateBps": 0,
+        "hdr": true,
+        "frameRate": "24/1",
+        "segments": 10,
+        "targetDuration": 6,
+        "dynamicRange": "hdr10",
+        "sourceStreamIndex": 0
+      }
+    ],
+    "audio": [
+      {
+        "id": "a0",
+        "dir": "hls/a0",
+        "codec": "mp4a.40.2",
+        "language": "eng",
+        "title": "",
+        "default": true,
+        "channels": 2,
+        "bitrateBps": 192000,
+        "segments": 15,
+        "visible": true,
+        "sourceStreamIndex": 1,
+        "sourceChannels": 6
+      }
+    ]
+  },
+  "subtitles": [],
+  "trickplay": null,
+  "versions": [
+    {
+      "id": "a4e38ff1-814a-5f3e-b49c-d5da107a6289",
+      "path": ".",
+      "label": "HDR10",
+      "primary": true,
+      "edition": {
+        "kind": "unknown",
+        "label": null,
+        "decidedBy": "inferred",
+        "evidence": [],
+        "review": null
+      },
+      "presentation": {
+        "colour": "colour",
+        "dynamicRange": "hdr10",
+        "stereo3d": "none",
+        "aspectRatio": "16:9"
+      },
+      "runtime": {
+        "measuredMs": 2700000,
+        "referenceMs": null,
+        "deltaMs": null
+      },
+      "master": {
+        "fingerprint": "hevc/main10/10bit/hdr10/3840x2160",
+        "fidelity": "original"
+      },
+      "truth": {
+        "kind": "source",
+        "since": "2026-09-13T12:00:00Z",
+        "note": null
+      },
+      "sources": [
+        {
+          "id": "5b2f2568-e95b-5366-a2c9-7ea053a0d47a",
+          "state": "present",
+          "file": {
+            "name": "Example Show (US) - S01E01 - Pilot WEBDL-2160p.mkv",
+            "kind": "stream-container",
+            "sizeBytes": 6300000000,
+            "mtime": "2026-09-13T12:00:00Z",
+            "fixity": {
+              "qh1": "sha256:adebeaefd885237a2b6939d60d4ff49319eef71e6bc4a62bd8a616556164cd2b"
+            },
+            "origin": {
+              "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot WEBDL-2160p.mkv",
+              "folder": "tv/Example Show (US)/Season 01"
+            },
+            "part": null
+          },
+          "labels": {
+            "quality": "Bluray-1080p",
+            "releaseSource": "bluray",
+            "resolution": "1080p",
+            "proper": false,
+            "revision": null,
+            "edition": null,
+            "folderEdition": null
+          },
+          "container": {
+            "format": "matroska,webm",
+            "durationMs": 2700000,
+            "bitrate": null,
+            "title": null,
+            "muxingApp": null,
+            "writingApp": null,
+            "creationTime": null,
+            "tags": {}
+          },
+          "fidelity": {
+            "class": "original",
+            "evidence": []
+          },
+          "streams": [
+            {
+              "index": 0,
+              "type": "video",
+              "codec": "hevc",
+              "language": null,
+              "languageRaw": null,
+              "title": null,
+              "dispositions": {
+                "default": true
+              },
+              "profile": "Main 10",
+              "level": null,
+              "bitDepth": 10,
+              "pixelFormat": "yuv420p10le",
+              "width": 3840,
+              "height": 2160,
+              "sampleAspectRatio": "1:1",
+              "displayAspectRatio": null,
+              "frameRate": "24/1",
+              "fieldOrder": "progressive",
+              "bitrate": null,
+              "colour": {
+                "primaries": "bt2020",
+                "transfer": "smpte2084",
+                "matrix": null,
+                "range": "tv"
+              },
+              "hdr": {
+                "format": "hdr10",
+                "masteringDisplay": null,
+                "contentLightLevel": null,
+                "dolbyVision": null
+              },
+              "stereo3d": null,
+              "encoder": null
+            },
+            {
+              "index": 1,
+              "type": "audio",
+              "codec": "eac3",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": null,
+              "dispositions": {
+                "default": true,
+                "commentary": false
+              },
+              "profile": null,
+              "channels": 6,
+              "channelLayout": "5.1",
+              "sampleRate": 48000,
+              "bitDepth": null,
+              "bitrate": null,
+              "lossless": false,
+              "objectAudio": "none",
+              "titleClaim": null,
+              "encoder": null
+            }
+          ],
+          "chapters": [],
+          "segments": [],
+          "sidecars": [],
+          "subtitleDecisions": {
+            "defaultStreamIndex": null,
+            "decidedBy": null
+          },
+          "covers": [],
+          "essence": {
+            "maxAudioChannels": 6,
+            "surround": true,
+            "losslessAudio": false,
+            "objectAudio": false,
+            "maxVideoHeight": 2160,
+            "videoBitDepth": 10,
+            "hdr10Metadata": true,
+            "dolbyVision": false,
+            "stereo3d": false,
+            "interlaced": false,
+            "audioLanguages": [
+              "en"
+            ],
+            "subtitleLanguages": [],
+            "subtitleTracks": 0,
+            "imageSubtitles": false,
+            "styledSubtitles": false,
+            "fonts": false,
+            "chapters": false,
+            "commentaryTracks": 0
+          },
+          "probe": {
+            "tool": "ffprobe",
+            "version": null,
+            "at": "2026-09-13T12:00:00Z",
+            "file": "source/5b2f2568-e95b-5366-a2c9-7ea053a0d47a/ffprobe.json",
+            "sha256": "sha256:99f74d9cbd4112d0b4e0eb3fc302ac12e33e1d434a024d785f90176575c27f23",
+            "note": null
+          }
+        }
+      ],
+      "package": {
+        "id": "d3704871-11a7-5dd7-b779-0d85f470b4c8",
+        "state": "complete",
+        "role": "derived",
+        "fidelity": {
+          "lossless": false,
+          "droppedSourceStreams": [],
+          "losses": [
+            {
+              "kind": "audio-downmix",
+              "detail": "6ch -> 2ch (a0)",
+              "sourceStreamIndex": 1
+            },
+            {
+              "kind": "audio-codec",
+              "detail": "eac3 -> mp4a.40.2",
+              "sourceStreamIndex": 1
+            }
+          ]
+        },
+        "essence": {
+          "maxAudioChannels": 2,
+          "surround": false,
+          "losslessAudio": false,
+          "objectAudio": false,
+          "maxVideoHeight": 2160,
+          "videoBitDepth": 10,
+          "hdr10Metadata": false,
+          "dolbyVision": false,
+          "stereo3d": false,
+          "interlaced": false,
+          "audioLanguages": [
+            "en"
+          ],
+          "subtitleLanguages": [],
+          "subtitleTracks": 0,
+          "imageSubtitles": false,
+          "styledSubtitles": false,
+          "fonts": false,
+          "chapters": false,
+          "commentaryTracks": 0
+        },
+        "chapters": [],
+        "decisions": {
+          "defaultAudio": "a0",
+          "defaultAudioSource": "manifest",
+          "defaultSubtitle": null,
+          "defaultSubtitleSource": null
+        }
+      },
+      "lostIfOriginalDeleted": [
+        "surround",
+        "hdr10Metadata",
+        "audioChannels 6->2"
+      ]
+    },
+    {
+      "id": "61239b0a-6703-5941-bc7d-99e5ea0be092",
+      "path": "versions/61239b0a-6703-5941-bc7d-99e5ea0be092/",
+      "label": "Black & White",
+      "primary": false,
+      "edition": {
+        "kind": "other",
+        "label": "Black & White",
+        "decidedBy": "human",
+        "decidedAt": "2026-09-13T12:00:00Z",
+        "evidence": [],
+        "review": null
+      },
+      "presentation": {
+        "colour": "black-and-white",
+        "colourDecision": {
+          "decidedBy": "inferred",
+          "confidence": 0.8,
+          "evidence": [
+            {
+              "signal": "content-analysis",
+              "value": {
+                "method": "signalstats SATMAX",
+                "samples": [
+                  {
+                    "atSec": 600,
+                    "satMax": 1.0
+                  }
+                ]
+              },
+              "weight": 0.8
+            }
+          ]
+        },
+        "dynamicRange": "hdr10",
+        "stereo3d": "none",
+        "aspectRatio": "16:9"
+      },
+      "runtime": {
+        "measuredMs": 2700000,
+        "referenceMs": null,
+        "deltaMs": null
+      },
+      "master": {
+        "fingerprint": "hevc/main10/10bit/hdr10/3840x2160",
+        "fidelity": "original"
+      },
+      "truth": {
+        "kind": "source",
+        "since": "2026-09-13T12:00:00Z",
+        "note": null
+      },
+      "sources": [
+        {
+          "id": "896e7615-5f8a-5661-9a4d-bcdfec2b62e7",
+          "state": "present",
+          "file": {
+            "name": "Example Show (US) - S01E01 - Pilot (Black and White) WEBDL-2160p.mkv",
+            "kind": "stream-container",
+            "sizeBytes": 6300000000,
+            "mtime": "2026-09-13T12:00:00Z",
+            "fixity": {
+              "qh1": "sha256:956b5b39a0d5b5b80b921830258a302af247a71a67377719f0e5a98a307909d5"
+            },
+            "origin": {
+              "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot (Black and White) WEBDL-2160p.mkv",
+              "folder": "tv/Example Show (US)/Season 01"
+            },
+            "part": null
+          },
+          "labels": {
+            "quality": "Bluray-1080p",
+            "releaseSource": "bluray",
+            "resolution": "1080p",
+            "proper": false,
+            "revision": null,
+            "edition": null,
+            "folderEdition": null
+          },
+          "container": {
+            "format": "matroska,webm",
+            "durationMs": 2700000,
+            "bitrate": null,
+            "title": null,
+            "muxingApp": null,
+            "writingApp": null,
+            "creationTime": null,
+            "tags": {}
+          },
+          "fidelity": {
+            "class": "original",
+            "evidence": []
+          },
+          "streams": [
+            {
+              "index": 0,
+              "type": "video",
+              "codec": "hevc",
+              "language": null,
+              "languageRaw": null,
+              "title": null,
+              "dispositions": {
+                "default": true
+              },
+              "profile": "Main 10",
+              "level": null,
+              "bitDepth": 10,
+              "pixelFormat": "yuv420p10le",
+              "width": 3840,
+              "height": 2160,
+              "sampleAspectRatio": "1:1",
+              "displayAspectRatio": null,
+              "frameRate": "24/1",
+              "fieldOrder": "progressive",
+              "bitrate": null,
+              "colour": {
+                "primaries": "bt2020",
+                "transfer": "smpte2084",
+                "matrix": null,
+                "range": "tv"
+              },
+              "hdr": {
+                "format": "hdr10",
+                "masteringDisplay": null,
+                "contentLightLevel": null,
+                "dolbyVision": null
+              },
+              "stereo3d": null,
+              "encoder": null
+            },
+            {
+              "index": 1,
+              "type": "audio",
+              "codec": "eac3",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": null,
+              "dispositions": {
+                "default": true,
+                "commentary": false
+              },
+              "profile": null,
+              "channels": 6,
+              "channelLayout": "5.1",
+              "sampleRate": 48000,
+              "bitDepth": null,
+              "bitrate": null,
+              "lossless": false,
+              "objectAudio": "none",
+              "titleClaim": null,
+              "encoder": null
+            }
+          ],
+          "chapters": [],
+          "segments": [],
+          "sidecars": [],
+          "subtitleDecisions": {
+            "defaultStreamIndex": null,
+            "decidedBy": null
+          },
+          "covers": [],
+          "essence": {
+            "maxAudioChannels": 6,
+            "surround": true,
+            "losslessAudio": false,
+            "objectAudio": false,
+            "maxVideoHeight": 2160,
+            "videoBitDepth": 10,
+            "hdr10Metadata": true,
+            "dolbyVision": false,
+            "stereo3d": false,
+            "interlaced": false,
+            "audioLanguages": [
+              "en"
+            ],
+            "subtitleLanguages": [],
+            "subtitleTracks": 0,
+            "imageSubtitles": false,
+            "styledSubtitles": false,
+            "fonts": false,
+            "chapters": false,
+            "commentaryTracks": 0
+          },
+          "probe": {
+            "tool": "ffprobe",
+            "version": null,
+            "at": "2026-09-13T12:00:00Z",
+            "file": "source/896e7615-5f8a-5661-9a4d-bcdfec2b62e7/ffprobe.json",
+            "sha256": "sha256:677054ba6191569be6d1a32514d736ad035112c954a3f975572031bfb5121473",
+            "note": null
+          }
+        }
+      ],
+      "package": {
+        "id": "62853401-77d0-5389-a1fd-cda9c3d88b30",
+        "state": "complete",
+        "role": "derived",
+        "fidelity": {
+          "lossless": false,
+          "droppedSourceStreams": [],
+          "losses": [
+            {
+              "kind": "audio-downmix",
+              "detail": "6ch -> 2ch (a0)",
+              "sourceStreamIndex": 1
+            }
+          ]
+        },
+        "essence": {
+          "maxAudioChannels": 2,
+          "surround": false,
+          "losslessAudio": false,
+          "objectAudio": false,
+          "maxVideoHeight": 2160,
+          "videoBitDepth": 10,
+          "hdr10Metadata": false,
+          "dolbyVision": false,
+          "stereo3d": false,
+          "interlaced": false,
+          "audioLanguages": [
+            "en"
+          ],
+          "subtitleLanguages": [],
+          "subtitleTracks": 0,
+          "imageSubtitles": false,
+          "styledSubtitles": false,
+          "fonts": false,
+          "chapters": false,
+          "commentaryTracks": 0
+        },
+        "chapters": [],
+        "decisions": {
+          "defaultAudio": "a0",
+          "defaultAudioSource": "manifest",
+          "defaultSubtitle": null,
+          "defaultSubtitleSource": null
+        },
+        "playback": {
+          "durationMs": 2700000,
+          "packagedAt": "2026-09-01T10:00:00+00:00",
+          "packager": "packager example",
+          "renditions": {
+            "video": [
+              {
+                "id": "v0",
+                "dir": "hls/v0",
+                "codec": "hev1.1.6.L120.B0",
+                "width": 3840,
+                "height": 2160,
+                "bitrateBps": 0,
+                "hdr": true,
+                "frameRate": "24/1",
+                "segments": 10,
+                "targetDuration": 6,
+                "dynamicRange": "hdr10",
+                "sourceStreamIndex": 0
+              }
+            ],
+            "audio": [
+              {
+                "id": "a0",
+                "dir": "hls/a0",
+                "codec": "mp4a.40.2",
+                "language": "eng",
+                "title": "",
+                "default": true,
+                "channels": 2,
+                "bitrateBps": 192000,
+                "segments": 15,
+                "visible": true,
+                "sourceStreamIndex": 1,
+                "sourceChannels": 6
+              }
+            ]
+          },
+          "subtitles": [],
+          "trickplay": null
+        }
+      },
+      "lostIfOriginalDeleted": [
+        "surround",
+        "hdr10Metadata",
+        "audioChannels 6->2"
+      ]
+    }
+  ],
+  "processing": {},
+  "provenance": {
+    "migratedFrom": "scan",
+    "migratedAt": "2026-09-13T12:00:00Z"
+  }
+}

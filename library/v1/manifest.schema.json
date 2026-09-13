@@ -1,0 +1,755 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/v1/manifest.schema.json",
+  "title": "manifest.json — the entry point of a library item",
+  "description": "One manifest per item folder: a movie, a series or an episode. It says what the item is (title, reference ids), what is playable (the playback fields a streaming service reads, unchanged from the version 2 layout), and for every version what the original file contained and what the package carries and lost. Texts and images are not here: they live in metadata/metadata.json next to this file. Every path is relative to this file's folder.\n\nLayout:\n  movies/<aa>/<movieId>/manifest.json, metadata/, hls/, subs/, trickplay/, source/\n  shows/<aa>/<seriesId>/manifest.json, metadata/, episodes/<episodeId>/{manifest.json, metadata/, hls/, ...}",
+  "type": "object",
+  "required": ["schema", "version", "itemId", "rev", "createdAt", "updatedAt", "type", "title", "externalIds", "match", "metadata"],
+  "allOf": [
+    { "$ref": "defs.schema.json#/$defs/audit" },
+    {
+      "if": { "properties": { "type": { "const": "series" } } },
+      "then": {
+        "required": ["series"],
+        "not": { "anyOf": [
+          { "required": ["episode"] }, { "required": ["versions"] }, { "required": ["renditions"] },
+          { "required": ["seriesTitle"] }, { "required": ["seasonNumber"] }, { "required": ["episodeNumber"] }, { "required": ["episodeCode"] }
+        ] }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "episode" } } },
+      "then": {
+        "required": ["episode", "versions"],
+        "not": { "required": ["series"] }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "movie" } } },
+      "then": {
+        "required": ["versions"],
+        "not": { "anyOf": [
+          { "required": ["series"] }, { "required": ["episode"] },
+          { "required": ["seriesTitle"] }, { "required": ["seasonNumber"] }, { "required": ["episodeNumber"] }, { "required": ["episodeCode"] }
+        ] }
+      }
+    },
+    {
+      "$comment": "Playback fields describe the package stored in the item folder itself. They come as a set.",
+      "if": { "required": ["renditions"] },
+      "then": { "required": ["durationMs", "packagedAt", "packager"] }
+    }
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "schema": { "const": "zaentrum.library.manifest/1" },
+    "version": {
+      "const": 3,
+      "description": "Playback format version. 3 is version 2 with the library sections added; every version 2 field keeps its name, type and meaning, so a version 2 reader keeps working."
+    },
+    "itemId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Equals the name of the folder this file sits in." },
+    "rev": true, "createdAt": true, "createdBy": true, "updatedAt": true, "updatedBy": true,
+
+    "type": { "enum": ["movie", "series", "episode"] },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Primary title as matched: the English title where the reference database has one, otherwise the original title. Enough for a person to recognise the folder. Localised and edited titles live in metadata."
+    },
+    "year": { "type": ["integer", "null"], "minimum": 1870, "maximum": 2200 },
+    "tmdbId": {
+      "type": ["string", "null"],
+      "description": "Version 2 field, kept for its readers. Ambiguous: the movie id on a movie but the SERIES id on an episode. New readers use externalIds."
+    },
+    "externalIds": { "$ref": "defs.schema.json#/$defs/externalIds" },
+    "match": {
+      "description": "Whether and how this item is identified against the reference database. A re-sync reads externalIds; this records how far to trust them.",
+      "allOf": [{ "$ref": "defs.schema.json#/$defs/decision" }],
+      "type": "object",
+      "required": ["status", "decidedBy"],
+      "properties": {
+        "status": { "enum": ["matched", "unmatched", "manual", "disputed"] },
+        "decidedBy": true, "decidedAt": true, "confidence": true, "evidence": true, "review": true
+      },
+      "unevaluatedProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "const": "metadata/metadata.json", "description": "All texts and the image list. Images sit in the same folder." }
+      }
+    },
+
+    "seriesTitle": { "type": "string", "description": "Version 2 episode field." },
+    "seasonNumber": { "type": ["integer", "null"], "description": "Version 2 episode field (aired order)." },
+    "episodeNumber": { "type": ["integer", "null"], "description": "Version 2 episode field (aired order)." },
+    "episodeCode": { "type": "string", "description": "Version 2 episode field, e.g. 'S01E03'." },
+
+    "series": {
+      "description": "Present only on a series. Lists every episode sub-item, grouped by season under the default ordering. Numbers live here and in each episode's coordinates, never in a folder name, so renumbering never moves a folder.",
+      "type": "object",
+      "required": ["defaultOrdering", "seasons"],
+      "additionalProperties": false,
+      "properties": {
+        "defaultOrdering": { "enum": ["aired", "dvd", "absolute", "production"] },
+        "seasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["number", "episodes"],
+            "additionalProperties": false,
+            "properties": {
+              "number": { "type": "integer", "minimum": 0, "description": "0 = specials." },
+              "tmdbSeason": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+              "episodes": {
+                "type": "array",
+                "description": "In this season's order.",
+                "items": {
+                  "type": "object",
+                  "required": ["itemId", "path"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "itemId": { "$ref": "defs.schema.json#/$defs/uuid" },
+                    "path": { "$ref": "defs.schema.json#/$defs/relPath", "description": "episodes/<itemId>/" },
+                    "episode": { "type": ["integer", "null"] },
+                    "episodeEnd": { "type": ["integer", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "masters": {
+          "type": "array",
+          "description": "Distinct technical masters across the episodes. More than one means a season mixes sources, and a viewer may see HDR and SDR, or two cuts, side by side.",
+          "items": {
+            "type": "object",
+            "required": ["fingerprint", "episodes"],
+            "additionalProperties": false,
+            "properties": {
+              "fingerprint": { "type": "string" },
+              "presentation": { "type": "string" },
+              "episodes": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/uuid" } }
+            }
+          }
+        }
+      }
+    },
+
+    "episode": {
+      "description": "Present only on an episode.",
+      "type": "object",
+      "required": ["seriesId", "coordinates"],
+      "additionalProperties": false,
+      "properties": {
+        "seriesId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "The series folder two levels up." },
+        "coordinates": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The same episode under each numbering scheme. 'file' is how the original filename numbered it, the only record of how a file was labelled.",
+          "items": {
+            "type": "object",
+            "required": ["scheme", "episode"],
+            "additionalProperties": false,
+            "properties": {
+              "scheme": { "enum": ["aired", "dvd", "absolute", "production", "file"] },
+              "season": { "type": ["integer", "null"], "minimum": 0 },
+              "episode": { "type": "integer", "minimum": 0 },
+              "episodeEnd": { "type": ["integer", "null"], "description": "Set when one file covers several episodes (S07E23-24)." }
+            }
+          }
+        }
+      }
+    },
+
+    "durationMs": { "type": "integer", "minimum": 0, "description": "Version 2 playback field: duration of the package in this folder." },
+    "packagedAt": { "type": "string", "description": "Version 2 playback field." },
+    "packager": { "type": "string", "description": "Version 2 playback field." },
+    "renditions": {
+      "type": "object",
+      "description": "Version 2 playback field: the package in this folder. More than one video entry is a quality ladder.",
+      "required": ["video", "audio"],
+      "additionalProperties": false,
+      "properties": {
+        "video": { "type": "array", "items": { "$ref": "#/$defs/videoRendition" } },
+        "audio": { "type": "array", "items": { "$ref": "#/$defs/audioRendition" } }
+      }
+    },
+    "subtitles": { "type": "array", "items": { "$ref": "#/$defs/subtitleRendition" } },
+    "trickplay": { "oneOf": [{ "$ref": "#/$defs/trickplay" }, { "type": "null" }] },
+    "trailers": { "type": "array", "items": { "$ref": "#/$defs/trailer" } },
+
+    "versions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Every cut or presentation of this movie or episode: theatrical and director's cut, colour and black-and-white, HDR and SDR. The reference database gives all of them the same id, so a version's identity comes from the file or from a person. The version stored in this folder has path '.'; others live in versions/<id>/ with their own playback block.",
+      "items": { "$ref": "#/$defs/version" }
+    },
+
+    "processing": {
+      "type": "object",
+      "description": "Terminal outcomes of pipeline steps, so a rebuilt system does not redo expensive work. In-flight state stays in the database.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "additionalProperties": false,
+        "properties": {
+          "status": { "enum": ["done", "failed", "skipped", "not-applicable", "pending"] },
+          "at": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+          "attempts": { "type": ["integer", "null"] },
+          "error": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "migratedFrom": { "enum": ["legacy-catalog", "scan", "manual"] },
+        "migratedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
+        "legacyItemId": { "$ref": "defs.schema.json#/$defs/uuid" }
+      }
+    }
+  },
+
+  "$defs": {
+    "videoRendition": {
+      "type": "object",
+      "required": ["id", "dir", "codec", "width", "height", "bitrateBps", "hdr", "frameRate", "segments", "targetDuration"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "dir": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "codec": { "type": "string" },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "bitrateBps": { "type": "integer" },
+        "hdr": { "type": "boolean" },
+        "frameRate": { "type": "string" },
+        "segments": { "type": "integer" },
+        "targetDuration": { "type": "integer" },
+        "dynamicRange": { "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolby-vision", "unknown"], "description": "Added in version 3; 'hdr' stays for version 2 readers." },
+        "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3: the original's stream this was made from." }
+      }
+    },
+    "audioRendition": {
+      "type": "object",
+      "required": ["id", "dir", "codec", "language", "default", "channels", "bitrateBps", "segments"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "dir": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "codec": { "type": "string" },
+        "language": { "type": "string" },
+        "title": { "type": "string" },
+        "default": { "type": "boolean" },
+        "channels": { "type": "integer" },
+        "bitrateBps": { "type": "integer" },
+        "segments": { "type": "integer" },
+        "visible": { "type": "boolean" },
+        "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." },
+        "sourceChannels": { "type": ["integer", "null"], "description": "Added in version 3: channels of the original track, e.g. 6 when a 5.1 track was downmixed to stereo." }
+      }
+    },
+    "subtitleRendition": {
+      "type": "object",
+      "required": ["id", "path", "language", "format"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "language": { "type": "string" },
+        "title": { "type": "string" },
+        "default": { "type": "boolean" },
+        "forced": { "type": "boolean" },
+        "format": { "type": "string" },
+        "visible": { "type": "boolean" },
+        "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." }
+      }
+    },
+    "trickplay": {
+      "type": "object",
+      "required": ["vttPath", "spritePattern", "intervalSec", "thumbWidth", "thumbHeight", "gridCols", "gridRows"],
+      "additionalProperties": false,
+      "properties": {
+        "vttPath": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "spritePattern": { "type": "string" },
+        "intervalSec": { "type": "integer" },
+        "thumbWidth": { "type": "integer" },
+        "thumbHeight": { "type": "integer" },
+        "gridCols": { "type": "integer" },
+        "gridRows": { "type": "integer" }
+      }
+    },
+    "trailer": {
+      "type": "object",
+      "required": ["id", "source", "durationMs", "manifestPath"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "type": "string" },
+        "durationMs": { "type": "integer" },
+        "manifestPath": { "$ref": "defs.schema.json#/$defs/relPath" }
+      }
+    },
+    "playback": {
+      "type": "object",
+      "description": "The playback fields of a package stored outside the item folder root (versions/<id>/). Same shape and meaning as the top-level version 2 fields.",
+      "required": ["durationMs", "packagedAt", "packager", "renditions"],
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "packagedAt": { "type": "string" },
+        "packager": { "type": "string" },
+        "renditions": {
+          "type": "object",
+          "required": ["video", "audio"],
+          "additionalProperties": false,
+          "properties": {
+            "video": { "type": "array", "items": { "$ref": "#/$defs/videoRendition" } },
+            "audio": { "type": "array", "items": { "$ref": "#/$defs/audioRendition" } }
+          }
+        },
+        "subtitles": { "type": "array", "items": { "$ref": "#/$defs/subtitleRendition" } },
+        "trickplay": { "oneOf": [{ "$ref": "#/$defs/trickplay" }, { "type": "null" }] }
+      }
+    },
+
+    "version": {
+      "type": "object",
+      "required": ["id", "path", "primary", "edition", "presentation", "truth", "sources", "package", "lostIfOriginalDeleted"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "defs.schema.json#/$defs/uuid" },
+        "path": { "$ref": "defs.schema.json#/$defs/relPath", "description": "'.' for the package in this folder, otherwise versions/<id>/." },
+        "label": { "type": ["string", "null"], "description": "What a viewer picks between, e.g. 'Director's Cut' or 'Black & White'. Null when nothing distinguishes it." },
+        "primary": { "type": "boolean", "description": "Played when a viewer does not choose. Independent of where the version is stored." },
+        "edition": {
+          "description": "Which cut this is.",
+          "allOf": [{ "$ref": "defs.schema.json#/$defs/decision" }],
+          "type": "object",
+          "required": ["kind", "decidedBy"],
+          "properties": {
+            "kind": { "enum": ["theatrical", "directors-cut", "extended", "unrated", "special-edition", "remastered", "restored", "imax", "final-cut", "tv-cut", "other", "unknown"] },
+            "label": { "type": ["string", "null"], "description": "Edition wording as published, e.g. 'Roadshow Director's Cut'." },
+            "decidedBy": true, "decidedAt": true, "confidence": true, "evidence": true, "review": true
+          },
+          "unevaluatedProperties": false
+        },
+        "presentation": {
+          "type": "object",
+          "required": ["colour", "dynamicRange", "stereo3d"],
+          "additionalProperties": false,
+          "properties": {
+            "colour": { "enum": ["colour", "black-and-white", "partial-colour", "unknown"], "description": "Measured from the picture, not from a label." },
+            "colourDecision": { "$ref": "defs.schema.json#/$defs/decision" },
+            "dynamicRange": { "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolby-vision", "unknown"] },
+            "stereo3d": { "enum": ["none", "side-by-side", "top-and-bottom", "mvc", "unknown"] },
+            "aspectRatio": { "type": ["string", "null"] }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "description": "Measured from the original, compared with the reference runtime: the strongest automatic edition signal, though a large shortfall can also mean a truncated file.",
+          "additionalProperties": false,
+          "properties": {
+            "measuredMs": { "type": ["integer", "null"], "minimum": 0 },
+            "referenceMs": { "type": ["integer", "null"] },
+            "deltaMs": { "type": ["integer", "null"] }
+          }
+        },
+        "completeness": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": { "enum": ["complete", "truncated", "suspect", "unknown"] },
+            "evidence": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/evidence" } }
+          }
+        },
+        "master": {
+          "type": "object",
+          "description": "Short technical fingerprint of the original. Two episodes with different fingerprints come from different masters.",
+          "additionalProperties": false,
+          "properties": {
+            "fingerprint": { "type": "string" },
+            "fidelity": { "enum": ["original", "derivative", "unknown"] }
+          }
+        },
+        "truth": {
+          "type": "object",
+          "description": "Which artefact is authoritative. 'source' while the original exists; 'package' once it is deleted, and from then on every loss the package records is permanent.",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "enum": ["source", "package"] },
+            "since": { "$ref": "defs.schema.json#/$defs/timestamp" },
+            "note": { "type": ["string", "null"] }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The original file or files (several when a version is split into parts). Kept after the files are deleted, as the only record of what they contained.",
+          "items": { "$ref": "#/$defs/source" }
+        },
+        "package": { "oneOf": [{ "$ref": "#/$defs/package" }, { "type": "null" }] },
+        "lostIfOriginalDeleted": {
+          "type": "array",
+          "description": "Everything the original has that the package lacks. Deleting the original is safe only when this is empty.",
+          "items": { "type": "string" }
+        }
+      },
+      "if": { "properties": { "path": { "const": "." } } },
+      "then": { "properties": { "package": { "oneOf": [{ "type": "null" }, { "type": "object", "not": { "required": ["playback"] } }] } } },
+      "else": { "properties": { "package": { "oneOf": [{ "type": "null" }, { "type": "object", "required": ["playback"] }] } } }
+    },
+
+    "source": {
+      "type": "object",
+      "required": ["id", "state", "file", "container", "streams", "fidelity", "essence", "probe"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "defs.schema.json#/$defs/uuid" },
+        "state": { "enum": ["present", "deleted"] },
+        "file": {
+          "type": "object",
+          "required": ["name", "sizeBytes", "fixity", "origin"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "description": "Original filename, unchanged." },
+            "kind": { "enum": ["stream-container", "disc-image", "transport-stream", "audio-file"] },
+            "sizeBytes": { "type": "integer", "minimum": 0 },
+            "mtime": { "$ref": "defs.schema.json#/$defs/timestamp" },
+            "fixity": { "$ref": "defs.schema.json#/$defs/fixity" },
+            "origin": {
+              "type": "object",
+              "description": "Where the original lives (or lived) in the source library. The folder name is often the ONLY record of an edition ('Example Film - Unrated (2015)') or a series qualifier ('Example Show (US)').",
+              "required": ["libraryPath"],
+              "additionalProperties": false,
+              "properties": {
+                "libraryPath": { "type": "string" },
+                "folder": { "type": "string" }
+              }
+            },
+            "deletedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
+            "deletionReason": { "type": ["string", "null"] },
+            "ownership": { "$ref": "defs.schema.json#/$defs/ownership" },
+            "part": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": { "index": { "type": "integer", "minimum": 1 }, "of": { "type": "integer", "minimum": 1 } }
+            }
+          }
+        },
+        "labels": {
+          "type": "object",
+          "description": "What the filename and folder CLAIM. Unreliable, but the only quality claim on record.",
+          "additionalProperties": false,
+          "properties": {
+            "quality": { "type": ["string", "null"] },
+            "releaseSource": { "enum": ["remux", "bluray", "webdl", "webrip", "hdtv", "sdtv", "dvd", "telesync", "cam", "unknown", null] },
+            "resolution": { "type": ["string", "null"] },
+            "proper": { "type": "boolean" },
+            "revision": { "type": ["string", "null"] },
+            "edition": { "type": ["string", "null"] },
+            "folderEdition": { "type": ["string", "null"] }
+          }
+        },
+        "container": {
+          "type": "object",
+          "required": ["format"],
+          "additionalProperties": false,
+          "properties": {
+            "format": { "type": "string" },
+            "durationMs": { "type": ["integer", "null"] },
+            "bitrate": { "type": ["integer", "null"] },
+            "title": { "type": ["string", "null"], "description": "Container title tag: often the original release name, and the richest record of what the file was before any re-encode." },
+            "muxingApp": { "type": ["string", "null"] },
+            "writingApp": { "type": ["string", "null"] },
+            "creationTime": { "type": ["string", "null"] },
+            "tags": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "fidelity": {
+          "type": "object",
+          "required": ["class"],
+          "additionalProperties": false,
+          "properties": {
+            "class": { "enum": ["original", "derivative", "unknown"] },
+            "evidence": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/evidence" } }
+          }
+        },
+        "streams": {
+          "type": "array",
+          "items": { "oneOf": [
+            { "$ref": "#/$defs/videoStream" }, { "$ref": "#/$defs/audioStream" }, { "$ref": "#/$defs/subtitleStream" },
+            { "$ref": "#/$defs/attachmentStream" }, { "$ref": "#/$defs/dataStream" }
+          ] }
+        },
+        "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" } },
+        "segments": {
+          "type": "array",
+          "description": "Detected intro, recap and credits ranges.",
+          "items": {
+            "type": "object",
+            "required": ["kind", "startMs", "endMs"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "enum": ["intro", "recap", "credits", "preview", "commercial", "other"] },
+              "startMs": { "type": "integer" },
+              "endMs": { "type": "integer" },
+              "detector": { "type": ["string", "null"] },
+              "confidence": { "type": ["number", "null"] },
+              "label": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "sidecars": {
+          "type": "array",
+          "description": "Small files that sat next to the original (external subtitles, NFO text). Copied into source/<sourceId>/ so they survive the original's deletion.",
+          "items": {
+            "type": "object",
+            "required": ["file", "kind"],
+            "additionalProperties": false,
+            "properties": {
+              "file": { "$ref": "defs.schema.json#/$defs/relPath" },
+              "originalName": { "type": "string" },
+              "kind": { "enum": ["subtitle", "nfo", "image", "other"] },
+              "format": { "type": ["string", "null"] },
+              "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
+              "forced": { "type": "boolean" },
+              "hearingImpaired": { "type": "boolean" },
+              "sizeBytes": { "type": "integer" },
+              "sha256": { "$ref": "defs.schema.json#/$defs/sha256" }
+            }
+          }
+        },
+        "subtitleDecisions": {
+          "type": "object",
+          "description": "A curated default subtitle mapped to one of the original's streams. Recorded only when the mapping is unambiguous; otherwise the decision is kept on the package.",
+          "additionalProperties": false,
+          "properties": {
+            "defaultStreamIndex": { "type": ["integer", "null"] },
+            "decidedBy": { "enum": ["human", "rule", "legacy-catalog", null] }
+          }
+        },
+        "covers": {
+          "type": "array",
+          "description": "Episode item ids this one file contains, in order, when a single file holds several episodes.",
+          "items": { "$ref": "defs.schema.json#/$defs/uuid" }
+        },
+        "essence": { "$ref": "defs.schema.json#/$defs/essence" },
+        "probe": {
+          "type": "object",
+          "description": "The verbatim tool output, kept in a file so any attribute the normalised fields do not model is still recoverable after the original is gone.",
+          "required": ["tool", "at", "file"],
+          "additionalProperties": false,
+          "properties": {
+            "tool": { "const": "ffprobe" },
+            "version": { "type": ["string", "null"] },
+            "at": { "$ref": "defs.schema.json#/$defs/timestamp" },
+            "file": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/relPath" }, { "type": "null" }], "description": "source/<sourceId>/ffprobe.json" },
+            "sha256": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/sha256" }, { "type": "null" }] },
+            "note": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "package": {
+      "type": "object",
+      "description": "The playable copy of a version and a full account of what it lost relative to the original. 'derived' while the original exists; 'canonical' once it is the only copy.",
+      "required": ["id", "state", "role", "fidelity", "essence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "defs.schema.json#/$defs/uuid" },
+        "state": { "enum": ["complete", "failed", "stale", "building"] },
+        "role": { "enum": ["derived", "canonical"] },
+        "recipe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "video": { "type": ["string", "null"] },
+            "audio": { "type": ["string", "null"] },
+            "subtitles": { "type": ["string", "null"] }
+          }
+        },
+        "fidelity": {
+          "type": "object",
+          "required": ["lossless", "losses"],
+          "additionalProperties": false,
+          "properties": {
+            "lossless": { "type": "boolean" },
+            "losses": {
+              "type": "array",
+              "description": "Every way the package is poorer than the original. Empty only when lossless.",
+              "items": {
+                "type": "object",
+                "required": ["kind", "detail"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "enum": ["audio-downmix", "audio-codec", "audio-dropped", "video-resolution", "video-bitdepth", "dynamic-range", "dolby-vision", "stereo3d", "subtitle-dropped", "subtitle-styling", "attachments-dropped", "chapters-dropped", "other"] },
+                  "detail": { "type": "string" },
+                  "sourceStreamIndex": { "type": ["integer", "null"] }
+                }
+              }
+            },
+            "droppedSourceStreams": { "type": "array", "items": { "type": "integer" } }
+          }
+        },
+        "essence": { "$ref": "defs.schema.json#/$defs/essence" },
+        "chapters": { "type": "array", "description": "Chapter marks carried by the package. A canonical package must carry them.", "items": { "$ref": "#/$defs/chapter" } },
+        "decisions": {
+          "type": "object",
+          "description": "Which rendition a viewer gets by default: often hand-corrected, and irreplaceable.",
+          "additionalProperties": false,
+          "properties": {
+            "defaultAudio": { "type": ["string", "null"] },
+            "defaultAudioSource": { "enum": ["manifest", "legacy-catalog", "human", null] },
+            "defaultSubtitle": { "type": ["string", "null"], "description": "Null means subtitles are off by default." },
+            "defaultSubtitleSource": { "enum": ["manifest", "legacy-catalog", "human", null] }
+          }
+        },
+        "playback": { "$ref": "#/$defs/playback" }
+      }
+    },
+
+    "chapter": {
+      "type": "object",
+      "required": ["startMs", "endMs"],
+      "additionalProperties": false,
+      "properties": {
+        "startMs": { "type": "integer", "minimum": 0 },
+        "endMs": { "type": "integer", "minimum": 0 },
+        "title": { "type": ["string", "null"] }
+      }
+    },
+    "dispositions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "type": "boolean" }, "forced": { "type": "boolean" }, "original": { "type": "boolean" },
+        "dub": { "type": "boolean" }, "commentary": { "type": "boolean" }, "hearingImpaired": { "type": "boolean" },
+        "visualImpaired": { "type": "boolean", "description": "Audio description track." },
+        "attachedPic": { "type": "boolean" }
+      }
+    },
+    "streamBase": {
+      "type": "object",
+      "required": ["index", "type"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "type": true,
+        "codec": { "type": ["string", "null"] },
+        "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
+        "languageRaw": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "dispositions": { "$ref": "#/$defs/dispositions" }
+      }
+    },
+    "videoStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "video" },
+        "profile": { "type": ["string", "null"] },
+        "level": { "type": ["number", "null"] },
+        "bitDepth": { "type": ["integer", "null"] },
+        "pixelFormat": { "type": ["string", "null"] },
+        "width": { "type": ["integer", "null"] },
+        "height": { "type": ["integer", "null"] },
+        "sampleAspectRatio": { "type": ["string", "null"] },
+        "displayAspectRatio": { "type": ["string", "null"] },
+        "frameRate": { "type": ["string", "null"] },
+        "fieldOrder": { "type": ["string", "null"] },
+        "bitrate": { "type": ["integer", "null"] },
+        "colour": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primaries": { "type": ["string", "null"] }, "transfer": { "type": ["string", "null"] },
+            "matrix": { "type": ["string", "null"] }, "range": { "type": ["string", "null"] }
+          }
+        },
+        "hdr": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "format": { "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolby-vision"] },
+            "masteringDisplay": { "type": ["object", "null"] },
+            "contentLightLevel": { "type": ["object", "null"] },
+            "dolbyVision": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {
+                "profile": { "type": "integer" }, "level": { "type": "integer" }, "rpuPresent": { "type": "boolean" },
+                "elPresent": { "type": "boolean" }, "blPresent": { "type": "boolean" }, "blCompatibilityId": { "type": "integer" }
+              }
+            }
+          }
+        },
+        "stereo3d": { "type": ["string", "null"] },
+        "encoder": { "type": ["string", "null"], "description": "Encoder tag, e.g. 'Lavc hevc_nvenc': the plainest evidence of a re-encode." }
+      }
+    },
+    "audioStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "required": ["channels"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "audio" },
+        "profile": { "type": ["string", "null"], "description": "Distinguishes DTS-HD MA from its core, and 'Dolby Digital Plus + Dolby Atmos'." },
+        "channels": { "type": "integer", "minimum": 1 },
+        "channelLayout": { "type": ["string", "null"], "description": "'stereo', '5.1', '5.1(side)', '7.1'. Absent in some files even when channels = 6." },
+        "sampleRate": { "type": ["integer", "null"] },
+        "bitDepth": { "type": ["integer", "null"] },
+        "bitrate": { "type": ["integer", "null"] },
+        "lossless": { "type": ["boolean", "null"] },
+        "objectAudio": { "enum": ["atmos", "dts-x", "none", "unknown"] },
+        "titleClaim": {
+          "type": ["object", "null"],
+          "description": "What the track title claims. When it disagrees with the actual codec or channel count, the file was re-encoded and the title is the only record of the original.",
+          "additionalProperties": false,
+          "properties": {
+            "codec": { "type": ["string", "null"] },
+            "channels": { "type": ["string", "null"] },
+            "contradictsActual": { "type": "boolean" }
+          }
+        },
+        "encoder": { "type": ["string", "null"] }
+      }
+    },
+    "subtitleStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "subtitle" },
+        "form": { "enum": ["text", "image"], "description": "Image subtitles (PGS, VobSub) cannot become text without OCR." },
+        "styled": { "type": "boolean", "description": "ASS/SSA positioning and typesetting that plain WebVTT loses." },
+        "variant": { "type": ["string", "null"], "description": "Region or script, e.g. 'Latin American', 'Simplified'." }
+      }
+    },
+    "attachmentStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "attachment" },
+        "filename": { "type": ["string", "null"] },
+        "mimetype": { "type": ["string", "null"] },
+        "role": { "enum": ["font", "cover", "other"], "description": "Fonts are required to render styled subtitles." }
+      }
+    },
+    "dataStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": { "type": { "const": "data" } }
+    }
+  }
+}

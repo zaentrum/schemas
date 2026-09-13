@@ -1,0 +1,96 @@
+{
+  "schema": "zaentrum.library.metadata/1",
+  "itemId": "68324514-b3cd-5b1c-b8cf-74edb830ddbc",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "make-library-examples",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "make-library-examples",
+  "type": "movie",
+  "titles": {
+    "primary": "Tears of Steel",
+    "original": "Tears of Steel",
+    "sort": "tears of steel",
+    "qualifier": null,
+    "localized": {
+      "en": {
+        "title": "Tears of Steel",
+        "sortTitle": "tears of steel",
+        "tagline": null,
+        "overview": "A group of warriors and scientists gather at the Oude Kerk in Amsterdam to stage a crucial event from the past."
+      }
+    }
+  },
+  "releaseDate": "2012-09-26",
+  "genres": [
+    "Science Fiction"
+  ],
+  "tags": [],
+  "rating": null,
+  "contentRating": null,
+  "reference": {
+    "runtimeMs": 720000,
+    "runtimeSource": "tmdb"
+  },
+  "credits": [
+    {
+      "personId": "b3e1b83d-9802-5983-b3df-51f19ce95590",
+      "name": "Ian Hubert",
+      "role": "director",
+      "character": null,
+      "order": 0,
+      "tmdbPerson": null
+    }
+  ],
+  "collection": null,
+  "images": [
+    {
+      "kind": "poster",
+      "file": "poster.jpg",
+      "sha256": "sha256:9650f149d622055c4b495e65e9148ebfc5e61b1bb00e83538e76afe48c496eaf",
+      "contentType": "image/jpeg",
+      "sizeBytes": 134,
+      "width": 1,
+      "height": 1,
+      "sourceUrl": null,
+      "fetchedAt": null,
+      "origin": "manual"
+    },
+    {
+      "kind": "backdrop",
+      "file": "backdrop.jpg",
+      "sha256": "sha256:9650f149d622055c4b495e65e9148ebfc5e61b1bb00e83538e76afe48c496eaf",
+      "contentType": "image/jpeg",
+      "sizeBytes": 134,
+      "width": 1,
+      "height": 1,
+      "sourceUrl": null,
+      "fetchedAt": null,
+      "origin": "manual"
+    },
+    {
+      "kind": "logo",
+      "file": "logo.png",
+      "sha256": "sha256:43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6",
+      "contentType": "image/png",
+      "sizeBytes": 68,
+      "width": 1,
+      "height": 1,
+      "sourceUrl": null,
+      "fetchedAt": null,
+      "origin": "manual"
+    }
+  ],
+  "curation": {
+    "metadataLocked": false,
+    "lockedFields": [],
+    "notes": null
+  },
+  "fieldOrigins": {
+    "titles.primary": "tmdb",
+    "releaseDate": "tmdb",
+    "genres": "tmdb",
+    "credits": "tmdb",
+    "images": "manual"
+  }
+}
