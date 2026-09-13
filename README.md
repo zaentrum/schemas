@@ -120,6 +120,14 @@ records a `review` for a person. `tools/make-library-examples.py` regenerates
 v1 is a draft until a platform service adopts it. Every change is listed here;
 rebuild a library with the current migrator after one.
 
+- **2026-09-13 (d)** — audio and subtitle tracks record their `purpose`
+  (subtitles: `dialogue`, `sdh`, `forced`, `signs-songs`, `commentary`, `lyrics`;
+  audio: `main`, `commentary`, `description`) and `purposeFrom`; audio renditions
+  gain `original` and `forcedSubtitle`, the forced track shown while subtitles
+  are off; subtitle renditions gain `variant`; video streams record
+  `closedCaptions`; essence gains SDH and forced subtitle languages, commentary
+  subtitles, audio description tracks and closed captions; losses gain
+  `closed-captions-dropped`.
 - **2026-09-13 (c)** — `package.peakBandwidthBps` replaces `package.bitrateBps`
   (the value is a playlist peak, not an average); timestamps require an
   upper-case `T` and `Z`; `version` must be the integer 3; `probe.at` may be

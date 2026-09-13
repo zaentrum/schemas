@@ -129,7 +129,12 @@
         "styledSubtitles": { "type": "boolean" },
         "fonts": { "type": "boolean" },
         "chapters": { "type": "boolean" },
-        "commentaryTracks": { "type": "integer", "minimum": 0 }
+        "commentaryTracks": { "type": "integer", "minimum": 0, "description": "Audio commentaries." },
+        "commentarySubtitles": { "type": "integer", "minimum": 0 },
+        "audioDescriptionTracks": { "type": "integer", "minimum": 0 },
+        "sdhSubtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true },
+        "forcedSubtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true, "description": "Includes signs-and-songs tracks." },
+        "closedCaptions": { "type": "boolean" }
       }
     },
     "ownership": {

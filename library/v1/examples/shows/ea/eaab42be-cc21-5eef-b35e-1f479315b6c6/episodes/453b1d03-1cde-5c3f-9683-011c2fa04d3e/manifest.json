@@ -72,11 +72,76 @@
         "segments": 15,
         "visible": true,
         "sourceStreamIndex": 1,
-        "sourceChannels": 6
+        "sourceChannels": 6,
+        "purpose": "main",
+        "purposeFrom": "assumed",
+        "original": true,
+        "forcedSubtitle": "sub0"
+      },
+      {
+        "id": "a1",
+        "dir": "hls/a1",
+        "codec": "mp4a.40.2",
+        "language": "eng",
+        "title": "Commentary",
+        "default": false,
+        "channels": 2,
+        "bitrateBps": 192000,
+        "segments": 15,
+        "visible": true,
+        "sourceStreamIndex": 2,
+        "sourceChannels": 2,
+        "purpose": "commentary",
+        "purposeFrom": "disposition",
+        "original": null,
+        "forcedSubtitle": null
       }
     ]
   },
-  "subtitles": [],
+  "subtitles": [
+    {
+      "id": "sub0",
+      "path": "subs/0.vtt",
+      "language": "eng",
+      "title": "Forced",
+      "default": false,
+      "forced": true,
+      "format": "webvtt",
+      "visible": true,
+      "sourceStreamIndex": 3,
+      "purpose": "forced",
+      "purposeFrom": "disposition",
+      "variant": null
+    },
+    {
+      "id": "sub1",
+      "path": "subs/1.vtt",
+      "language": "eng",
+      "title": "",
+      "default": false,
+      "forced": false,
+      "format": "webvtt",
+      "visible": true,
+      "sourceStreamIndex": 4,
+      "purpose": "dialogue",
+      "purposeFrom": "assumed",
+      "variant": null
+    },
+    {
+      "id": "sub2",
+      "path": "subs/2.vtt",
+      "language": "eng",
+      "title": "SDH",
+      "default": false,
+      "forced": false,
+      "format": "webvtt",
+      "visible": true,
+      "sourceStreamIndex": 5,
+      "purpose": "sdh",
+      "purposeFrom": "disposition",
+      "variant": null
+    }
+  ],
   "trickplay": null,
   "versions": [
     {
@@ -185,6 +250,7 @@
                 "dolbyVision": null
               },
               "stereo3d": null,
+              "closedCaptions": false,
               "encoder": null
             },
             {
@@ -207,7 +273,87 @@
               "lossless": false,
               "objectAudio": "none",
               "titleClaim": null,
-              "encoder": null
+              "encoder": null,
+              "purpose": "main",
+              "purposeFrom": "assumed"
+            },
+            {
+              "index": 2,
+              "type": "audio",
+              "codec": "aac",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": "Commentary",
+              "dispositions": {
+                "default": false,
+                "commentary": true
+              },
+              "profile": null,
+              "channels": 2,
+              "channelLayout": "stereo",
+              "sampleRate": 48000,
+              "bitDepth": null,
+              "bitrate": null,
+              "lossless": false,
+              "objectAudio": "none",
+              "titleClaim": null,
+              "encoder": null,
+              "purpose": "commentary",
+              "purposeFrom": "disposition"
+            },
+            {
+              "index": 3,
+              "type": "subtitle",
+              "codec": "subrip",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": "Forced",
+              "dispositions": {
+                "default": false,
+                "forced": true,
+                "hearingImpaired": false
+              },
+              "form": "text",
+              "styled": false,
+              "variant": null,
+              "purpose": "forced",
+              "purposeFrom": "disposition"
+            },
+            {
+              "index": 4,
+              "type": "subtitle",
+              "codec": "subrip",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": null,
+              "dispositions": {
+                "default": false,
+                "forced": false,
+                "hearingImpaired": false
+              },
+              "form": "text",
+              "styled": false,
+              "variant": null,
+              "purpose": "dialogue",
+              "purposeFrom": "assumed"
+            },
+            {
+              "index": 5,
+              "type": "subtitle",
+              "codec": "subrip",
+              "language": "en",
+              "languageRaw": "eng",
+              "title": "SDH",
+              "dispositions": {
+                "default": false,
+                "forced": false,
+                "hearingImpaired": true
+              },
+              "form": "text",
+              "styled": false,
+              "variant": null,
+              "purpose": "sdh",
+              "purposeFrom": "disposition"
             }
           ],
           "chapters": [],
@@ -232,13 +378,24 @@
             "audioLanguages": [
               "en"
             ],
-            "subtitleLanguages": [],
-            "subtitleTracks": 0,
+            "subtitleLanguages": [
+              "en"
+            ],
+            "subtitleTracks": 3,
             "imageSubtitles": false,
             "styledSubtitles": false,
             "fonts": false,
             "chapters": false,
-            "commentaryTracks": 0
+            "commentaryTracks": 1,
+            "commentarySubtitles": 0,
+            "audioDescriptionTracks": 0,
+            "sdhSubtitleLanguages": [
+              "en"
+            ],
+            "forcedSubtitleLanguages": [
+              "en"
+            ],
+            "closedCaptions": false
           },
           "probe": {
             "tool": "ffprobe",
@@ -286,20 +443,31 @@
           "audioLanguages": [
             "en"
           ],
-          "subtitleLanguages": [],
-          "subtitleTracks": 0,
+          "subtitleLanguages": [
+            "en"
+          ],
+          "subtitleTracks": 3,
           "imageSubtitles": false,
           "styledSubtitles": false,
           "fonts": false,
           "chapters": false,
-          "commentaryTracks": 0
+          "commentaryTracks": 1,
+          "commentarySubtitles": 0,
+          "audioDescriptionTracks": 0,
+          "sdhSubtitleLanguages": [
+            "en"
+          ],
+          "forcedSubtitleLanguages": [
+            "en"
+          ],
+          "closedCaptions": false
         },
         "chapters": [],
         "decisions": {
           "defaultAudio": "a0",
           "defaultAudioSource": "manifest",
           "defaultSubtitle": null,
-          "defaultSubtitleSource": null
+          "defaultSubtitleSource": "human"
         }
       },
       "lostIfOriginalDeleted": [
@@ -434,6 +602,7 @@
                 "dolbyVision": null
               },
               "stereo3d": null,
+              "closedCaptions": false,
               "encoder": null
             },
             {
@@ -456,7 +625,9 @@
               "lossless": false,
               "objectAudio": "none",
               "titleClaim": null,
-              "encoder": null
+              "encoder": null,
+              "purpose": "main",
+              "purposeFrom": "assumed"
             }
           ],
           "chapters": [],
@@ -487,7 +658,12 @@
             "styledSubtitles": false,
             "fonts": false,
             "chapters": false,
-            "commentaryTracks": 0
+            "commentaryTracks": 0,
+            "commentarySubtitles": 0,
+            "audioDescriptionTracks": 0,
+            "sdhSubtitleLanguages": [],
+            "forcedSubtitleLanguages": [],
+            "closedCaptions": false
           },
           "probe": {
             "tool": "ffprobe",
@@ -536,7 +712,12 @@
           "styledSubtitles": false,
           "fonts": false,
           "chapters": false,
-          "commentaryTracks": 0
+          "commentaryTracks": 0,
+          "commentarySubtitles": 0,
+          "audioDescriptionTracks": 0,
+          "sdhSubtitleLanguages": [],
+          "forcedSubtitleLanguages": [],
+          "closedCaptions": false
         },
         "chapters": [],
         "decisions": {

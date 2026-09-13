@@ -16,7 +16,8 @@ metadata/metadata.json. Beyond JSON Schema, this checks what spans files or need
                its version 2 numbering fields
   versions     unique ids, exactly one primary, '.' or versions/<own id>/; the top-level playback fields
                exist exactly when the version stored in the item folder has a package; one default audio
-               rendition per playback set; decisions name real renditions; lossless means no losses;
+               rendition per playback set; decisions name the flagged renditions; a forced subtitle paired with an
+               audio track is a forced track and is never the default subtitle; lossless means no losses;
                truth, role and source state agree; probe files and sidecars match their hashes
   --check-media every playback path exists, a complete or stale package has a video rendition (and audio when
                its original has audio), and a .complete marker sits exactly where such a package is
@@ -363,6 +364,19 @@ class Checker:
             self.err(where, f"exactly one audio rendition must be default, found {sum(1 for a in audio if a.get('default'))}")
         if sum(1 for s in subs if s.get("default") and not s.get("forced")) > 1:
             self.err(where, "more than one non-forced subtitle is default")
+        by_id = {x["id"]: x for x in subs}
+        for x in subs:
+            if x.get("forced") and x.get("purpose") not in (None, "forced", "signs-songs", "unknown"):
+                self.err(where, f"subtitle {x['id']} is flagged forced but its purpose is {x['purpose']}")
+        for a in audio:
+            fs = a.get("forcedSubtitle")
+            if fs is None:
+                continue
+            target = by_id.get(fs)
+            if target is None:
+                self.err(where, f"audio {a['id']} forcedSubtitle {fs} is not a subtitle")
+            elif not (target.get("forced") or target.get("purpose") in ("forced", "signs-songs")):
+                self.err(where, f"audio {a['id']} forcedSubtitle {fs} is not a forced or signs-and-songs track")
         if decisions and (audio or video):
             flagged_audio = [a["id"] for a in audio if a.get("default")]
             flagged_subs = [x["id"] for x in subs if x.get("default") and not x.get("forced")]
@@ -372,6 +386,8 @@ class Checker:
                 self.err(where, f"decisions.defaultAudio {decisions['defaultAudio']} is not the rendition flagged default ({flagged_audio[0]})")
             if decisions.get("defaultSubtitle") and decisions["defaultSubtitle"] not in {x["id"] for x in subs}:
                 self.err(where, f"decisions.defaultSubtitle {decisions['defaultSubtitle']} is not a subtitle")
+            elif decisions.get("defaultSubtitle") and by_id[decisions["defaultSubtitle"]].get("purpose") in ("forced", "signs-songs"):
+                self.err(where, f"decisions.defaultSubtitle {decisions['defaultSubtitle']} is a forced track: forced tracks are shown through the audio's forcedSubtitle")
             elif (decisions.get("defaultSubtitle") or None) != (flagged_subs[0] if flagged_subs else None):
                 self.err(where, f"decisions.defaultSubtitle {decisions.get('defaultSubtitle')} disagrees with the subtitle flagged default "
                                 f"({flagged_subs[0] if flagged_subs else 'none'})")

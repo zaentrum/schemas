@@ -142,7 +142,47 @@ def dispositions(s):
     }
     if d.get("attached_pic"):
         out["attachedPic"] = True
+    for raw, key in (("lyrics", "lyrics"), ("captions", "captions"), ("descriptions", "descriptions")):
+        if d.get(raw):
+            out[key] = True
     return out
+
+def subtitle_purpose(s):
+    """What a subtitle track is for, and what that rests on: the stream flags first, then the title."""
+    d = s.get("disposition") or {}
+    t = ((s.get("tags") or {}).get("title") or "").lower()
+    if d.get("forced"):
+        return "forced", "disposition"
+    if d.get("hearing_impaired") or d.get("captions"):
+        return "sdh", "disposition"
+    if d.get("comment"):
+        return "commentary", "disposition"
+    if d.get("lyrics"):
+        return "lyrics", "disposition"
+    if re.search(r"\bforced\b", t):
+        return "forced", "title"
+    if re.search(r"\bsigns?\b.*\bsongs?\b|\bsigns\b", t):
+        return "signs-songs", "title"
+    if re.search(r"\bsdh\b|\bcc\b|hearing|closed caption", t):
+        return "sdh", "title"
+    if re.search(r"commentary", t):
+        return "commentary", "title"
+    if re.search(r"\blyrics\b|karaoke", t):
+        return "lyrics", "title"
+    return "dialogue", "assumed"
+
+def audio_purpose(s):
+    d = s.get("disposition") or {}
+    t = ((s.get("tags") or {}).get("title") or "").lower()
+    if d.get("comment"):
+        return "commentary", "disposition"
+    if d.get("visual_impaired") or d.get("descriptions"):
+        return "description", "disposition"
+    if "commentary" in t:
+        return "commentary", "title"
+    if re.search(r"audio description|descriptive|\bad\b", t):
+        return "description", "title"
+    return "main", "assumed"
 
 def hdr_info(s):
     trc = s.get("color_transfer")
@@ -227,6 +267,7 @@ def norm_stream(s):
             },
             "hdr": hdr_info(s),
             "stereo3d": stereo3d(s),
+            "closedCaptions": bool(s.get("closed_captions")),
             "encoder": encoder,
         })
         return base
@@ -252,13 +293,14 @@ def norm_stream(s):
             "titleClaim": c,
             "encoder": tags.get("ENCODER") or tags.get("encoder"),
         })
+        base["purpose"], base["purposeFrom"] = audio_purpose(s)
         return base
     if t == "subtitle":
         codec = (s.get("codec_name") or "").lower()
         title = tags.get("title") or ""
         m = re.search(r"\(([^)]+)\)", title)
         variant = None
-        if m and not re.search(r"sdh|forced|commentary", m.group(1), re.I):
+        if m and not re.search(r"sdh|forced|commentary|srt|cc\b|signs|songs", m.group(1), re.I):
             variant = m.group(1)
         base.update({
             "type": "subtitle",
@@ -266,6 +308,7 @@ def norm_stream(s):
             "styled": codec in ("ass", "ssa"),
             "variant": variant,
         })
+        base["purpose"], base["purposeFrom"] = subtitle_purpose(s)
         return base
     if t == "attachment":
         fname = tags.get("filename")
@@ -302,7 +345,20 @@ def source_essence(streams, chapters):
         "styledSubtitles": any(x.get("styled") for x in sub),
         "fonts": any(x["type"] == "attachment" and x.get("role") == "font" for x in streams),
         "chapters": bool(chapters),
-        "commentaryTracks": sum(1 for x in a if x["dispositions"].get("commentary")),
+        "commentaryTracks": sum(1 for x in a if x.get("purpose") == "commentary"),
+        **track_essence(a, sub, v0.get("closedCaptions", False)),
+    }
+
+def track_essence(audio, subs, closed_captions):
+    """The accessibility and translation properties shared by originals and packages."""
+    def langs(items, purposes):
+        return sorted({lang(x.get("language"))[0] for x in items if x.get("purpose") in purposes and x.get("language")})
+    return {
+        "commentarySubtitles": sum(1 for x in subs if x.get("purpose") == "commentary"),
+        "audioDescriptionTracks": sum(1 for x in audio if x.get("purpose") == "description"),
+        "sdhSubtitleLanguages": langs(subs, ("sdh",)),
+        "forcedSubtitleLanguages": langs(subs, ("forced", "signs-songs")),
+        "closedCaptions": bool(closed_captions),
     }
 
 def package_essence(man):
@@ -329,7 +385,8 @@ def package_essence(man):
         "styledSubtitles": False,
         "fonts": False,
         "chapters": False,
-        "commentaryTracks": sum(1 for x in auds if "commentary" in (x.get("title") or "").lower()),
+        "commentaryTracks": sum(1 for x in auds if x.get("purpose") == "commentary"),
+        **track_essence(auds, subs, False),
     }
 
 def package_decisions(man, sub_rows):
@@ -371,6 +428,15 @@ def essence_gap(src, pkg):
         gap.append(f"subtitleTracks {src['subtitleTracks']}->{pkg['subtitleTracks']}")
     if (src.get("commentaryTracks") or 0) > (pkg.get("commentaryTracks") or 0):
         gap.append(f"commentaryTracks {src['commentaryTracks']}->{pkg['commentaryTracks']}")
+    for k in ("sdhSubtitleLanguages", "forcedSubtitleLanguages"):
+        missing = sorted(set(src.get(k) or []) - set(pkg.get(k) or []))
+        if missing:
+            gap.append(f"{k} {','.join(missing)}")
+    for k in ("commentarySubtitles", "audioDescriptionTracks"):
+        if (src.get(k) or 0) > (pkg.get(k) or 0):
+            gap.append(f"{k} {src[k]}->{pkg[k]}")
+    if src.get("closedCaptions") and not pkg.get("closedCaptions"):
+        gap.append("closedCaptions")
     return gap
 
 # ---------------------------------------------------------------- filename labels
@@ -912,8 +978,10 @@ def main():
         for s in fe.get("sidecars") or []:
             rel = f"source/{sid}/{s['name']}"
             slang, _ = lang((re.search(r"\.([a-z]{2,3})(?:\.(?:sdh|forced|cc))*\.[a-z0-9]+$", s["name"], re.I) or [None, None])[1])
+            forced, sdh = ".forced." in s["name"].lower(), bool(re.search(r"\.(sdh|cc)\.", s["name"], re.I))
             side.append({"file": rel, "originalName": s["name"], "kind": s["kind"], "format": os.path.splitext(s["name"])[1][1:].lower(),
-                         "language": slang, "forced": ".forced." in s["name"].lower(), "hearingImpaired": bool(re.search(r"\.(sdh|cc)\.", s["name"], re.I)),
+                         "language": slang, "forced": forced, "hearingImpaired": sdh,
+                         **({"purpose": "forced" if forced else "sdh" if sdh else "dialogue"} if s["kind"] == "subtitle" else {}),
                          "sizeBytes": s["size"]})
             plan.append(("copy", s["path"], f"{idir}/{rel}"))
         default_sub = next((x for x in subs.get(item["id"], []) if x.get("isdefault")), None)
@@ -988,7 +1056,11 @@ def main():
             for n, a in enumerate(ren.get("audio") or []):
                 sidx = src_audio_order[n] if n < len(src_audio_order) else None
                 sch = src_audio[sidx]["channels"] if sidx is not None else None
-                audio.append({**a, "sourceStreamIndex": sidx, "sourceChannels": sch})
+                sa = src_audio.get(sidx) or {}
+                audio.append({**a, "sourceStreamIndex": sidx, "sourceChannels": sch,
+                              "purpose": sa.get("purpose", "unknown"), "purposeFrom": sa.get("purposeFrom"),
+                              "original": True if (sa.get("dispositions") or {}).get("original") else None,
+                              "forcedSubtitle": None})
                 if sch and a.get("channels") and a["channels"] < sch:
                     losses.append({"kind": "audio-downmix", "detail": f"{sch}ch -> {a['channels']}ch ({a.get('title') or a['id']})", "sourceStreamIndex": sidx})
                 src_codec = src_audio[sidx]["codec"] if sidx is not None else None
@@ -1008,7 +1080,32 @@ def main():
                 if dr in ("hdr10", "dolby-vision", "hlg") and not vv.get("hdr"):
                     losses.append({"kind": "dynamic-range", "detail": f"{dr} -> sdr", "sourceStreamIndex": v0.get("index")})
             s_subs = [s for s in streams if s["type"] == "subtitle"]
-            p_subs = [{**s, "sourceStreamIndex": None} for s in man.get("subtitles") or []]
+            # The packager writes the i-th subtitle stream of the original to subs/<i>.<ext>.
+            p_subs = []
+            for sub in man.get("subtitles") or []:
+                m_i = re.match(r"subs/(\d+)\.", sub.get("path") or "")
+                ss = s_subs[int(m_i.group(1))] if m_i and int(m_i.group(1)) < len(s_subs) else None
+                p_subs.append({**sub, "sourceStreamIndex": ss["index"] if ss else None,
+                               "purpose": ss["purpose"] if ss else "unknown", "purposeFrom": ss["purposeFrom"] if ss else None,
+                               "variant": ss.get("variant") if ss else None})
+                if ss and ss["purpose"] == "forced" and not sub.get("forced"):
+                    report["package-forced-flag-missing"].append(
+                        f"{item['title']}: {sub['id']} '{sub.get('title') or ''}' is a forced track ({ss['purposeFrom']}) but the package does not flag it forced")
+            # Pair each main audio track with the forced subtitle of its language, shown while subtitles are off.
+            for a in audio:
+                if a["purpose"] not in ("main", "unknown"):
+                    continue
+                al = lang(a.get("language"))[0]
+                cands = [x for x in p_subs if x["purpose"] in ("forced", "signs-songs") and lang(x.get("language"))[0] == al]
+                cands.sort(key=lambda x: x["purpose"] != "forced")
+                if cands:
+                    a["forcedSubtitle"] = cands[0]["id"]
+            src_forced = {lang(x.get("language"))[0] for x in s_subs if x.get("purpose") in ("forced", "signs-songs")}
+            pkg_forced = {lang(x.get("language"))[0] for x in p_subs if x["purpose"] in ("forced", "signs-songs")}
+            if src_forced - pkg_forced:
+                losses.append({"kind": "subtitle-dropped", "detail": f"forced subtitles not packaged: {','.join(sorted(src_forced - pkg_forced))}", "sourceStreamIndex": None})
+            if v0.get("closedCaptions"):
+                losses.append({"kind": "closed-captions-dropped", "detail": "embedded closed captions are not carried into the package", "sourceStreamIndex": v0.get("index")})
             if len(p_subs) < len(s_subs):
                 losses.append({"kind": "subtitle-dropped", "detail": f"{len(s_subs) - len(p_subs)} of {len(s_subs)} source subtitle track(s) not packaged", "sourceStreamIndex": None})
             if any(s.get("styled") for s in s_subs):
@@ -1030,7 +1127,7 @@ def main():
                            "audio": "aac-lc 2ch 192k" if all((a.get("channels") == 2 and a.get("bitrateBps") == 192000) for a in ren.get("audio") or []) else None,
                            "subtitles": "text -> webvtt, image -> sidecar"},
                 "fidelity": {"lossless": not losses, "losses": losses, "droppedSourceStreams": dropped},
-                "essence": package_essence(man),
+                "essence": package_essence({"renditions": {"video": video, "audio": audio}, "subtitles": p_subs}),
                 "chapters": [],
                 "decisions": package_decisions(man, subs.get(item["id"], [])),
             }

@@ -255,7 +255,11 @@
         "segments": { "type": "integer" },
         "visible": { "type": "boolean" },
         "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." },
-        "sourceChannels": { "type": ["integer", "null"], "description": "Added in version 3: channels of the original track, e.g. 6 when a 5.1 track was downmixed to stereo." }
+        "sourceChannels": { "type": ["integer", "null"], "description": "Added in version 3: channels of the original track, e.g. 6 when a 5.1 track was downmixed to stereo." },
+        "purpose": { "enum": ["main", "commentary", "description", "unknown"], "description": "Added in version 3. 'description' is audio description for blind and partially sighted viewers." },
+        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." },
+        "original": { "type": ["boolean", "null"], "description": "Added in version 3: the track is in the work's original language; null when unknown." },
+        "forcedSubtitle": { "type": ["string", "null"], "description": "Added in version 3: id of the subtitle shown automatically with this audio while the viewer has subtitles off — the forced track that translates only foreign-language dialogue and on-screen text. Null when there is none." }
       }
     },
     "subtitleRendition": {
@@ -271,7 +275,10 @@
         "forced": { "type": "boolean" },
         "format": { "type": "string" },
         "visible": { "type": "boolean" },
-        "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." }
+        "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." },
+        "purpose": { "$ref": "#/$defs/subtitlePurpose", "description": "Added in version 3." },
+        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." },
+        "variant": { "type": ["string", "null"], "description": "Added in version 3: region or script, e.g. 'Latin American', 'Simplified'." }
       }
     },
     "trickplay": {
@@ -524,6 +531,7 @@
               "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
               "forced": { "type": "boolean" },
               "hearingImpaired": { "type": "boolean" },
+              "purpose": { "$ref": "#/$defs/subtitlePurpose" },
               "sizeBytes": { "type": "integer" },
               "sha256": { "$ref": "defs.schema.json#/$defs/sha256" }
             }
@@ -595,7 +603,7 @@
                 "required": ["kind", "detail"],
                 "additionalProperties": false,
                 "properties": {
-                  "kind": { "enum": ["audio-downmix", "audio-codec", "audio-dropped", "video-resolution", "video-bitdepth", "dynamic-range", "dolby-vision", "stereo3d", "subtitle-dropped", "subtitle-styling", "attachments-dropped", "chapters-dropped", "other"] },
+                  "kind": { "enum": ["audio-downmix", "audio-codec", "audio-dropped", "video-resolution", "video-bitdepth", "dynamic-range", "dolby-vision", "stereo3d", "subtitle-dropped", "subtitle-styling", "closed-captions-dropped", "attachments-dropped", "chapters-dropped", "other"] },
                   "detail": { "type": "string" },
                   "sourceStreamIndex": { "type": ["integer", "null"] }
                 }
@@ -638,8 +646,15 @@
         "default": { "type": "boolean" }, "forced": { "type": "boolean" }, "original": { "type": "boolean" },
         "dub": { "type": "boolean" }, "commentary": { "type": "boolean" }, "hearingImpaired": { "type": "boolean" },
         "visualImpaired": { "type": "boolean", "description": "Audio description track." },
-        "attachedPic": { "type": "boolean" }
+        "attachedPic": { "type": "boolean" },
+        "lyrics": { "type": "boolean" },
+        "captions": { "type": "boolean", "description": "Captions for deaf and hard-of-hearing viewers." },
+        "descriptions": { "type": "boolean", "description": "Text or audio descriptions of the picture." }
       }
+    },
+    "subtitlePurpose": {
+      "enum": ["dialogue", "sdh", "forced", "signs-songs", "commentary", "lyrics", "unknown"],
+      "description": "'dialogue': all spoken dialogue. 'sdh': dialogue plus sound cues and speaker names, for deaf and hard-of-hearing viewers. 'forced': only what a viewer of this language would not otherwise understand — foreign or invented languages, signs, letters. 'signs-songs': on-screen text and song lyrics only, the usual companion of a dubbed audio track. 'commentary': the text of a commentary. 'lyrics': song lyrics only."
     },
     "streamBase": {
       "type": "object",
@@ -697,6 +712,7 @@
           }
         },
         "stereo3d": { "type": ["string", "null"] },
+        "closedCaptions": { "type": "boolean", "description": "The video carries embedded closed captions (CEA-608/708), which a re-encode usually drops." },
         "encoder": { "type": ["string", "null"], "description": "Encoder tag, e.g. 'Lavc hevc_nvenc': the plainest evidence of a re-encode." }
       }
     },
@@ -725,7 +741,9 @@
             "contradictsActual": { "type": "boolean" }
           }
         },
-        "encoder": { "type": ["string", "null"] }
+        "encoder": { "type": ["string", "null"] },
+        "purpose": { "enum": ["main", "commentary", "description", "unknown"] },
+        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." }
       }
     },
     "subtitleStream": {
@@ -736,7 +754,9 @@
         "type": { "const": "subtitle" },
         "form": { "enum": ["text", "image"], "description": "Image subtitles (PGS, VobSub) cannot become text without OCR." },
         "styled": { "type": "boolean", "description": "ASS/SSA positioning and typesetting that plain WebVTT loses." },
-        "variant": { "type": ["string", "null"], "description": "Region or script, e.g. 'Latin American', 'Simplified'." }
+        "variant": { "type": ["string", "null"], "description": "Region or script, e.g. 'Latin American', 'Simplified'." },
+        "purpose": { "$ref": "#/$defs/subtitlePurpose" },
+        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." }
       }
     },
     "attachmentStream": {

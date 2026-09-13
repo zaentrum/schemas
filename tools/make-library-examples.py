@@ -62,7 +62,8 @@ def essence(**kw):
     base = {"maxAudioChannels": 2, "surround": False, "losslessAudio": False, "objectAudio": False, "maxVideoHeight": 1080,
             "videoBitDepth": 8, "hdr10Metadata": False, "dolbyVision": False, "stereo3d": False, "interlaced": False,
             "audioLanguages": ["en"], "subtitleLanguages": [], "subtitleTracks": 0, "imageSubtitles": False,
-            "styledSubtitles": False, "fonts": False, "chapters": False, "commentaryTracks": 0}
+            "styledSubtitles": False, "fonts": False, "chapters": False, "commentaryTracks": 0, "commentarySubtitles": 0,
+            "audioDescriptionTracks": 0, "sdhSubtitleLanguages": [], "forcedSubtitleLanguages": [], "closedCaptions": False}
     base.update(kw)
     return base
 
@@ -94,14 +95,22 @@ def video(index, codec, w, h, depth=8, hdr="sdr"):
             "colour": {"primaries": "bt709" if hdr == "sdr" else "bt2020", "transfer": "bt709" if hdr == "sdr" else "smpte2084",
                        "matrix": None, "range": "tv"},
             "hdr": {"format": hdr, "masteringDisplay": None, "contentLightLevel": None, "dolbyVision": None},
-            "stereo3d": None, "encoder": None}
+            "stereo3d": None, "closedCaptions": False, "encoder": None}
 
 
 def audio(index, codec, channels, layout, title=None, commentary=False):
     return {"index": index, "type": "audio", "codec": codec, "language": "en", "languageRaw": "eng", "title": title,
             "dispositions": {"default": index == 1, "commentary": commentary}, "profile": None, "channels": channels,
             "channelLayout": layout, "sampleRate": 48000, "bitDepth": None, "bitrate": None, "lossless": False,
-            "objectAudio": "none", "titleClaim": None, "encoder": None}
+            "objectAudio": "none", "titleClaim": None, "encoder": None,
+            "purpose": "commentary" if commentary else "main", "purposeFrom": "disposition" if commentary else "assumed"}
+
+
+def subtitle(index, title, forced=False, sdh=False):
+    purpose = "forced" if forced else "sdh" if sdh else "dialogue"
+    return {"index": index, "type": "subtitle", "codec": "subrip", "language": "en", "languageRaw": "eng", "title": title,
+            "dispositions": {"default": False, "forced": forced, "hearingImpaired": sdh}, "form": "text", "styled": False,
+            "variant": None, "purpose": purpose, "purposeFrom": "disposition" if (forced or sdh) else "assumed"}
 
 
 def playback(duration_ms, width, height, hdr, audio_src, ladder=False):
@@ -153,8 +162,7 @@ def main():
             "truth": {"kind": "source", "since": AT, "note": "the original still exists"},
             "sources": [source(mdir, sid, "Tears of Steel (2012).mkv", "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
                                [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)"),
-                                {"index": 2, "type": "subtitle", "codec": "subrip", "language": "en", "languageRaw": "eng", "title": None,
-                                 "dispositions": {"default": False}, "form": "text", "styled": False, "variant": None}],
+                                subtitle(2, None)],
                                chapters, src_es, 734000)],
             "package": {
                 "id": pid, "state": "complete", "role": "derived", "sizeBytes": 734000000, "peakBandwidthBps": 8192000,
@@ -231,9 +239,28 @@ def main():
     for base in (edir, os.path.join(edir, "versions", v_bw)):
         for r in ("hls/v0", "hls/a0"):
             keep(os.path.join(base, r))
+    keep(os.path.join(edir, "hls/a1"))
+    for sub in ("0", "1", "2"):
+        write(os.path.join(edir, "subs", f"{sub}.vtt"), b"WEBVTT\n")
     hdr_es = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=True)
+    episode_tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3, "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
     bw_es = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=True)
     ep_pb = playback(2700000, 3840, 2160, True, 6)
+    # Characters speak an invented language in a few scenes: the forced track translates only those lines and is
+    # shown with the English audio while subtitles are off; the full and SDH tracks are there to pick.
+    ep_pb["renditions"]["audio"][0].update(purpose="main", purposeFrom="assumed", original=True, forcedSubtitle="sub0")
+    ep_pb["renditions"]["audio"].append({"id": "a1", "dir": "hls/a1", "codec": "mp4a.40.2", "language": "eng", "title": "Commentary",
+                                         "default": False, "channels": 2, "bitrateBps": 192000, "segments": 15, "visible": True,
+                                         "sourceStreamIndex": 2, "sourceChannels": 2, "purpose": "commentary", "purposeFrom": "disposition",
+                                         "original": None, "forcedSubtitle": None})
+    ep_pb["subtitles"] = [
+        {"id": "sub0", "path": "subs/0.vtt", "language": "eng", "title": "Forced", "default": False, "forced": True, "format": "webvtt",
+         "visible": True, "sourceStreamIndex": 3, "purpose": "forced", "purposeFrom": "disposition", "variant": None},
+        {"id": "sub1", "path": "subs/1.vtt", "language": "eng", "title": "", "default": False, "forced": False, "format": "webvtt",
+         "visible": True, "sourceStreamIndex": 4, "purpose": "dialogue", "purposeFrom": "assumed", "variant": None},
+        {"id": "sub2", "path": "subs/2.vtt", "language": "eng", "title": "SDH", "default": False, "forced": False, "format": "webvtt",
+         "visible": True, "sourceStreamIndex": 5, "purpose": "sdh", "purposeFrom": "disposition", "variant": None},
+    ]
     bw_pb = playback(2700000, 3840, 2160, True, 6)
     episode_manifest = {
         "schema": "zaentrum.library.manifest/1", "version": 3, "itemId": eid, **audit(),
@@ -253,13 +280,16 @@ def main():
              "truth": {"kind": "source", "since": AT, "note": None},
              "sources": [source(edir, s_colour, "Example Show (US) - S01E01 - Pilot.mkv",
                                 "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot.mkv",
-                                [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")], [], hdr_es, 2700000, "2160p", "web")],
+                                [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1"),
+                                 audio(2, "aac", 2, "stereo", title="Commentary", commentary=True),
+                                 subtitle(3, "Forced", forced=True), subtitle(4, None), subtitle(5, "SDH", sdh=True)],
+                                [], {**hdr_es, **episode_tracks}, 2700000, "2160p", "web")],
              "package": {"id": uid(eid, "package", "colour"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "peakBandwidthBps": 8192000,
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                                                  {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}]},
-                         "essence": essence(maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=False), "chapters": [],
-                         "decisions": {"defaultAudio": "a0", "defaultAudioSource": "manifest", "defaultSubtitle": None, "defaultSubtitleSource": None}},
+                         "essence": {**essence(maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=False), **episode_tracks}, "chapters": [],
+                         "decisions": {"defaultAudio": "a0", "defaultAudioSource": "manifest", "defaultSubtitle": None, "defaultSubtitleSource": "human"}},
              "lostIfOriginalDeleted": ["surround", "hdr10Metadata", "audioChannels 6->2"]},
             {"id": v_bw, "path": f"versions/{v_bw}/", "label": "Black & White", "primary": False,
              "edition": {"kind": "other", "label": "Black & White", "decidedBy": "human", "decidedAt": AT, "evidence": [], "review": None},
