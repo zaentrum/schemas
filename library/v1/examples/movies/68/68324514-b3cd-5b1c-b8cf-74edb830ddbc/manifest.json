@@ -73,8 +73,7 @@
         "purpose": "main",
         "purposeFrom": "assumed",
         "variant": null,
-        "original": true,
-        "forcedSubtitle": null
+        "original": true
       }
     ]
   },
@@ -264,10 +263,6 @@
           ],
           "segments": [],
           "sidecars": [],
-          "subtitleDecisions": {
-            "defaultStreamIndex": null,
-            "decidedBy": null
-          },
           "covers": [],
           "essence": {
             "maxAudioChannels": 6,
@@ -369,13 +364,7 @@
           "forcedSubtitleLanguages": [],
           "closedCaptions": false
         },
-        "chapters": [],
-        "decisions": {
-          "defaultAudio": "a0",
-          "defaultAudioSource": "manifest",
-          "defaultSubtitle": null,
-          "defaultSubtitleSource": null
-        }
+        "chapters": []
       },
       "lostIfOriginalDeleted": [
         "surround",

@@ -97,7 +97,7 @@ def source(item_dir, sid, name, library_path, streams, chapters, src_essence, du
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
         "fidelity": {"class": "original", "evidence": []},
         "streams": streams, "chapters": chapters, "segments": [], "sidecars": [],
-        "subtitleDecisions": {"defaultStreamIndex": None, "decidedBy": None}, "covers": [],
+        "covers": [],
         "essence": src_essence,
         "probe": {"tool": "ffprobe", "version": None, "at": AT, "file": f"source/{sid}/ffprobe.json", "sha256": sha(probe_bytes), "note": None},
     }
@@ -141,7 +141,7 @@ def playback(duration_ms, width, height, hdr, audio_src, ladder=False):
             "audio": [{"id": "a0", "dir": "hls/a0", "codec": "mp4a.40.2", "language": "eng", "title": "", "default": True,
                        "channels": 2, "bitrateBps": 192000, "segments": 15, "visible": True,
                        "sourceStreamIndex": 1, "sourceChannels": audio_src, "purpose": "main", "purposeFrom": "assumed",
-                       "variant": None, "original": True, "forcedSubtitle": None}],
+                       "variant": None, "original": True}],
         },
         "subtitles": [], "trickplay": None,
     }
@@ -190,7 +190,6 @@ def main():
                     {"kind": "subtitle-dropped", "detail": "1 of 1 source subtitle track(s) not packaged", "sourceStreamIndex": 2},
                     {"kind": "chapters-dropped", "detail": "chapters are not in the package", "sourceStreamIndex": None}]},
                 "essence": essence(maxVideoHeight=800), "chapters": [],
-                "decisions": {"defaultAudio": "a0", "defaultAudioSource": "manifest", "defaultSubtitle": None, "defaultSubtitleSource": None},
             },
             "lostIfOriginalDeleted": ["surround", "chapters", "audioChannels 6->2", "subtitleLanguages en", "subtitleTracks 1->0"],
         }],
@@ -264,13 +263,12 @@ def main():
     episode_tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3, "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
     bw_es = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=True)
     ep_pb = playback(2700000, 3840, 2160, True, 6)
-    # Characters speak an invented language in a few scenes: the forced track translates only those lines and is
-    # shown with the English audio while subtitles are off; the full and SDH tracks are there to pick.
-    ep_pb["renditions"]["audio"][0].update(forcedSubtitle="sub0")
+    # Characters speak an invented language in a few scenes: the forced track translates only those lines; the full
+    # and SDH tracks are there to pick. Which one a viewer sees is up to the player and the viewer's settings.
     ep_pb["renditions"]["audio"].append({"id": "a1", "dir": "hls/a1", "codec": "mp4a.40.2", "language": "eng", "title": "Commentary",
                                          "default": False, "channels": 2, "bitrateBps": 192000, "segments": 15, "visible": True,
                                          "sourceStreamIndex": 2, "sourceChannels": 2, "purpose": "commentary", "purposeFrom": "disposition",
-                                         "variant": None, "original": None, "forcedSubtitle": "sub0"})
+                                         "variant": None, "original": None})
     ep_pb["subtitles"] = [
         {"id": "sub0", "path": "subs/0.vtt", "language": "eng", "title": "Forced", "default": False, "forced": True, "format": "webvtt",
          "visible": True, "sourceStreamIndex": 3, "purpose": "forced", "purposeFrom": "disposition", "variant": None},
@@ -306,8 +304,7 @@ def main():
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                                                  {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}]},
-                         "essence": {**essence(maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=False), **episode_tracks}, "chapters": [],
-                         "decisions": {"defaultAudio": "a0", "defaultAudioSource": "manifest", "defaultSubtitle": None, "defaultSubtitleSource": "human"}},
+                         "essence": {**essence(maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=False), **episode_tracks}, "chapters": []},
              "lostIfOriginalDeleted": ["surround", "hdr10Metadata", "audioChannels 6->2"]},
             {"id": v_bw, "path": f"versions/{v_bw}/", "label": "Black & White", "primary": False,
              "edition": {"kind": "other", "label": "Black & White", "decidedBy": "human", "decidedAt": AT, "evidence": [], "review": None},
@@ -325,8 +322,7 @@ def main():
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1}]},
                          "essence": essence(maxVideoHeight=2160, videoBitDepth=10), "chapters": [],
-                         "decisions": {"defaultAudio": "a0", "defaultAudioSource": "manifest", "defaultSubtitle": None, "defaultSubtitleSource": None},
-                         "playback": bw_pb},
+                                  "playback": bw_pb},
              "lostIfOriginalDeleted": ["surround", "hdr10Metadata", "audioChannels 6->2"]},
         ],
         "processing": {}, "provenance": {"migratedFrom": "scan", "migratedAt": AT},

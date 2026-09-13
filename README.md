@@ -120,7 +120,12 @@ records a `review` for a person. `tools/make-library-examples.py` regenerates
 v1 is a draft until a platform service adopts it. Every change is listed here;
 rebuild a library with the current migrator after one.
 
-- **2026-09-14** — no schema change; the migrator reports package audio titles
+- **2026-09-14 (b)** — behaviour is not library data: `package.decisions`
+  (default audio and subtitle), audio `forcedSubtitle` and source
+  `subtitleDecisions` are removed. Players and per-user settings derive them from
+  `purpose` and language. The version 2 `default`, `forced` and `visible` fields
+  stay as playback hints for existing readers.
+- **2026-09-14 (a)** — no schema change; the migrator reports package audio titles
   that claim more than the rendition carries, and interchangeable or
   indistinguishable audio renditions, for building track menus.
 - **2026-09-13 (e)** — renditions require `purpose` and `purposeFrom`;

@@ -249,18 +249,17 @@
         "codec": { "type": "string" },
         "language": { "$ref": "defs.schema.json#/$defs/language" },
         "title": { "type": "string" },
-        "default": { "type": "boolean" },
+        "default": { "type": "boolean", "description": "Version 2 playback hint for existing readers, written by the packager. Not library data: a player derives what to show from purpose and language." },
         "channels": { "type": "integer" },
         "bitrateBps": { "type": "integer" },
         "segments": { "type": "integer" },
-        "visible": { "type": "boolean" },
+        "visible": { "type": "boolean", "description": "Version 2 playback hint for existing readers, written by the packager. Not library data: a player derives what to show from purpose and language." },
         "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." },
         "sourceChannels": { "type": ["integer", "null"], "description": "Added in version 3: channels of the original track, e.g. 6 when a 5.1 track was downmixed to stereo." },
         "purpose": { "enum": ["main", "commentary", "description", "unknown"], "description": "Added in version 3. 'description' is audio description for blind and partially sighted viewers." },
         "purposeFrom": { "enum": ["disposition", "title", "content", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, the track's content (a subtitle with a small fraction of the events of the full track in its language is forced), a person, or nothing (assumed: dialogue or main). Null only with purpose unknown." },
         "variant": { "type": ["string", "null"], "description": "Added in version 3: region or dialect, e.g. 'Castilian', 'Latin American'." },
-        "original": { "type": ["boolean", "null"], "description": "Added in version 3: true when the file flags the track as the work's original language; null when unknown." },
-        "forcedSubtitle": { "type": ["string", "null"], "description": "Added in version 3: id of the subtitle shown automatically with this audio while the viewer has subtitles off — the forced or signs-and-songs track of the same language that translates only foreign-language dialogue and on-screen text. Null when no such track exists or the audio's language is unknown. A client that cannot render it picks another forced track of the same language, preferring text." }
+        "original": { "type": ["boolean", "null"], "description": "Added in version 3: true when the file flags the track as the work's original language; null when unknown." }
       }
     },
     "subtitleRendition": {
@@ -272,10 +271,10 @@
         "path": { "$ref": "defs.schema.json#/$defs/relPath" },
         "language": { "$ref": "defs.schema.json#/$defs/language" },
         "title": { "type": "string" },
-        "default": { "type": "boolean" },
-        "forced": { "type": "boolean" },
+        "default": { "type": "boolean", "description": "Version 2 playback hint for existing readers, written by the packager. Not library data: a player derives what to show from purpose and language." },
+        "forced": { "type": "boolean", "description": "Version 2 playback hint for existing readers, written by the packager. Not library data: a player derives what to show from purpose and language. The content fact is purpose 'forced'." },
         "format": { "type": "string" },
-        "visible": { "type": "boolean" },
+        "visible": { "type": "boolean", "description": "Version 2 playback hint for existing readers, written by the packager. Not library data: a player derives what to show from purpose and language." },
         "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." },
         "purpose": { "$ref": "#/$defs/subtitlePurpose", "description": "Added in version 3." },
         "purposeFrom": { "enum": ["disposition", "title", "content", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, the track's content (a subtitle with a small fraction of the events of the full track in its language is forced), a person, or nothing (assumed: dialogue or main). Null only with purpose unknown." },
@@ -538,15 +537,6 @@
             }
           }
         },
-        "subtitleDecisions": {
-          "type": "object",
-          "description": "A curated default subtitle mapped to one of the original's streams. Recorded only when the mapping is unambiguous; otherwise the decision is kept on the package.",
-          "additionalProperties": false,
-          "properties": {
-            "defaultStreamIndex": { "type": ["integer", "null"] },
-            "decidedBy": { "enum": ["human", "rule", "legacy-catalog", null] }
-          }
-        },
         "covers": {
           "type": "array",
           "description": "Episode item ids this one file contains, in order, when a single file holds several episodes.",
@@ -572,7 +562,7 @@
 
     "package": {
       "type": "object",
-      "description": "The playable copy of a version and a full account of what it lost relative to the original. 'derived' while the original exists; 'canonical' once it is the only copy.",
+      "description": "The playable copy of a version and a full account of what it lost relative to the original. It describes the package; what a player shows by default is behaviour and lives in players and the database, not here. 'derived' while the original exists; 'canonical' once it is the only copy.",
       "required": ["id", "state", "role", "fidelity", "essence"],
       "additionalProperties": false,
       "properties": {
@@ -615,17 +605,6 @@
         },
         "essence": { "$ref": "defs.schema.json#/$defs/essence" },
         "chapters": { "type": "array", "description": "Chapter marks carried by the package. A canonical package must carry them.", "items": { "$ref": "#/$defs/chapter" } },
-        "decisions": {
-          "type": "object",
-          "description": "Which rendition a viewer gets by default: often hand-corrected, and irreplaceable.",
-          "additionalProperties": false,
-          "properties": {
-            "defaultAudio": { "type": ["string", "null"] },
-            "defaultAudioSource": { "enum": ["manifest", "legacy-catalog", "human", null] },
-            "defaultSubtitle": { "type": ["string", "null"], "description": "Null means subtitles are off by default." },
-            "defaultSubtitleSource": { "enum": ["manifest", "legacy-catalog", "human", null] }
-          }
-        },
         "playback": { "$ref": "#/$defs/playback" }
       }
     },

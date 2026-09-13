@@ -420,25 +420,6 @@ def package_essence(man):
         **track_essence(auds, subs, False),
     }
 
-def package_decisions(man, sub_rows):
-    """Default audio from the manifest (hand-corrected there); default subtitle from the catalog, which wins."""
-    auds = (man.get("renditions") or {}).get("audio") or []
-    da = next((a["id"] for a in auds if a.get("default")), None)
-    msubs = man.get("subtitles") or []
-    chosen = next((r for r in sub_rows if r.get("isdefault")), None)
-    ds, src = None, None
-    if chosen:
-        base = os.path.basename(chosen.get("path") or "")
-        hit = next((x for x in msubs if os.path.basename(x.get("path") or "") == base), None)
-        if hit:
-            ds, src = hit["id"], "legacy-catalog"
-    if ds is None:
-        mdef = next((x for x in msubs if x.get("default")), None)
-        if mdef:
-            ds, src = mdef["id"], "manifest"
-    return {"defaultAudio": da, "defaultAudioSource": "manifest" if da else None,
-            "defaultSubtitle": ds, "defaultSubtitleSource": src}
-
 def essence_gap(src, pkg):
     """What deleting the original would lose: every property the source has that the package lacks."""
     gap = []
@@ -632,7 +613,6 @@ def main():
     artmeta = group("artwork")
     chapters = group("chapters")
     segments = group("segments")
-    subs = group("subtitles")
     steps = group("steps")
     trailers = group("trailers")
     packaged_rows = {r["item_id"]: r for r in cat.get("playback") or [] if r.get("kind") == "packaged"}
@@ -1016,7 +996,6 @@ def main():
                          **({"purpose": "forced" if forced else "sdh" if sdh else "dialogue"} if s["kind"] == "subtitle" else {}),
                          "sizeBytes": s["size"]})
             plan.append(("copy", s["path"], f"{idir}/{rel}"))
-        default_sub = next((x for x in subs.get(item["id"], []) if x.get("isdefault")), None)
         source = {
             "id": sid, "state": "present",
             "file": {
@@ -1049,7 +1028,6 @@ def main():
                           "confidence": float(s["confidence"]) if s["confidence"] is not None else None, "label": s["label"]}
                          for s in segments.get(item["id"], [])],
             "sidecars": side,
-            "subtitleDecisions": {"defaultStreamIndex": None, "decidedBy": None},
             "covers": [],
             "probe": {"tool": "ffprobe", "version": None, "at": PROBED_AT if probe else None, "file": probe_rel if probe else None, "sha256": probe_sha,
                       "note": "disc image: streams were not demuxed; mount the image to inventory its playlists" if is_iso else None},
@@ -1062,16 +1040,6 @@ def main():
             siblings = sorted((x for x in items.values() if x["parent_id"] == item["parent_id"] and x["seasonnumber"] == fc["season"]
                                and fc["episode"] <= (x["episodenumber"] or -1) <= fc["episodeEnd"]), key=lambda x: x["episodenumber"])
             source["covers"] = [x["id"] for x in siblings]
-        if default_sub:
-            want_lang = lang(default_sub.get("lang"))[0]
-            cands = [x for x in streams if x["type"] == "subtitle" and x.get("language") == want_lang]
-            if default_sub.get("label"):
-                exact = [x for x in cands if (x.get("title") or "") == default_sub["label"]]
-                cands = exact or cands
-            if len(cands) == 1:
-                source["subtitleDecisions"] = {"defaultStreamIndex": cands[0]["index"], "decidedBy": "legacy-catalog"}
-            else:
-                report["subtitle-default-kept-on-package"].append(f"{item['title']}: {len(cands)} same-language source streams")
         if not source["file"]["fixity"]["qh1"]:
             raise SystemExit(f"no fixity for {src_path}")
 
@@ -1092,8 +1060,7 @@ def main():
                 audio.append({**a, "sourceStreamIndex": sidx, "sourceChannels": sch,
                               "purpose": sa.get("purpose", "unknown"), "purposeFrom": sa.get("purposeFrom"),
                               "variant": sa.get("variant"),
-                              "original": True if (sa.get("dispositions") or {}).get("original") else None,
-                              "forcedSubtitle": None})
+                              "original": True if (sa.get("dispositions") or {}).get("original") else None})
                 if sch and a.get("channels") and a["channels"] < sch:
                     losses.append({"kind": "audio-downmix", "detail": f"{sch}ch -> {a['channels']}ch ({a.get('title') or a['id']})", "sourceStreamIndex": sidx})
                 src_codec = src_audio[sidx]["codec"] if sidx is not None else None
@@ -1156,24 +1123,6 @@ def main():
                         f"{item['title']}: {sub['id']} '{sub.get('title') or ''}' is a {purpose} track ({purpose_from}) the package does not flag forced")
                 if purpose in ("forced", "signs-songs") and sub.get("default"):
                     report["forced-track-flagged-default"].append(f"{item['title']}: {sub['id']} '{sub.get('title') or ''}' is {purpose} but flagged default")
-            events = {x["index"]: x.get("events") for x in s_subs}
-            # Pair every audio track with the forced subtitle of its language, as players choose forced tracks by language.
-            for a in audio:
-                al = primary_language(a.get("language"))
-                if al in ("und", "mul", "zxx"):
-                    continue
-                cands = [x for x in p_subs if x["purpose"] in ("forced", "signs-songs") and primary_language(x.get("language")) == al]
-                if a.get("variant") and any(x.get("variant") == a["variant"] for x in cands):
-                    cands = [x for x in cands if x.get("variant") == a["variant"]]
-                cands.sort(key=lambda x: (x["purpose"] != "forced", -(events.get(x["sourceStreamIndex"]) or 0),
-                                          {"disposition": 0, "title": 1, "content": 2}.get(x["purposeFrom"], 3),
-                                          (x.get("format") or "") in ("pgs", "vobsub", "dvb")))
-                if cands:
-                    a["forcedSubtitle"] = cands[0]["id"]
-                    same_rank = [x for x in cands if x["purpose"] == cands[0]["purpose"]]
-                    if len(same_rank) > 1:
-                        report["forced-pairing-ambiguous"].append(
-                            f"{item['title']}: audio {a['id']} ({al}) has {len(same_rank)} {cands[0]['purpose']} tracks; chose {cands[0]['id']}, the one with most events")
             if any(x.get("purpose") == "commentary" for x in s_subs) and not any(x.get("purpose") == "commentary" for x in astreams):
                 report["commentary-subtitles-without-commentary-audio"].append(f"{item['title']}: set the purpose of the commentary audio tracks by hand")
             src_forced = {primary_language(x.get("language")) for x in s_subs if x.get("purpose") in ("forced", "signs-songs")}
@@ -1205,7 +1154,6 @@ def main():
                 "fidelity": {"lossless": not losses, "losses": losses, "droppedSourceStreams": dropped},
                 "essence": package_essence({"renditions": {"video": video, "audio": audio}, "subtitles": p_subs}),
                 "chapters": [],
-                "decisions": package_decisions(man, subs.get(item["id"], [])),
             }
             lost = essence_gap(source["essence"], package["essence"])
             if lost:
