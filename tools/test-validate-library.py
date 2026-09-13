@@ -64,8 +64,14 @@ CASES = [
     ("itemId differs from its folder", False, lambda r: edit(man(movie(r)), lambda d: d.update(itemId="00000000-0000-4000-8000-000000000000")), "does not match folder", []),
     ("metadata of another type", False, lambda r: edit(meta(movie(r)), lambda d: d.update(type="episode")), "type differs", []),
     ("unknown top-level field", False, lambda r: edit(man(movie(r)), lambda d: d.update(extra=1)), "extra", []),
-    ("createdAt not a timestamp", False, lambda r: edit(man(movie(r)), lambda d: d.update(createdAt="yesterday")), "date-time", []),
-    ("packagedAt not a timestamp", False, lambda r: edit(man(movie(r)), lambda d: d.update(packagedAt="2026-06-01 20:46:17")), "date-time", []),
+    ("createdAt not a timestamp", False, lambda r: edit(man(movie(r)), lambda d: d.update(createdAt="yesterday")), "$.createdAt: 'yesterday' is not a 'date-time'", []),
+    ("packagedAt not a timestamp", False, lambda r: edit(man(movie(r)), lambda d: d.update(packagedAt="2026-06-01 20:46:17")), "$.packagedAt:", []),
+    ("packagedAt with a lower-case t", False, lambda r: edit(man(movie(r)), lambda d: d.update(packagedAt="2026-09-01t10:00:00z")), "$.packagedAt:", []),
+    ("createdAt with a trailing line break", False, lambda r: edit(man(movie(r)), lambda d: d.update(createdAt="2026-09-13T12:00:00Z\n")), "line break", []),
+    ("version 3.0", False, lambda r: edit(man(movie(r)), lambda d: d.update(version=3.0)), "$.version:", []),
+    ("integer beyond int64", False, lambda r: edit(man(movie(r)), lambda d: d["renditions"]["video"][0].update(bitrateBps=10 ** 20)), "bitrateBps", []),
+    ("nested error names the field", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["package"].update(state="done")), "'done' is not one of", []),
+    ("episode listing path without the trailing slash", False, lambda r: edit(man(series(r)), lambda d: d["series"]["seasons"][0]["episodes"][0].update(path=d["series"]["seasons"][0]["episodes"][0]["path"].rstrip("/"))), "episodes[0].path", []),
     ("channels as 2.0", False, lambda r: edit(man(movie(r)), lambda d: d["renditions"]["audio"][0].update(channels=2.0)), "integer", []),
     ("renditions without durationMs", False, lambda r: edit(man(movie(r)), lambda d: d.pop("durationMs")), "durationMs", []),
     ("rendition language not a language", False, lambda r: edit(man(movie(r)), lambda d: d["renditions"]["audio"][0].update(language="English (5.1)")), "does not match", []),
@@ -73,9 +79,10 @@ CASES = [
     ("version path './'", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0].update(path="./")), "does not match", []),
     ("version stored under another version's id", False, lambda r: edit(man(episode(r)), lambda d: d["versions"][1].update(path="versions/00000000-0000-4000-8000-000000000000/")), "is not versions/", []),
     ("two primary versions", False, lambda r: edit(man(episode(r)), lambda d: d["versions"][1].update(primary=True)), "exactly one version must be primary", []),
-    ("root package carrying a playback block", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["package"].update(playback={})), "", []),
+    ("root package carrying a playback block", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["package"].update(playback={})), "$.versions[0].package", []),
     ("playback fields without a package", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0].update(package=None, lostIfOriginalDeleted=["everything"])), "no version in the item folder has a package", []),
     ("two default audio renditions", False, lambda r: edit(man(movie(r)), lambda d: d["renditions"]["audio"].append({**d["renditions"]["audio"][0], "id": "a1", "dir": "hls/a0"})), "exactly one audio rendition must be default", []),
+    ("default audio decision contradicting the flag", False, lambda r: edit(man(movie(r)), lambda d: [d["renditions"]["audio"].append({**d["renditions"]["audio"][0], "id": "a1", "default": False}), d["versions"][0]["package"]["decisions"].update(defaultAudio="a1")]), "is not the rendition flagged default", []),
     ("default audio decision naming no rendition", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["package"]["decisions"].update(defaultAudio="a9")), "is not an audio rendition", []),
     ("lossless with losses", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["package"]["fidelity"].update(lossless=True)), "lossless must be true exactly when", []),
     ("package truth while the original exists", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["truth"].update(kind="package")), "truth.kind must be 'package' exactly when", []),
@@ -90,13 +97,26 @@ CASES = [
     ("image dimensions wrong", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(width=3840)), "width is 1", []),
     ("image listed twice", False, lambda r: edit(meta(movie(r)), lambda d: d["images"].append(dict(d["images"][0]))), "listed twice", []),
     ("unlisted file in metadata/", False, lambda r: open(os.path.join(movie(r), "metadata", "extra.jpg"), "wb").write(b"x"), "not listed in metadata.json", []),
-    ("season image on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(season=1)), "", []),
+    ("season image on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(season=1)), "season-specific image on a non-series item", []),
     ("probe hash wrong", False, lambda r: open(only("movies/*/*/source/*/ffprobe.json", r), "a").write(" "), "probe sha256", []),
     ("unreferenced source folder", False, lambda r: os.makedirs(os.path.join(movie(r), "source", "22222222-2222-4222-8222-222222222222")), "not referenced by the manifest", []),
     ("stray entry in an item folder", False, lambda r: open(os.path.join(movie(r), "notes.txt"), "w").write("x"), "unexpected entry", []),
     ("item in the wrong shard", False, lambda r: shutil.move(movie(r), os.path.join(r, "movies", "ff", os.path.basename(movie(r)))) if os.makedirs(os.path.join(r, "movies", "ff")) is None else None, "is not in shard", []),
     ("rendition folder missing", False, lambda r: shutil.rmtree(os.path.join(movie(r), "hls", "v1")), "rendition dir hls/v1 missing", ["--check-media"]),
-    ("complete marker without a package", False, lambda r: edit(man(movie(r)), lambda d: [d["versions"][0].update(package=None, lostIfOriginalDeleted=["everything"])] + [d.pop(k) for k in ("durationMs", "packagedAt", "packager", "renditions", "subtitles", "trickplay")]), "marker present but the package is not complete", ["--check-media"]),
+    ("complete marker without a package", False, lambda r: edit(man(movie(r)), lambda d: [d["versions"][0].update(package=None, lostIfOriginalDeleted=["everything"])] + [d.pop(k) for k in ("durationMs", "packagedAt", "packager", "renditions", "subtitles", "trickplay")]), "marker present but the package is neither complete nor stale", ["--check-media"]),
+    ("item-folder marker with no version stored there", False, lambda r: (
+        shutil.copytree(os.path.join(movie(r), "hls"), os.path.join(movie(r), "versions", json.load(open(man(movie(r))))["versions"][0]["id"], "hls")),
+        open(os.path.join(movie(r), "versions", json.load(open(man(movie(r))))["versions"][0]["id"], ".complete"), "w").write("x"),
+        edit(man(movie(r)), lambda d: [d["versions"][0].update(path=f"versions/{d['versions'][0]['id']}/"),
+                                     d["versions"][0]["package"].update(playback={k: d.pop(k) for k in ("durationMs", "packagedAt", "packager", "renditions", "subtitles", "trickplay")})])),
+     "marker in the item folder but no version is stored there", ["--check-media"]),
+    ("stale package still on disk", True, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["package"].update(state="stale")), "OK", ["--check-media"]),
+    ("silent film without audio", True, lambda r: (edit(man(movie(r)), lambda d: [d["renditions"].update(audio=[]), d["versions"][0]["package"]["decisions"].update(defaultAudio=None),
+                                                                            d["versions"][0]["sources"][0].update(streams=[x for x in d["versions"][0]["sources"][0]["streams"] if x["type"] != "audio"])]),
+                                                   shutil.rmtree(os.path.join(movie(r), "hls", "a0"))), "OK", ["--check-media"]),
+    ("absolute ordering without season numbers", True, lambda r: (edit(man(series(r)), lambda d: d["series"].update(defaultOrdering="absolute")),
+                                                                  edit(man(episode(r)), lambda d: d["episode"]["coordinates"].append({"scheme": "absolute", "season": None, "episode": 1, "episodeEnd": None}))), "OK", []),
+    ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in (movie(r), os.path.join(movie(r), "metadata"), os.path.join(r, "movies"), os.path.join(series(r), "episodes"))], "OK", ["--check-media"]),
     ("manifest that is not an object", False, lambda r: open(man(movie(r)), "w").write("[1, 2]"), "not a JSON object", []),
     ("movie with no package", True, lambda r: (edit(man(movie(r)), lambda d: [d["versions"][0].update(package=None, lostIfOriginalDeleted=["everything: no package exists"])] + [d.pop(k) for k in ("durationMs", "packagedAt", "packager", "renditions", "subtitles", "trickplay")]),
                                                 os.remove(os.path.join(movie(r), ".complete")), shutil.rmtree(os.path.join(movie(r), "hls"))), "OK", ["--check-media"]),
@@ -118,7 +138,7 @@ def main():
             run = subprocess.run([sys.executable, VALIDATOR, *extra, root], capture_output=True, text=True)
             out = run.stdout + run.stderr
             ok = run.returncode == 0
-            good = ok == expect_ok and phrase in out and "Traceback" not in out
+            good = ok == expect_ok and phrase in out and "Traceback" not in out and "checked:" in out
             print(f"{'pass' if good else 'FAIL'}  {'accepts' if expect_ok else 'rejects'}: {name}")
             if not good:
                 failures += 1

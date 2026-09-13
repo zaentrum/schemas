@@ -255,7 +255,7 @@
         "state": "complete",
         "role": "derived",
         "sizeBytes": 2700000000,
-        "bitrateBps": 8000000,
+        "peakBandwidthBps": 8192000,
         "fidelity": {
           "lossless": false,
           "droppedSourceStreams": [],
@@ -504,7 +504,7 @@
         "state": "complete",
         "role": "derived",
         "sizeBytes": 2700000000,
-        "bitrateBps": 8000000,
+        "peakBandwidthBps": 8192000,
         "fidelity": {
           "lossless": false,
           "droppedSourceStreams": [],

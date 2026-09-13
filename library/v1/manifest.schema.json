@@ -46,6 +46,7 @@
   "properties": {
     "schema": { "const": "zaentrum.library.manifest/1" },
     "version": {
+      "type": "integer",
       "const": 3,
       "description": "Playback format version. 3 is version 2 with the library sections added; every version 2 field keeps its name, type and meaning, so a version 2 reader keeps working."
     },
@@ -114,7 +115,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "itemId": { "$ref": "defs.schema.json#/$defs/uuid" },
-                    "path": { "$ref": "defs.schema.json#/$defs/relPath", "description": "episodes/<itemId>/" },
+                    "path": { "type": "string", "pattern": "^episodes/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/$", "description": "episodes/<itemId>/" },
                     "episode": { "type": ["integer", "null"] },
                     "episodeEnd": { "type": ["integer", "null"] }
                   }
@@ -551,7 +552,7 @@
           "properties": {
             "tool": { "const": "ffprobe" },
             "version": { "type": ["string", "null"] },
-            "at": { "$ref": "defs.schema.json#/$defs/timestamp" },
+            "at": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }], "description": "When the probe ran; null when the original was never probed." },
             "file": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/relPath" }, { "type": "null" }], "description": "source/<sourceId>/ffprobe.json" },
             "sha256": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/sha256" }, { "type": "null" }] },
             "note": { "type": ["string", "null"] }
@@ -567,10 +568,10 @@
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "defs.schema.json#/$defs/uuid" },
-        "state": { "enum": ["complete", "failed", "stale", "building"] },
+        "state": { "enum": ["complete", "failed", "stale", "building"], "description": "'stale': complete and playable on disk, but outdated against its original or recipe and due to be rebuilt." },
         "role": { "enum": ["derived", "canonical"] },
         "sizeBytes": { "type": ["integer", "null"], "minimum": 0, "description": "Total size of the package's files." },
-        "bitrateBps": { "type": ["integer", "null"], "minimum": 0, "description": "Average video bitrate of the package. The version 2 rendition field bitrateBps is often 0." },
+        "peakBandwidthBps": { "type": ["integer", "null"], "minimum": 0, "description": "The highest BANDWIDTH in the package's master playlist, audio included: a peak, not an average. The version 2 rendition field bitrateBps is often 0." },
         "recipe": {
           "type": "object",
           "additionalProperties": false,

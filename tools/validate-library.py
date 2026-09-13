@@ -18,8 +18,8 @@ metadata/metadata.json. Beyond JSON Schema, this checks what spans files or need
                exist exactly when the version stored in the item folder has a package; one default audio
                rendition per playback set; decisions name real renditions; lossless means no losses;
                truth, role and source state agree; probe files and sidecars match their hashes
-  --check-media every playback path exists, a complete package has renditions, and a .complete marker
-               sits exactly where a complete package is
+  --check-media every playback path exists, a complete or stale package has a video rendition (and audio when
+               its original has audio), and a .complete marker sits exactly where such a package is
 
 The schemas are loaded from the library/v1 folder next to this tool by default; pass
 --schemas https://zaentrum.github.io/schemas/library/v1 to use the published copies.
@@ -38,6 +38,14 @@ SERIES_ENTRIES = {"manifest.json", "metadata", "episodes"}
 ID_KEYS = {"schema", "itemId", "id", "seriesId", "personId", "path", "dir", "file", "vttPath", "manifestPath", "language", "type", "kind",
            "tmdbMovie", "tmdbTv", "tmdbSeason", "tmdbEpisode", "tmdbCollection", "imdb", "tvdb", "tmdbPerson", "sha256", "qh1"}
 SEASON_EPISODE = re.compile(r"^S(\d+)E(\d+)$")
+FREE_TEXT = {"overview", "tagline", "notes", "note", "review", "detail", "deletionReason"}
+OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
+INT64 = (-(1 << 63), (1 << 63) - 1)
+
+
+def listdir(d):
+    """Directory entries without the files operating systems and NAS software drop into shared folders."""
+    return sorted(n for n in os.listdir(d) if not OS_ARTEFACTS.match(n))
 
 
 # ---------------------------------------------------------------- schemas
@@ -55,7 +63,7 @@ def load_schemas(where):
     registry = Registry().with_resources((BASE + f"{n}.schema.json", Resource.from_contents(d)) for n, d in docs.items())
     # JSON Schema counts 7.0 as an integer; the Go reader of the playback fields does not.
     types = Draft202012Validator.TYPE_CHECKER.redefine(
-        "integer", lambda checker, x: isinstance(x, int) and not isinstance(x, bool))
+        "integer", lambda checker, x: isinstance(x, int) and not isinstance(x, bool) and INT64[0] <= x <= INT64[1])
     Strict = validators.extend(Draft202012Validator, type_checker=types)
     for n, d in docs.items():
         Draft202012Validator.check_schema(d)
@@ -67,7 +75,12 @@ def load_schemas(where):
 def describe(e):
     """A short, specific reason: the deepest relevant error, never a dump of the whole document."""
     if e.context:
-        return describe(best_match(e.context))
+        ctx = list(e.context)
+        if e.instance is not None:
+            # an object that fails a "value or null" choice: the null branch's complaint is noise
+            ctx = [c for c in ctx if not (c.validator == "type" and c.validator_value == "null")] or ctx
+        deepest = max(len(c.absolute_path) for c in ctx)
+        return describe(best_match([c for c in ctx if len(c.absolute_path) == deepest]))
     where = e.json_path
     if e.validator == "not" and isinstance(e.instance, dict):
         forbidden = [r for sub in (e.validator_value.get("anyOf") or [e.validator_value]) for r in (sub.get("required") or [])]
@@ -92,7 +105,7 @@ def sha_file(p):
 def sniff_image(p):
     """(content type, width, height) from the file header; None where unknown."""
     with open(p, "rb") as f:
-        b = f.read(1 << 16)
+        b = f.read(1 << 24)
     if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) >= 24:
         return "image/png", int.from_bytes(b[16:20], "big"), int.from_bytes(b[20:24], "big")
     if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
@@ -123,6 +136,16 @@ def sniff_image(p):
 
 
 EXT_TYPE = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+
+
+def walk_keys(o):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield k
+            yield from walk_keys(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from walk_keys(v)
 
 
 def walk_strings(o, key=None):
@@ -162,8 +185,12 @@ class Checker:
         for e in sorted(errs, key=lambda e: list(map(str, e.absolute_path))):
             self.err(where, describe(e))
         for k, s in walk_strings(doc):
-            if k in ID_KEYS and "\n" in s:
+            if (k in ID_KEYS and ("\n" in s or "\r" in s)) or (k not in FREE_TEXT and s != s.rstrip("\r\n")):
                 self.err(where, f"{k} contains a line break: {s!r}")
+                errs.append(k)
+        for k in walk_keys(doc):
+            if k != k.strip():
+                self.err(where, f"key {k!r} has surrounding whitespace")
                 errs.append(k)
         return not errs
 
@@ -191,7 +218,7 @@ class Checker:
         if t in self.counts:
             self.counts[t] += 1
         allowed = SERIES_ENTRIES if expect_type == "series" else ITEM_ENTRIES
-        for name in sorted(os.listdir(d)):
+        for name in listdir(d):
             if name not in allowed:
                 self.err(os.path.join(d, name), f"unexpected entry in a {expect_type} folder")
         self.metadata(d, man)
@@ -251,14 +278,16 @@ class Checker:
             if EXT_TYPE.get(name.rsplit(".", 1)[-1]) != img["contentType"]:
                 self.err(f, f"extension does not match {img['contentType']}")
             for label, actual, recorded in (("width", w, img.get("width")), ("height", h, img.get("height"))):
-                if actual is not None and recorded is not None and actual != recorded:
+                if recorded is not None and actual is None:
+                    self.err(f, f"{label} is recorded as {recorded} but cannot be read from the file")
+                elif recorded is not None and actual != recorded:
                     self.err(f, f"{label} is {actual} but recorded as {recorded}")
             if man.get("type") != "series" and img.get("season") is not None:
                 self.err(f, "season-specific image on a non-series item")
             if img.get("season") is not None and img["season"] not in seasons:
                 self.err(f, f"names season {img['season']}, which neither the manifest nor metadata describes")
         if os.path.isdir(md):
-            for name in sorted(os.listdir(md)):
+            for name in listdir(md):
                 if name != "metadata.json" and name not in listed:
                     self.err(os.path.join(md, name), "not listed in metadata.json")
 
@@ -282,7 +311,7 @@ class Checker:
                 if eid not in listed:
                     self.err(mp, f"masters names {eid}, which is not a listed episode")
         ed = os.path.join(d, "episodes")
-        present = set(os.listdir(ed)) if os.path.isdir(ed) else set()
+        present = set(listdir(ed)) if os.path.isdir(ed) else set()
         for missing in sorted(set(listed) - present):
             self.err(mp, f"lists episode {missing} but episodes/{missing}/ does not exist")
         for orphan in sorted(present - set(listed)):
@@ -306,8 +335,11 @@ class Checker:
         coords = [c for c in e["coordinates"] if c["scheme"] == series["ordering"]]
         if listing and coords:
             c = coords[0]
-            if (c.get("season"), c["episode"]) != (listing["season"], listing["episode"]):
-                self.err(mp, f"{series['ordering']} coordinates S{c.get('season')}E{c['episode']} differ from the series listing "
+            same = c["episode"] == listing["episode"] if c.get("season") is None else \
+                (c["season"], c["episode"]) == (listing["season"], listing["episode"])
+            if not same:
+                shown = f"S{c['season']}E{c['episode']}" if c.get("season") is not None else f"episode {c['episode']}"
+                self.err(mp, f"{series['ordering']} coordinates {shown} differ from the series listing "
                              f"S{listing['season']}E{listing['episode']}")
         aired = next((c for c in e["coordinates"] if c["scheme"] == "aired"), None)
         if aired:
@@ -331,11 +363,18 @@ class Checker:
             self.err(where, f"exactly one audio rendition must be default, found {sum(1 for a in audio if a.get('default'))}")
         if sum(1 for s in subs if s.get("default") and not s.get("forced")) > 1:
             self.err(where, "more than one non-forced subtitle is default")
-        if decisions:
+        if decisions and (audio or video):
+            flagged_audio = [a["id"] for a in audio if a.get("default")]
+            flagged_subs = [x["id"] for x in subs if x.get("default") and not x.get("forced")]
             if decisions.get("defaultAudio") and decisions["defaultAudio"] not in {a["id"] for a in audio}:
                 self.err(where, f"decisions.defaultAudio {decisions['defaultAudio']} is not an audio rendition")
-            if decisions.get("defaultSubtitle") and decisions["defaultSubtitle"] not in {s["id"] for s in subs}:
+            elif decisions.get("defaultAudio") and flagged_audio and decisions["defaultAudio"] != flagged_audio[0]:
+                self.err(where, f"decisions.defaultAudio {decisions['defaultAudio']} is not the rendition flagged default ({flagged_audio[0]})")
+            if decisions.get("defaultSubtitle") and decisions["defaultSubtitle"] not in {x["id"] for x in subs}:
                 self.err(where, f"decisions.defaultSubtitle {decisions['defaultSubtitle']} is not a subtitle")
+            elif (decisions.get("defaultSubtitle") or None) != (flagged_subs[0] if flagged_subs else None):
+                self.err(where, f"decisions.defaultSubtitle {decisions.get('defaultSubtitle')} disagrees with the subtitle flagged default "
+                                f"({flagged_subs[0] if flagged_subs else 'none'})")
 
     def versions(self, d, mp, man):
         versions = man["versions"]
@@ -348,11 +387,13 @@ class Checker:
         if len(here) > 1:
             self.err(mp, "more than one version is stored in the item folder (path '.')")
         root_pkg = here[0]["package"] if here else None
-        if root_pkg is not None and "renditions" not in man and root_pkg["state"] == "complete":
+        if root_pkg is not None and "renditions" not in man and root_pkg["state"] in ("complete", "stale"):
             self.err(mp, "the version stored in the item folder has a complete package but the manifest has no playback fields")
         if root_pkg is None and "renditions" in man:
             self.err(mp, "playback fields present but no version in the item folder has a package")
 
+        if self.check_media and not here and os.path.isfile(os.path.join(d, ".complete")):
+            self.err(mp, ".complete marker in the item folder but no version is stored there")
         referenced_versions, referenced_sources = set(), set()
         for v in versions:
             vw = f"{mp} version {v['id']}"
@@ -409,7 +450,7 @@ class Checker:
         for sub, refs in (("source", referenced_sources), ("versions", referenced_versions)):
             base = os.path.join(d, sub)
             if os.path.isdir(base):
-                for name in sorted(os.listdir(base)):
+                for name in listdir(base):
                     if name not in refs:
                         self.err(os.path.join(base, name), f"not referenced by the manifest")
         src_dir = os.path.join(d, "source")
@@ -418,24 +459,27 @@ class Checker:
                 sd = os.path.join(src_dir, s["id"])
                 if os.path.isdir(sd):
                     known = {os.path.basename(s["probe"].get("file") or "")} | {os.path.basename(x["file"]) for x in s.get("sidecars") or []}
-                    for name in sorted(os.listdir(sd)):
+                    for name in listdir(sd):
                         if name not in known:
                             self.err(os.path.join(sd, name), "not the probe or a sidecar of this source")
 
     def media(self, vw, vp, v, man):
         pkg = v["package"]
         marker = os.path.isfile(os.path.join(vp, ".complete"))
-        complete = pkg is not None and pkg["state"] == "complete"
-        if marker and not complete:
-            self.err(vw, ".complete marker present but the package is not complete")
-        if not complete:
+        playable = pkg is not None and pkg["state"] in ("complete", "stale")
+        if marker and not playable:
+            self.err(vw, ".complete marker present but the package is neither complete nor stale")
+        if not playable:
             return
         if not marker:
             self.err(vw, ".complete marker missing")
         pb = man if v["path"] == "." else pkg.get("playback") or {}
         ren = pb.get("renditions") or {}
-        if not ren.get("video") or not ren.get("audio"):
-            self.err(vw, "a complete package needs at least one video and one audio rendition")
+        if not ren.get("video"):
+            self.err(vw, "a playable package needs at least one video rendition")
+        has_audio = any(st["type"] == "audio" for src in v["sources"] for st in src["streams"])
+        if has_audio and not ren.get("audio"):
+            self.err(vw, "the original has audio but the package has no audio rendition")
         for r in (ren.get("video") or []) + (ren.get("audio") or []):
             if not os.path.isdir(os.path.join(vp, r["dir"])):
                 self.err(vw, f"rendition dir {r['dir']} missing")
@@ -453,14 +497,14 @@ class Checker:
             base = os.path.join(r, category)
             if not os.path.isdir(base):
                 continue
-            for shard in sorted(os.listdir(base)):
+            for shard in listdir(base):
                 sd = os.path.join(base, shard)
                 if not os.path.isdir(sd):
                     self.err(sd, "unexpected file among the shard folders")
                     continue
                 if not re.fullmatch(r"[0-9a-f]{2}", shard):
                     self.err(sd, "shard folders are the first two characters of an item id")
-                for iid in sorted(os.listdir(sd)):
+                for iid in listdir(sd):
                     p = os.path.join(sd, iid)
                     if iid[:2] != shard:
                         self.err(p, f"item folder is not in shard {iid[:2]}")

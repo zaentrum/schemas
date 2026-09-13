@@ -10,9 +10,9 @@ Published contracts for the zaentrum platform, in two families:
 
 ## Status
 
-First wave covers the five core domains: library item lifecycle, transcode
+The Avro schemas cover five event domains: library item lifecycle, transcode
 processing, playback sessions, download-gateway adapters, and push-notification
-fan-out.
+fan-out. The library storage schemas are a draft; see their changelog below.
 
 ## Layout
 
@@ -68,20 +68,17 @@ Apicurio registry. Point it at your own registry via environment variables:
 APICURIO_URL=https://apicurio.example/ GROUP_ID=zaentrum ./tools/publish-to-apicurio.sh
 ```
 
-## License
-
-[MPL-2.0](LICENSE).
-
 ## Library storage schemas
 
 `library/` holds JSON Schemas (draft 2020-12) for the platform's on-storage
-library, where storage is the source of truth and databases are caches built
-by reading it. Every item is a folder with two documents:
+library, where storage is the source of truth and databases would be caches
+built by reading it. The format is ahead of the code: no platform service reads
+or writes it yet. Every item is a folder with two documents:
 
 | Document | What it holds |
 |---|---|
 | `manifest.json` | The entry point. What the item is (type, primary title, reference ids), the playback fields a streaming service reads (unchanged from the version 2 package manifest), and for every version of a movie or episode what the original file contained and what the package carries and lost. |
-| `metadata/metadata.json` | Every text (localised titles, overviews, credits, dates, series and season details) and the list of images, which sit in the same `metadata/` folder. A re-sync from the reference database rewrites only this file. |
+| `metadata/metadata.json` | Every text (localised titles, overviews, credits, dates, series and season details) and the list of images, which sit in the same `metadata/` folder. A re-sync from the reference database would rewrite only this file. |
 
 Layout on storage:
 
@@ -118,9 +115,26 @@ hold stays empty rather than guessed, and where automation cannot decide it
 records a `review` for a person. `tools/make-library-examples.py` regenerates
 `library/v1/examples`.
 
-Schema v1 was revised on 2026-09-13, before any service adopted it, from a
-four-document layout (work, version, source, package) to the two documents
-above. Its URLs are stable from that revision on.
+### Library v1 changelog
+
+v1 is a draft until a platform service adopts it. Every change is listed here;
+rebuild a library with the current migrator after one.
+
+- **2026-09-13 (c)** — `package.peakBandwidthBps` replaces `package.bitrateBps`
+  (the value is a playlist peak, not an average); timestamps require an
+  upper-case `T` and `Z`; `version` must be the integer 3; `probe.at` may be
+  null; an episode listing path must be `episodes/<id>/`.
+- **2026-09-13 (b)** — source `labels.medium` replaces `releaseSource`,
+  `proper` and `revision`; version paths must be `.` or `versions/<id>/`;
+  rendition languages follow the language rule; `packagedAt` is a timestamp;
+  a series carries no playback fields; packages gain `sizeBytes`; metadata gains
+  `videos[]`, season `tmdbSeason` and the `folder-name` origin.
+- **2026-09-13 (a)** — `manifest.json` and `metadata/metadata.json` replace the
+  four-document layout (`work`, `version`, `source`, `package`).
 
 The format is documented in the
 [zaentrum wiki](https://github.com/zaentrum/zaentrum/wiki/library).
+
+## License
+
+[MPL-2.0](LICENSE).

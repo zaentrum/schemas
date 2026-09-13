@@ -294,7 +294,7 @@
         "state": "complete",
         "role": "derived",
         "sizeBytes": 734000000,
-        "bitrateBps": 8000000,
+        "peakBandwidthBps": 8192000,
         "recipe": {
           "video": "hevc re-encode, 800p and 533p",
           "audio": "aac-lc 2ch 192k",

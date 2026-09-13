@@ -157,7 +157,7 @@ def main():
                                  "dispositions": {"default": False}, "form": "text", "styled": False, "variant": None}],
                                chapters, src_es, 734000)],
             "package": {
-                "id": pid, "state": "complete", "role": "derived", "sizeBytes": 734000000, "bitrateBps": 8000000,
+                "id": pid, "state": "complete", "role": "derived", "sizeBytes": 734000000, "peakBandwidthBps": 8192000,
                 "recipe": {"video": "hevc re-encode, 800p and 533p", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt"},
                 "fidelity": {"lossless": False, "droppedSourceStreams": [2], "losses": [
                     {"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
@@ -254,7 +254,7 @@ def main():
              "sources": [source(edir, s_colour, "Example Show (US) - S01E01 - Pilot.mkv",
                                 "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot.mkv",
                                 [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")], [], hdr_es, 2700000, "2160p", "web")],
-             "package": {"id": uid(eid, "package", "colour"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "bitrateBps": 8000000,
+             "package": {"id": uid(eid, "package", "colour"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "peakBandwidthBps": 8192000,
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                                                  {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}]},
@@ -273,7 +273,7 @@ def main():
              "sources": [source(edir, s_bw, "Example Show (US) - S01E01 - Pilot (Black and White).mkv",
                                 "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot (Black and White).mkv",
                                 [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")], [], bw_es, 2700000, "2160p", "web")],
-             "package": {"id": uid(eid, "package", "black-and-white"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "bitrateBps": 8000000,
+             "package": {"id": uid(eid, "package", "black-and-white"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "peakBandwidthBps": 8192000,
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1}]},
                          "essence": essence(maxVideoHeight=2160, videoBitDepth=10), "chapters": [],

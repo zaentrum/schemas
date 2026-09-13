@@ -13,8 +13,11 @@ plus a plan of storage operations for the large files:
                                episodes/<episodeId>/manifest.json, metadata/, source/, hls/ ...
   library/browse/{movies,series}/<Title (Year)>  ->  ../../movies/<aa>/<id>      (derived view)
 
-Nothing is invented. A field the legacy catalog never stored is left empty and reported, so a
-later re-sync can fill it and the gap stays visible.
+A value the export does not hold stays empty rather than guessed. Where automation cannot decide
+(an unmatched item, an edition, a black-and-white call from few samples, a disputed episode match,
+a disc image that was never probed) the document carries a `review` and report.json lists the item.
+probe.at and TMDB image fetchedAt are the modification times of probes.jsonl and tmdb_images.json:
+keep those times when copying an export (cp -p, rsync -t).
 
 Inputs (in --inputs):
   paths.tsv          itemId, type, parentId, season, episode, sourcePath, sourceSize, packageManifestPath
@@ -371,9 +374,18 @@ def essence_gap(src, pkg):
     return gap
 
 # ---------------------------------------------------------------- filename labels
-QUALITY = re.compile(r"\b(Remux|Blu-?ray|DVD|WEB-?DL|WEBRip|WEB|HDTV|SDTV)[- ]?(\d{3,4}p)?\b|\b(\d{3,4}p)\b", re.I)
-MEDIUM = {"remux": "disc", "bluray": "disc", "blu-ray": "disc", "dvd": "disc", "webdl": "web", "web-dl": "web", "webrip": "web", "web": "web",
-          "hdtv": "broadcast", "sdtv": "broadcast"}
+# A medium token only counts when it is joined to a resolution ("<medium>-1080p"), so a title word such as
+# "Web" never becomes a label. The last match wins: quality tokens end a filename.
+QUALITY = re.compile(r"\b(Remux|Blu-?ray|DVD|WEB[A-Za-z-]*|HDTV|SDTV)[- ](\d{3,4}p)\b|\b(\d{3,4}p)\b", re.I)
+
+def medium_of(token):
+    t = token.lower()
+    return "web" if t.startswith("web") else "disc" if t in ("remux", "bluray", "blu-ray", "dvd") else \
+        "broadcast" if t in ("hdtv", "sdtv") else "unknown"
+
+def quality_match(text):
+    hits = list(QUALITY.finditer(text or ""))
+    return hits[-1] if hits else None
 EDITION_WORDS = [
     ("directors-cut", r"director'?s?[ ._-]?cut"),
     ("extended", r"\bextended\b"),
@@ -395,8 +407,8 @@ def edition_word(text):
     return None
 
 def labels(name, folder):
-    m = QUALITY.search(name)
-    medium = MEDIUM.get(m.group(1).lower(), "unknown") if m and m.group(1) else None
+    m = quality_match(os.path.splitext(name)[0])
+    medium = medium_of(m.group(1)) if m and m.group(1) else None
     fold_ed = None
     fm = re.search(r" - ([^()]+?) \(\d{4}\)$", folder or "")
     if fm and edition_word(fm.group(1)):
@@ -416,7 +428,7 @@ def file_title(name):
     if not m:
         return None
     title = m.group(1)
-    q = QUALITY.search(title)
+    q = quality_match(title)
     if q:
         title = title[:q.start()]
     return title.strip(" -._") or None
@@ -425,8 +437,14 @@ def norm_title(t):
     return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
 
 def same_title(a, b):
+    """Equal after normalisation, or one contains the other as whole words when the shorter is specific enough."""
     a, b = norm_title(a), norm_title(b)
-    return bool(a and b) and (a == b or a in b or b in a)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    short, long_ = sorted((a, b), key=len)
+    return len(short) >= 12 and f" {short} " in f" {long_} "
 
 def file_coords(name):
     m = re.search(r"S(\d{1,3})E(\d{1,4})(?:-?E(\d{1,4}))?", name, re.I)
@@ -544,6 +562,8 @@ def main():
         written["image"] += 1
 
     def audit(created, updated):
+        if created == NOW:
+            report["created-at-missing"].append("an item without a catalog creation time got the migration time")
         return {"rev": 1, "createdAt": created, "createdBy": "library-migrate", "updatedAt": updated, "updatedBy": "library-migrate"}
 
     def ext_ids(item):
@@ -763,10 +783,11 @@ def main():
         doc["images"] = images(item, mdir, origins)
         vids = [{"site": v["site"], "key": v["externalid"], "url": v.get("url"), "name": v.get("title"), "kind": None, "language": None,
                  "durationMs": v["durationsec"] * 1000 if v.get("durationsec") else None, "publishedAt": ts(v.get("publishedat")),
-                 "origin": "legacy-catalog"} for v in trailers.get(item["id"], []) if v.get("site") and v.get("externalid")]
+                 "origin": v.get("source") if v.get("source") in ("tmdb", "manual") else "legacy-catalog"}
+                for v in trailers.get(item["id"], []) if v.get("site") and v.get("externalid")]
         if vids:
             doc["videos"] = vids
-            origins["videos"] = "legacy-catalog"
+            origins["videos"] = "legacy-catalog"   # read from the catalog; each entry names its upstream origin
         doc["curation"] = {"metadataLocked": False, "lockedFields": [], "notes": None}
         doc["fieldOrigins"] = origins
         for missing in (("releaseDate", "contentRating") if kind == "movie" else ()):
@@ -856,6 +877,7 @@ def main():
         col_review = None
         if is_iso and not probe:
             col_review = "Disc image: mount it and probe its main title to measure runtime, streams and colour."
+            report["disc-image-not-probed"].append(item["title"])
         elif col == "black-and-white":
             col_review = (f"Black-and-white from {len(peaks)} sampled frames. Check the opening and closing minutes for colour "
                           "sequences (partial-colour) before showing the label.")
@@ -929,7 +951,7 @@ def main():
             "sidecars": side,
             "subtitleDecisions": {"defaultStreamIndex": None, "decidedBy": None},
             "covers": [],
-            "probe": {"tool": "ffprobe", "version": None, "at": PROBED_AT, "file": probe_rel if probe else None, "sha256": probe_sha,
+            "probe": {"tool": "ffprobe", "version": None, "at": PROBED_AT if probe else None, "file": probe_rel if probe else None, "sha256": probe_sha,
                       "note": "disc image: streams were not demuxed; mount the image to inventory its playlists" if is_iso else None},
         }
         if not probe.get("chapters") and chapters.get(item["id"]):
@@ -1003,7 +1025,7 @@ def main():
             package = {
                 "id": pid, "state": "complete" if fe.get("packageComplete") else "failed", "role": "derived",
                 "sizeBytes": prow.get("sizebytes"),
-                "bitrateBps": prow["bitratekbps"] * 1000 if prow.get("bitratekbps") else None,
+                "peakBandwidthBps": prow["bitratekbps"] * 1000 if prow.get("bitratekbps") else None,
                 "recipe": {"video": "copy or re-encode (not recorded by the packager)",
                            "audio": "aac-lc 2ch 192k" if all((a.get("channels") == 2 and a.get("bitrateBps") == 192000) for a in ren.get("audio") or []) else None,
                            "subtitles": "text -> webvtt, image -> sidecar"},
