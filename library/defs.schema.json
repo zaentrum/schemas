@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/defs.schema.json",
+  "title": "zaentrum library — shared definitions",
+  "description": "Types shared by work, version, source and package documents. A library on storage is the source of truth; databases are caches built from it.",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Lower-case RFC 4122 UUID. Identity never changes, so nothing keyed by it is ever renamed."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$",
+      "description": "Full date, or year-month, or year when that is all that is known."
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^([a-z]{2,3}(-[A-Za-z0-9]{2,8})*|und|zxx|mul)$",
+      "description": "BCP 47. Normalised from ISO 639-2/B codes found in files (ger->de, fre->fr, chi->zh, dut->nl). The raw file code is kept alongside as languageRaw where it differs."
+    },
+    "relPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+      "description": "Path relative to the document's own directory. Never absolute, never escaping upward."
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per-document revision, incremented by one on every write. Never a timestamp."
+    },
+    "envelope": {
+      "type": "object",
+      "required": ["id", "rev", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "rev": { "$ref": "#/$defs/rev" },
+        "createdAt": {
+          "$ref": "#/$defs/timestamp",
+          "description": "When the object entered the library. For works this is 'date added' and orders 'recently added' rows, so it must survive every migration unchanged."
+        },
+        "createdBy": { "type": "string" },
+        "updatedAt": { "$ref": "#/$defs/timestamp" },
+        "updatedBy": { "type": "string" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "One observation supporting a derived conclusion. Kept so a conclusion can be re-examined without re-reading the file.",
+      "required": ["signal", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "signal": {
+          "enum": [
+            "runtime",
+            "container-title",
+            "stream-title",
+            "folder-name",
+            "filename",
+            "commentary-track",
+            "content-analysis",
+            "encoder-tag",
+            "codec-vs-title",
+            "tmdb",
+            "catalog",
+            "manual"
+          ]
+        },
+        "value": { "type": ["string", "number", "boolean", "object", "array", "null"] },
+        "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+        "note": { "type": "string" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "description": "A conclusion with its confidence and who reached it. A human decision always outranks an inferred one and is never overwritten by automation.",
+      "required": ["decidedBy"],
+      "properties": {
+        "decidedBy": { "enum": ["inferred", "human", "legacy-catalog", "tmdb"] },
+        "decidedAt": { "$ref": "#/$defs/timestamp" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+      }
+    },
+    "externalIds": {
+      "type": "object",
+      "description": "Explicit, unambiguous keys. The legacy manifest used one polymorphic 'tmdbId' that meant the movie id on a movie and the SERIES id on an episode; that ambiguity is removed here.",
+      "additionalProperties": false,
+      "properties": {
+        "tmdbMovie": { "type": "string", "pattern": "^[0-9]+$" },
+        "tmdbTv": { "type": "string", "pattern": "^[0-9]+$", "description": "On a series, its own TV id. On an episode, the parent series' TV id." },
+        "tmdbEpisode": { "type": "string", "pattern": "^[0-9]+$" },
+        "tmdbCollection": { "type": "string", "pattern": "^[0-9]+$" },
+        "imdb": { "type": "string", "pattern": "^tt[0-9]+$" },
+        "tvdb": { "type": "string", "pattern": "^[0-9]+$" },
+        "musicbrainzRecording": { "$ref": "#/$defs/uuid" },
+        "musicbrainzRelease": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "artwork": {
+      "type": "object",
+      "required": ["kind", "file", "sha256", "contentType"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["poster", "backdrop", "still", "logo", "banner", "thumb", "cover"] },
+        "file": { "$ref": "#/$defs/relPath", "description": "e.g. art/poster.3d9c8f1ab20e77d5.jpg — content hash in the name makes the file immutable and cacheable forever." },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "contentType": { "enum": ["image/jpeg", "image/png", "image/webp"] },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "language": { "$ref": "#/$defs/language" },
+        "sourceUrl": { "type": "string", "description": "Where the image was fetched from, so the exact chosen image can be refetched even after the provider's default changes." },
+        "fetchedAt": { "$ref": "#/$defs/timestamp" },
+        "inherit": { "enum": ["none", "parent"], "description": "'parent': an episode without its own image shows its series' image. Recorded, never materialised as a copy." }
+      }
+    },
+    "localizedText": {
+      "type": "object",
+      "description": "Keyed by BCP 47 language.",
+      "propertyNames": { "$ref": "#/$defs/language" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string" },
+          "sortTitle": { "type": "string" },
+          "tagline": { "type": ["string", "null"] },
+          "overview": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "fixity": {
+      "type": "object",
+      "description": "Proves a file is the same bytes after a move. qh1 is cheap and always present; sha256 of the whole file is filled in by a background job and is what a move is verified against.",
+      "required": ["qh1"],
+      "additionalProperties": false,
+      "properties": {
+        "qh1": { "$ref": "#/$defs/sha256", "description": "sha256(first 64 KiB || last 64 KiB || uint64be(size)). Not a content hash." },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sha256At": { "$ref": "#/$defs/timestamp" }
+      }
+    }
+  }
+}

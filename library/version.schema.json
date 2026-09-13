@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/version.schema.json",
+  "title": "version.json — one cut or presentation of a work",
+  "description": "A work can exist as several versions: theatrical and director's cut, colour and black-and-white, 2D and 3D, an HDR and an SDR master. The reference database gives every one of them the SAME id, so a version's identity must come from the file itself or from a person. A version owns exactly one master source and any number of derived packages.",
+  "type": "object",
+  "allOf": [{ "$ref": "defs.schema.json#/$defs/envelope" }],
+  "required": ["schema", "id", "rev", "workId", "createdAt", "updatedAt", "edition", "presentation", "source", "packages"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "schema": { "const": "zaentrum.library.version/1" },
+    "id": true, "rev": true, "createdAt": true, "createdBy": true, "updatedAt": true, "updatedBy": true,
+    "workId": { "$ref": "defs.schema.json#/$defs/uuid" },
+    "primary": { "type": "boolean", "description": "The version played when a viewer does not choose." },
+
+    "edition": {
+      "description": "Which cut this is.",
+      "allOf": [{ "$ref": "defs.schema.json#/$defs/decision" }],
+      "type": "object",
+      "required": ["kind", "decidedBy"],
+      "properties": {
+        "kind": {
+          "enum": ["theatrical", "directors-cut", "extended", "unrated", "special-edition", "remastered", "restored", "imax", "final-cut", "tv-cut", "other", "unknown"]
+        },
+        "label": { "type": ["string", "null"], "description": "Human wording, e.g. 'Roadshow Director's Cut'." },
+        "decidedBy": true, "decidedAt": true, "confidence": true, "evidence": true
+      }
+    },
+
+    "presentation": {
+      "type": "object",
+      "required": ["colour", "dynamicRange", "stereo3d"],
+      "additionalProperties": false,
+      "properties": {
+        "colour": {
+          "enum": ["colour", "black-and-white", "partial-colour", "unknown"],
+          "description": "Measured from the picture, not from a label. 'partial-colour' covers black-and-white works with colour accents."
+        },
+        "colourDecision": { "$ref": "defs.schema.json#/$defs/decision" },
+        "dynamicRange": { "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolby-vision", "unknown"] },
+        "stereo3d": { "enum": ["none", "side-by-side", "top-and-bottom", "mvc", "unknown"] },
+        "aspectRatio": { "type": ["string", "null"], "description": "Display aspect ratio, e.g. '2.39:1'." }
+      }
+    },
+
+    "runtime": {
+      "type": "object",
+      "description": "Measured from this version's source. Compared against the work's reference runtime, it is the strongest automatic edition signal — but a large shortfall can also mean a truncated file, which 'completeness' separates.",
+      "additionalProperties": false,
+      "properties": {
+        "measuredMs": { "type": "integer", "minimum": 0 },
+        "referenceMs": { "type": ["integer", "null"] },
+        "deltaMs": { "type": ["integer", "null"] }
+      }
+    },
+
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["complete", "truncated", "suspect", "unknown"] },
+        "evidence": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/evidence" } }
+      }
+    },
+
+    "master": {
+      "type": "object",
+      "description": "A short technical fingerprint of the source. Two episodes of one season with different fingerprints come from different masters.",
+      "additionalProperties": false,
+      "properties": {
+        "fingerprint": { "type": "string", "description": "e.g. 'hevc/main10/dv8.1/pq/3840x2080'." },
+        "fidelity": { "enum": ["original", "derivative", "unknown"], "description": "Whether the source is an untouched original or already a lossy re-encode." }
+      }
+    },
+
+    "source": {
+      "type": "object",
+      "required": ["document", "file"],
+      "additionalProperties": false,
+      "properties": {
+        "document": { "$ref": "defs.schema.json#/$defs/relPath", "description": "source.json" },
+        "file": { "$ref": "defs.schema.json#/$defs/relPath", "description": "source/<original filename>" }
+      }
+    },
+
+    "packages": {
+      "type": "array",
+      "description": "Derived renditions. Disposable: each can be rebuilt from the source, never the reverse.",
+      "items": {
+        "type": "object",
+        "required": ["id", "document", "state"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "defs.schema.json#/$defs/uuid" },
+          "document": { "$ref": "defs.schema.json#/$defs/relPath", "description": "packages/<id>/package.json" },
+          "state": { "enum": ["complete", "failed", "stale", "building"] },
+          "lossless": { "type": "boolean", "description": "False whenever any stream, channel, dynamic range or styling was lost relative to the source." }
+        }
+      }
+    }
+  }
+}

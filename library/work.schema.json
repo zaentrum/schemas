@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/work.schema.json",
+  "title": "work.json — the entry point of a library item",
+  "description": "What a thing IS, independent of any file: a movie, a series, an episode or a track. Everything a reader needs to present it lives here or is referenced from here, so no directory listing is ever required. A work has one or more versions; each version has its master source and its derived packages. Per-user state (progress, history, lists) is deliberately NOT here — it stays in a database.",
+  "type": "object",
+  "allOf": [{ "$ref": "defs.schema.json#/$defs/envelope" }],
+  "required": ["schema", "id", "rev", "kind", "titles", "createdAt", "updatedAt", "versions"],
+  "properties": {
+    "schema": { "const": "zaentrum.library.work/1" },
+    "id": true, "rev": true, "createdAt": true, "createdBy": true, "updatedAt": true, "updatedBy": true,
+    "kind": { "enum": ["movie", "series", "episode", "track"] },
+
+    "titles": {
+      "type": "object",
+      "required": ["primary"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "type": "string", "minLength": 1 },
+        "original": { "type": ["string", "null"], "description": "Title in the original language, e.g. for foreign films." },
+        "sort": { "type": "string" },
+        "qualifier": { "type": ["string", "null"], "description": "Disambiguates remakes and local versions of a series: 'US', 'UK', '2009'. Library folders carry it as 'Example Show (US)'." },
+        "localized": { "$ref": "defs.schema.json#/$defs/localizedText" }
+      }
+    },
+
+    "year": { "type": ["integer", "null"], "minimum": 1870, "maximum": 2200 },
+    "releaseDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+    "reference": {
+      "type": "object",
+      "description": "Facts about the work as published (typically TMDB). Deliberately separate from each version's MEASURED facts: a catalog can hold a reference database's theatrical runtime for a file that is a longer cut.",
+      "additionalProperties": false,
+      "properties": {
+        "runtimeMs": { "type": ["integer", "null"], "minimum": 0 },
+        "runtimeSource": { "enum": ["tmdb", "legacy-catalog", "manual", null] }
+      }
+    },
+
+    "externalIds": { "$ref": "defs.schema.json#/$defs/externalIds" },
+    "match": {
+      "description": "Whether and how this work is identified against the reference database. A re-sync reads externalIds; this records how far to trust them.",
+      "allOf": [{ "$ref": "defs.schema.json#/$defs/decision" }],
+      "type": "object",
+      "required": ["status", "decidedBy"],
+      "properties": {
+        "status": { "enum": ["matched", "unmatched", "manual", "disputed"] },
+        "decidedBy": true, "decidedAt": true, "confidence": true, "evidence": true
+      }
+    },
+
+    "genres": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "tags": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "rating": { "type": ["number", "null"], "minimum": 0, "maximum": 10 },
+    "contentRating": { "type": ["string", "null"], "description": "e.g. 'R', 'FSK 16'." },
+
+    "credits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["personId", "name", "role"],
+        "additionalProperties": false,
+        "properties": {
+          "personId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Stable: person pages are user-facing URLs keyed by it." },
+          "name": { "type": "string" },
+          "role": { "type": "string", "description": "actor, director, writer, producer, ..." },
+          "character": { "type": ["string", "null"] },
+          "order": { "type": ["integer", "null"] },
+          "tmdbPerson": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "artwork": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/artwork" } },
+
+    "collection": {
+      "type": ["object", "null"],
+      "description": "Franchise membership of a movie (TMDB collection).",
+      "additionalProperties": false,
+      "properties": {
+        "tmdbCollection": { "type": "string" },
+        "name": { "type": "string" },
+        "order": { "type": ["integer", "null"] }
+      }
+    },
+
+    "series": {
+      "description": "Present only when kind = series. Makes the whole series, and every season, a real described object on storage instead of a database row.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["returning", "ended", "canceled", "in-production", "unknown"] },
+        "firstAirDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+        "lastAirDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+        "network": { "type": ["string", "null"] },
+        "defaultOrdering": { "enum": ["aired", "dvd", "absolute", "production"] },
+        "seasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["number", "episodes"],
+            "additionalProperties": false,
+            "properties": {
+              "number": { "type": "integer", "minimum": 0, "description": "0 = specials." },
+              "name": { "type": ["string", "null"], "description": "Anthology and anime seasons carry their own titles." },
+              "overview": { "type": ["string", "null"] },
+              "airDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+              "artwork": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/artwork" } },
+              "episodes": {
+                "type": "array",
+                "description": "Episode work ids in this season's order under the default ordering. Their directories live at episodes/<id>/.",
+                "items": { "$ref": "defs.schema.json#/$defs/uuid" }
+              },
+              "episodeCountReference": { "type": ["integer", "null"], "description": "How many episodes the reference database lists, to show gaps in what is on storage." }
+            }
+          }
+        },
+        "masters": {
+          "type": "array",
+          "description": "Distinct technical masters found across this series' episodes. More than one means a season mixes sources and a viewer may see HDR and SDR, or two cuts, side by side.",
+          "items": {
+            "type": "object",
+            "required": ["fingerprint", "episodes"],
+            "additionalProperties": false,
+            "properties": {
+              "fingerprint": { "type": "string" },
+              "presentation": { "type": "string" },
+              "episodes": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/uuid" } }
+            }
+          }
+        }
+      }
+    },
+
+    "episode": {
+      "description": "Present only when kind = episode. Numbers live here, never in a path, so renumbering or a different ordering never moves a directory.",
+      "type": "object",
+      "required": ["seriesId", "coordinates"],
+      "additionalProperties": false,
+      "properties": {
+        "seriesId": { "$ref": "defs.schema.json#/$defs/uuid" },
+        "coordinates": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The same episode under each numbering scheme. 'file' is the numbering the library filename used, which is the only record of how a file was labelled.",
+          "items": {
+            "type": "object",
+            "required": ["scheme", "episode"],
+            "additionalProperties": false,
+            "properties": {
+              "scheme": { "enum": ["aired", "dvd", "absolute", "production", "file"] },
+              "season": { "type": ["integer", "null"], "minimum": 0 },
+              "episode": { "type": "integer", "minimum": 0 },
+              "episodeEnd": { "type": ["integer", "null"], "description": "Set when one file covers several episodes (S07E23-24)." }
+            }
+          }
+        },
+        "airDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
+        "special": { "type": "boolean" }
+      }
+    },
+
+    "track": {
+      "description": "Present only when kind = track. The reference database does not describe music; truth comes from embedded tags and the library path.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artists": { "type": "array", "items": { "type": "string" } },
+        "albumArtist": { "type": ["string", "null"] },
+        "album": { "type": ["string", "null"] },
+        "albumYear": { "type": ["integer", "null"] },
+        "disc": { "type": ["integer", "null"] },
+        "discTotal": { "type": ["integer", "null"] },
+        "trackNumber": { "type": ["integer", "null"] },
+        "trackTotal": { "type": ["integer", "null"] },
+        "compilation": { "type": "boolean" },
+        "medium": { "type": ["string", "null"] }
+      }
+    },
+
+    "versions": {
+      "type": "array",
+      "description": "Summary of each version so a reader can offer a choice without opening version.json. Empty for a series, whose playable content is its episodes.",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "primary"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "defs.schema.json#/$defs/uuid" },
+          "path": { "$ref": "defs.schema.json#/$defs/relPath", "description": "versions/<id>/" },
+          "label": { "type": "string", "description": "What a viewer picks between: 'Director's Cut', 'Black & White (Dolby Vision)'." },
+          "primary": { "type": "boolean" },
+          "runtimeMs": { "type": ["integer", "null"] },
+          "playable": { "type": "boolean", "description": "True when at least one complete package exists." }
+        }
+      }
+    },
+
+    "curation": {
+      "type": "object",
+      "description": "Everything a human decided. Irreplaceable, and never overwritten by enrichment.",
+      "additionalProperties": false,
+      "properties": {
+        "metadataLocked": { "type": "boolean" },
+        "lockedFields": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "description": "Where this document's values came from.",
+      "additionalProperties": false,
+      "properties": {
+        "migratedFrom": { "enum": ["legacy-catalog", "tmdb", "scan", "manual"] },
+        "migratedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
+        "legacyItemId": { "$ref": "defs.schema.json#/$defs/uuid" },
+        "fieldOrigins": {
+          "type": "object",
+          "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "file-tags", "content-analysis", "manual"] }
+        }
+      }
+    },
+
+    "processing": {
+      "type": "object",
+      "description": "Terminal outcomes of pipeline steps, so a rebuilt system does not redo expensive work. In-flight state stays in the database.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "additionalProperties": false,
+        "properties": {
+          "status": { "enum": ["done", "failed", "skipped", "not-applicable", "pending"] },
+          "at": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+          "attempts": { "type": ["integer", "null"] },
+          "error": { "type": ["string", "null"] }
+        }
+      }
+    }
+  },
+
+  "unevaluatedProperties": false,
+  "$comment": "Kind-specific sections are enforced below: an episode must carry 'episode', a series must carry 'series', and the wrong section must be absent.",
+  "if": { "properties": { "kind": { "const": "episode" } } },
+  "then": { "required": ["episode"], "not": { "anyOf": [{ "required": ["series"] }, { "required": ["track"] }] } },
+  "else": {
+    "if": { "properties": { "kind": { "const": "series" } } },
+    "then": { "required": ["series"], "not": { "anyOf": [{ "required": ["episode"] }, { "required": ["track"] }] } },
+    "else": {
+      "if": { "properties": { "kind": { "const": "track" } } },
+      "then": { "not": { "anyOf": [{ "required": ["episode"] }, { "required": ["series"] }] } },
+      "else": { "not": { "anyOf": [{ "required": ["episode"] }, { "required": ["series"] }, { "required": ["track"] }] } }
+    }
+  }
+}

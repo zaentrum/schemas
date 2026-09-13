@@ -1,0 +1,77 @@
+{
+  "schema": "zaentrum.library.work/1",
+  "id": "c389fac4-32a4-5492-b8d7-17ea7c298f6b",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "example",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "example",
+  "kind": "episode",
+  "titles": {
+    "primary": "Pilot",
+    "original": null,
+    "sort": "pilot",
+    "qualifier": null,
+    "localized": {
+      "en": {
+        "title": "Pilot",
+        "sortTitle": "pilot",
+        "tagline": null,
+        "overview": null
+      }
+    }
+  },
+  "year": 2020,
+  "releaseDate": null,
+  "reference": {
+    "runtimeMs": 2700000,
+    "runtimeSource": "legacy-catalog"
+  },
+  "externalIds": {},
+  "match": {
+    "status": "manual",
+    "decidedBy": "human",
+    "evidence": [
+      {
+        "signal": "manual",
+        "value": "inherited from the series match",
+        "weight": 1.0
+      }
+    ]
+  },
+  "genres": [],
+  "tags": [],
+  "rating": null,
+  "contentRating": null,
+  "credits": [],
+  "artwork": [],
+  "episode": {
+    "seriesId": "60dfb11b-304e-5374-a92d-3fb060bcc16b",
+    "coordinates": [
+      {
+        "scheme": "aired",
+        "season": 1,
+        "episode": 1,
+        "episodeEnd": null
+      },
+      {
+        "scheme": "file",
+        "season": 1,
+        "episode": 1,
+        "episodeEnd": 2
+      }
+    ],
+    "airDate": "2020-01-01",
+    "special": false
+  },
+  "versions": [
+    {
+      "id": "77e20715-4638-5860-909a-d1782da1bb36",
+      "path": "versions/77e20715-4638-5860-909a-d1782da1bb36/",
+      "label": "Black & White",
+      "primary": true,
+      "runtimeMs": 5400000,
+      "playable": false
+    }
+  ]
+}

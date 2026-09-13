@@ -1,0 +1,49 @@
+{
+  "schema": "zaentrum.library.version/1",
+  "id": "77e20715-4638-5860-909a-d1782da1bb36",
+  "rev": 1,
+  "createdAt": "2026-09-13T12:00:00Z",
+  "createdBy": "example",
+  "updatedAt": "2026-09-13T12:00:00Z",
+  "updatedBy": "example",
+  "workId": "c389fac4-32a4-5492-b8d7-17ea7c298f6b",
+  "primary": true,
+  "edition": {
+    "kind": "unknown",
+    "label": null,
+    "decidedBy": "inferred",
+    "confidence": 0.0,
+    "evidence": []
+  },
+  "presentation": {
+    "colour": "black-and-white",
+    "dynamicRange": "sdr",
+    "stereo3d": "none",
+    "aspectRatio": null
+  },
+  "runtime": {
+    "measuredMs": 5400000,
+    "referenceMs": 2700000,
+    "deltaMs": 2700000
+  },
+  "completeness": {
+    "status": "complete",
+    "evidence": [
+      {
+        "signal": "filename",
+        "value": "S01E01-E02",
+        "weight": 0.8,
+        "note": "one file covers two episodes"
+      }
+    ]
+  },
+  "master": {
+    "fingerprint": "hevc/main/8bit/sdr/3840x2080",
+    "fidelity": "unknown"
+  },
+  "source": {
+    "document": "source.json",
+    "file": "source/Example Show - S01E01-E02 - Pilot.mkv"
+  },
+  "packages": []
+}
