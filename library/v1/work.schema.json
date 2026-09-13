@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://zaentrum.github.io/schemas/library/work.schema.json",
+  "$id": "https://zaentrum.github.io/schemas/library/v1/work.schema.json",
   "title": "work.json — the entry point of a library item",
   "description": "What a thing IS, independent of any file: a movie, a series, an episode or a track. Everything a reader needs to present it lives here or is referenced from here, so no directory listing is ever required. A work has one or more versions; each version has its master source and its derived packages. Per-user state (progress, history, lists) is deliberately NOT here — it stays in a database.",
   "type": "object",

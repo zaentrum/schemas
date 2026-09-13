@@ -15,7 +15,16 @@
     "sizeBytes": 2000000000,
     "fixity": {
       "qh1": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-    }
+    },
+    "state": "present",
+    "ownership": {
+      "uid": 1000,
+      "gid": 1000,
+      "mode": "0664",
+      "acl": null,
+      "selinux": null
+    },
+    "part": null
   },
   "labels": {
     "quality": "WEBDL-2160p",
@@ -71,5 +80,28 @@
         "qh1": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
       }
     }
-  ]
+  ],
+  "covers": [],
+  "essence": {
+    "maxAudioChannels": 6,
+    "surround": true,
+    "losslessAudio": false,
+    "objectAudio": true,
+    "maxVideoHeight": null,
+    "videoBitDepth": null,
+    "hdr10Metadata": false,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [],
+    "subtitleTracks": 0,
+    "imageSubtitles": false,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": false,
+    "commentaryTracks": 0
+  }
 }

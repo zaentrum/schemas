@@ -41,9 +41,20 @@
     "fingerprint": "hevc/main/8bit/sdr/3840x2080",
     "fidelity": "unknown"
   },
-  "source": {
-    "document": "source.json",
-    "file": "source/Example Show - S01E01-E02 - Pilot.mkv"
+  "packages": [],
+  "truth": {
+    "kind": "source",
+    "id": "66b4ed7c-c0a1-5b3e-8115-f9c17e50ee38",
+    "since": "2026-09-13T12:00:00Z",
+    "note": "the original still exists"
   },
-  "packages": []
+  "sources": [
+    {
+      "id": "66b4ed7c-c0a1-5b3e-8115-f9c17e50ee38",
+      "document": "source.json",
+      "file": "source/Example Show - S01E01-E02 - Pilot.mkv",
+      "state": "present",
+      "part": null
+    }
+  ]
 }

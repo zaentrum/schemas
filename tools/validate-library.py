@@ -10,7 +10,7 @@ import json, sys, pathlib
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-HERE = pathlib.Path(__file__).resolve().parent.parent / "library"
+HERE = pathlib.Path(__file__).resolve().parent.parent / "library" / "v1"
 SCHEMAS = {p.name: json.loads(p.read_text()) for p in sorted(HERE.glob("*.schema.json"))}
 registry = Registry()
 for name, s in SCHEMAS.items():

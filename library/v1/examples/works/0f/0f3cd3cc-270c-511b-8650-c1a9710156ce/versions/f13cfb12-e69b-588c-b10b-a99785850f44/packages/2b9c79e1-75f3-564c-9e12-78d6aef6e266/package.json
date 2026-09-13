@@ -79,5 +79,37 @@
         "sourceStreamIndex": null
       }
     ]
+  },
+  "role": "derived",
+  "decisions": {
+    "defaultAudio": "a0",
+    "defaultAudioSource": "manifest",
+    "defaultSubtitle": null,
+    "defaultSubtitleSource": null
+  },
+  "chapters": [],
+  "essence": {
+    "maxAudioChannels": 2,
+    "surround": false,
+    "losslessAudio": false,
+    "objectAudio": false,
+    "maxVideoHeight": 1600,
+    "videoBitDepth": 10,
+    "hdr10Metadata": false,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [
+      "de"
+    ],
+    "subtitleTracks": 1,
+    "imageSubtitles": false,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": false,
+    "commentaryTracks": 0
   }
 }

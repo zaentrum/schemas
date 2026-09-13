@@ -64,16 +64,27 @@
     "fingerprint": "hevc/main10/10bit/hdr10/3840x1600",
     "fidelity": "original"
   },
-  "source": {
-    "document": "source.json",
-    "file": "source/tears_of_steel_4k.mkv"
-  },
   "packages": [
     {
       "id": "2b9c79e1-75f3-564c-9e12-78d6aef6e266",
       "document": "packages/2b9c79e1-75f3-564c-9e12-78d6aef6e266/package.json",
       "state": "complete",
       "lossless": false
+    }
+  ],
+  "truth": {
+    "kind": "source",
+    "id": "c8c91e05-b8ad-5e9e-bb3d-003a6d8c90cb",
+    "since": "2026-09-13T12:00:00Z",
+    "note": "the original still exists"
+  },
+  "sources": [
+    {
+      "id": "c8c91e05-b8ad-5e9e-bb3d-003a6d8c90cb",
+      "document": "source.json",
+      "file": "source/tears_of_steel_4k.mkv",
+      "state": "present",
+      "part": null
     }
   ]
 }

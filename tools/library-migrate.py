@@ -274,6 +274,102 @@ def norm_stream(s):
     base.update({"type": "data"})
     return base
 
+# ---------------------------------------------------------------- essence
+def source_essence(streams, chapters):
+    v = [x for x in streams if x["type"] == "video" and not x["dispositions"].get("attachedPic")]
+    a = [x for x in streams if x["type"] == "audio"]
+    sub = [x for x in streams if x["type"] == "subtitle"]
+    v0 = v[0] if v else {}
+    hdr = (v0.get("hdr") or {}) if v0 else {}
+    return {
+        "maxAudioChannels": max([x["channels"] for x in a], default=0),
+        "surround": any(x["channels"] > 2 for x in a),
+        "losslessAudio": any(x.get("lossless") for x in a),
+        "objectAudio": any(x.get("objectAudio") in ("atmos", "dts-x") for x in a),
+        "maxVideoHeight": v0.get("height"),
+        "videoBitDepth": v0.get("bitDepth"),
+        "hdr10Metadata": bool(hdr.get("masteringDisplay") or hdr.get("contentLightLevel")),
+        "dolbyVision": hdr.get("format") == "dolby-vision",
+        "stereo3d": bool(v0.get("stereo3d")),
+        "interlaced": (v0.get("fieldOrder") or "progressive") not in ("progressive", "unknown", None),
+        "audioLanguages": sorted({x["language"] for x in a if x.get("language")}),
+        "subtitleLanguages": sorted({x["language"] for x in sub if x.get("language")}),
+        "subtitleTracks": len(sub),
+        "imageSubtitles": any(x.get("form") == "image" for x in sub),
+        "styledSubtitles": any(x.get("styled") for x in sub),
+        "fonts": any(x["type"] == "attachment" and x.get("role") == "font" for x in streams),
+        "chapters": bool(chapters),
+        "commentaryTracks": sum(1 for x in a if x["dispositions"].get("commentary")),
+    }
+
+def package_essence(man):
+    ren = man.get("renditions") or {}
+    vids = ren.get("video") or []; auds = ren.get("audio") or []; subs = man.get("subtitles") or []
+    v0 = vids[0] if vids else {}
+    codec = v0.get("codec") or ""
+    depth = 10 if codec.startswith(("hev1.2", "hvc1.2")) else (8 if codec else None)
+    return {
+        "maxAudioChannels": max([x.get("channels") or 0 for x in auds], default=0),
+        "surround": any((x.get("channels") or 0) > 2 for x in auds),
+        "losslessAudio": False,
+        "objectAudio": False,
+        "maxVideoHeight": v0.get("height"),
+        "videoBitDepth": depth,
+        "hdr10Metadata": False,
+        "dolbyVision": False,
+        "stereo3d": False,
+        "interlaced": False,
+        "audioLanguages": sorted({lang(x.get("language"))[0] for x in auds if x.get("language")}),
+        "subtitleLanguages": sorted({lang(x.get("language"))[0] for x in subs if x.get("language")}),
+        "subtitleTracks": len(subs),
+        "imageSubtitles": any((x.get("format") or "") in ("pgs", "sup", "vobsub") for x in subs),
+        "styledSubtitles": False,
+        "fonts": False,
+        "chapters": False,
+        "commentaryTracks": sum(1 for x in auds if "commentary" in (x.get("title") or "").lower()),
+    }
+
+def package_decisions(man, sub_rows):
+    """Default audio from the manifest (hand-corrected there); default subtitle from the catalog, which wins."""
+    auds = (man.get("renditions") or {}).get("audio") or []
+    da = next((a["id"] for a in auds if a.get("default")), None)
+    msubs = man.get("subtitles") or []
+    chosen = next((r for r in sub_rows if r.get("isdefault")), None)
+    ds, src = None, None
+    if chosen:
+        base = os.path.basename(chosen.get("path") or "")
+        hit = next((x for x in msubs if os.path.basename(x.get("path") or "") == base), None)
+        if hit:
+            ds, src = hit["id"], "legacy-catalog"
+    if ds is None:
+        mdef = next((x for x in msubs if x.get("default")), None)
+        if mdef:
+            ds, src = mdef["id"], "manifest"
+    return {"defaultAudio": da, "defaultAudioSource": "manifest" if da else None,
+            "defaultSubtitle": ds, "defaultSubtitleSource": src}
+
+def essence_gap(src, pkg):
+    """What deleting the original would lose: every property the source has that the package lacks."""
+    gap = []
+    for k in ("surround", "losslessAudio", "objectAudio", "hdr10Metadata", "dolbyVision", "stereo3d", "imageSubtitles", "styledSubtitles", "fonts", "chapters"):
+        if src.get(k) and not pkg.get(k):
+            gap.append(k)
+    if (src.get("maxAudioChannels") or 0) > (pkg.get("maxAudioChannels") or 0):
+        gap.append(f"audioChannels {src['maxAudioChannels']}->{pkg['maxAudioChannels']}")
+    if (src.get("maxVideoHeight") or 0) > (pkg.get("maxVideoHeight") or 0):
+        gap.append(f"videoHeight {src['maxVideoHeight']}->{pkg['maxVideoHeight']}")
+    if (src.get("videoBitDepth") or 0) > (pkg.get("videoBitDepth") or 0):
+        gap.append(f"bitDepth {src['videoBitDepth']}->{pkg['videoBitDepth']}")
+    for k in ("audioLanguages", "subtitleLanguages"):
+        missing = sorted(set(src.get(k) or []) - set(pkg.get(k) or []))
+        if missing:
+            gap.append(f"{k} {','.join(missing)}")
+    if (src.get("subtitleTracks") or 0) > (pkg.get("subtitleTracks") or 0):
+        gap.append(f"subtitleTracks {src['subtitleTracks']}->{pkg['subtitleTracks']}")
+    if (src.get("commentaryTracks") or 0) > (pkg.get("commentaryTracks") or 0):
+        gap.append(f"commentaryTracks {src['commentaryTracks']}->{pkg['commentaryTracks']}")
+    return gap
+
 # ---------------------------------------------------------------- filename labels
 QUALITY = re.compile(r"\b(Remux|Bluray|WEBDL|WEB-DL|WEBRip|HDTV|SDTV|DVD|TELESYNC|TS|CAM)[- ]?(\d{3,4}p)?\b", re.I)
 EDITION_WORDS = [
@@ -615,6 +711,10 @@ def main():
                 "sizeBytes": stat.get("size") or 0,
                 "mtime": datetime.datetime.fromtimestamp(stat["mtime"], datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z") if stat.get("mtime") else NOW,
                 "fixity": {"qh1": stat.get("qh1")},
+                "state": "present",
+                "ownership": {"uid": stat.get("uid"), "gid": stat.get("gid"),
+                              "mode": (stat.get("mode") or "0o0")[-4:].lstrip("o").rjust(4, "0")[-4:], "acl": None, "selinux": None},
+                "part": None,
                 "origin": {"libraryPath": src_path[len(args.library_root):].lstrip("/") if src_path.startswith(args.library_root) else src_path,
                            "folder": folder, "migratedAt": NOW, "method": "hardlink"},
             },
@@ -642,6 +742,25 @@ def main():
             "probe": {"tool": "ffprobe", "version": None, "at": NOW, "raw": probe or None,
                       "note": "disc image: streams were not demuxed; mount the image to inventory its playlists" if is_iso else None},
         }
+        src_chapters = source_doc["chapters"] or chapters.get(item["id"])
+        source_doc["essence"] = source_essence(streams, src_chapters)
+        fc = file_coords(name)
+        if item["type"] == "episode" and fc and fc.get("episodeEnd"):
+            siblings = sorted((x for x in items.values() if x["parent_id"] == item["parent_id"] and x["seasonnumber"] == fc["season"]
+                               and fc["episode"] <= (x["episodenumber"] or -1) <= fc["episodeEnd"]), key=lambda x: x["episodenumber"])
+            source_doc["covers"] = [x["id"] for x in siblings]
+        else:
+            source_doc["covers"] = []
+        if default_sub:
+            want_lang = lang(default_sub.get("lang"))[0]
+            cands = [x for x in streams if x["type"] == "subtitle" and x.get("language") == want_lang]
+            if default_sub.get("label"):
+                exact = [x for x in cands if (x.get("title") or "") == default_sub["label"]]
+                cands = exact or cands
+            if len(cands) == 1:
+                source_doc["subtitleDecisions"] = {"defaultStreamIndex": cands[0]["index"], "decidedBy": "legacy-catalog"}
+            else:
+                report["subtitle-default-kept-on-package"].append(f"{item['title']}: {len(cands)} same-language source streams, decision recorded on the package rendition")
         if not source_doc["file"]["fixity"]["qh1"]:
             raise SystemExit(f"no fixity for {src_path}")
         if default_sub:
@@ -714,11 +833,20 @@ def main():
                            "subtitles": "text -> webvtt, image -> sidecar", "segmentSeconds": (ren.get("video") or [{}])[0].get("targetDuration")},
                 "renditions": {"video": p_video, "audio": p_audio, "subtitles": p_subs},
                 "fidelity": {"lossless": not losses, "losses": losses, "droppedSourceStreams": dropped},
+                "decisions": package_decisions(man, subs.get(item["id"], [])),
+                "role": "derived",
+                "essence": package_essence(man),
+                "chapters": [],
             }
+            gap = essence_gap(source_doc["essence"], pkg_doc["essence"])
+            if gap:
+                report["lost-if-original-deleted"].append(f"{item['title']}: {'; '.join(gap)}")
             write(f"{pdir}/package.json", pkg_doc)
             plan.append(("linktree", fe["packageDir"], pdir))
             pkgs.append({"id": pid, "document": f"packages/{pid}/package.json", "state": pkg_doc["state"], "lossless": not losses})
 
+        if not pkgs:
+            report["lost-if-original-deleted"].append(f"{item['title']}: EVERYTHING - no package exists")
         version_doc = {
             "schema": "zaentrum.library.version/1", **envelope(vid, ts(item["createdat"]) or NOW, NOW),
             "workId": item["id"], "primary": True,
@@ -727,7 +855,9 @@ def main():
             "runtime": {"measuredMs": measured or 0, "referenceMs": reference, "deltaMs": delta},
             "completeness": completeness,
             "master": {"fingerprint": fp, "fidelity": fid_class},
-            "source": {"document": "source.json", "file": f"source/{name}"},
+            "truth": {"kind": "source", "id": sid, "since": NOW,
+                      "note": "the original still exists; the canonical package becomes the truth once the original is deleted"},
+            "sources": [{"id": sid, "document": "source.json", "file": f"source/{name}", "state": "present", "part": None}],
             "packages": pkgs,
         }
         write(f"{vdir}/version.json", version_doc)

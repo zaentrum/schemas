@@ -22,7 +22,16 @@
       "folder": "Tears of Steel (2012)",
       "migratedAt": "2026-09-13T12:00:00Z",
       "method": "hardlink"
-    }
+    },
+    "state": "present",
+    "ownership": {
+      "uid": 1000,
+      "gid": 1000,
+      "mode": "0664",
+      "acl": null,
+      "selinux": null
+    },
+    "part": null
   },
   "labels": {
     "quality": null,
@@ -159,5 +168,30 @@
     "at": "2026-09-13T12:00:00Z",
     "raw": null,
     "note": "example fixture: raw probe omitted"
+  },
+  "covers": [],
+  "essence": {
+    "maxAudioChannels": 6,
+    "surround": true,
+    "losslessAudio": true,
+    "objectAudio": false,
+    "maxVideoHeight": 1600,
+    "videoBitDepth": 10,
+    "hdr10Metadata": false,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [
+      "de"
+    ],
+    "subtitleTracks": 1,
+    "imageSubtitles": false,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": true,
+    "commentaryTracks": 0
   }
 }

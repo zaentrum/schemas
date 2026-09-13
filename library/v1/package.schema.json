@@ -1,0 +1,432 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/v1/package.schema.json",
+  "title": "package.json — a derived rendition of a version",
+  "description": "A playable rendition of a version and a full account of what it lost relative to its source. A 'derived' package is disposable while its source exists. A 'canonical' package is the only remaining copy: it becomes the version's truth when the original is deleted, and every loss it records is then permanent. Deleting an original is safe only for what the canonical package's essence still contains. The playback manifest the streaming service reads (manifest.json) sits beside this file unchanged.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "defs.schema.json#/$defs/envelope"
+    }
+  ],
+  "required": [
+    "schema",
+    "id",
+    "rev",
+    "versionId",
+    "workId",
+    "sourceId",
+    "createdAt",
+    "updatedAt",
+    "state",
+    "manifest",
+    "renditions",
+    "fidelity",
+    "role",
+    "essence"
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "schema": {
+      "const": "zaentrum.library.package/1"
+    },
+    "id": true,
+    "rev": true,
+    "createdAt": true,
+    "createdBy": true,
+    "updatedAt": true,
+    "updatedBy": true,
+    "versionId": {
+      "$ref": "defs.schema.json#/$defs/uuid"
+    },
+    "workId": {
+      "$ref": "defs.schema.json#/$defs/uuid"
+    },
+    "sourceId": {
+      "$ref": "defs.schema.json#/$defs/uuid"
+    },
+    "state": {
+      "enum": [
+        "complete",
+        "failed",
+        "stale",
+        "building"
+      ]
+    },
+    "manifest": {
+      "type": "object",
+      "required": [
+        "file",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "$ref": "defs.schema.json#/$defs/relPath"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "sha256": {
+          "$ref": "defs.schema.json#/$defs/sha256"
+        }
+      }
+    },
+    "recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "packager": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "packagedAt": {
+          "oneOf": [
+            {
+              "$ref": "defs.schema.json#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "video": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. 'copy', 'hevc main 1080p re-encode'."
+        },
+        "audio": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. 'aac-lc 2ch 192k'."
+        },
+        "subtitles": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. 'text -> webvtt, image -> sidecar'."
+        },
+        "segmentSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "renditions": {
+      "type": "object",
+      "required": [
+        "video",
+        "audio",
+        "subtitles"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "video": {
+          "type": "array",
+          "description": "More than one entry is a quality ladder.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "codec": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "width": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "height": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "bitrate": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "dynamicRange": {
+                "enum": [
+                  "sdr",
+                  "hdr10",
+                  "hdr10plus",
+                  "hlg",
+                  "dolby-vision",
+                  "unknown"
+                ]
+              },
+              "sourceStreamIndex": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "audio": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "channels"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "codec": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "channels": {
+                "type": "integer"
+              },
+              "bitrate": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "language": {
+                "oneOf": [
+                  {
+                    "$ref": "defs.schema.json#/$defs/language"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "default": {
+                "type": "boolean"
+              },
+              "sourceStreamIndex": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "sourceChannels": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Channels in the source track it was made from."
+              }
+            }
+          }
+        },
+        "subtitles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "format": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "language": {
+                "oneOf": [
+                  {
+                    "$ref": "defs.schema.json#/$defs/language"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "forced": {
+                "type": "boolean"
+              },
+              "default": {
+                "type": "boolean"
+              },
+              "sourceStreamIndex": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "fidelity": {
+      "type": "object",
+      "required": [
+        "lossless",
+        "losses"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "lossless": {
+          "type": "boolean"
+        },
+        "losses": {
+          "type": "array",
+          "description": "Every way this rendition is poorer than its source. Empty only when lossless is true.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "detail"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "audio-downmix",
+                  "audio-codec",
+                  "audio-dropped",
+                  "video-resolution",
+                  "video-bitdepth",
+                  "dynamic-range",
+                  "dolby-vision",
+                  "stereo3d",
+                  "subtitle-dropped",
+                  "subtitle-styling",
+                  "attachments-dropped",
+                  "chapters-dropped",
+                  "other"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "sourceStreamIndex": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "droppedSourceStreams": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "role": {
+      "enum": [
+        "derived",
+        "canonical"
+      ]
+    },
+    "essence": {
+      "$ref": "defs.schema.json#/$defs/essence"
+    },
+    "chapters": {
+      "type": "array",
+      "description": "Chapter marks carried by this rendition. A canonical package must carry them, since the original that held them may be gone.",
+      "items": {
+        "type": "object",
+        "required": [
+          "startMs",
+          "endMs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "startMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "object",
+      "description": "Which rendition a viewer gets by default. These are human or rule decisions, often hand-corrected, and irreplaceable; where the catalog and the playback manifest disagree, the catalog's decision is the one recorded.",
+      "additionalProperties": false,
+      "properties": {
+        "defaultAudio": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Rendition id, e.g. 'a0'."
+        },
+        "defaultAudioSource": {
+          "enum": [
+            "manifest",
+            "legacy-catalog",
+            "human",
+            null
+          ]
+        },
+        "defaultSubtitle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Rendition id, e.g. 'sub1'; null means subtitles are off by default."
+        },
+        "defaultSubtitleSource": {
+          "enum": [
+            "manifest",
+            "legacy-catalog",
+            "human",
+            null
+          ]
+        }
+      }
+    }
+  }
+}
