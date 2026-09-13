@@ -42,6 +42,19 @@ SEASON_EPISODE = re.compile(r"^S(\d+)E(\d+)$")
 FREE_TEXT = {"overview", "tagline", "notes", "note", "review", "detail", "deletionReason"}
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
 INT64 = (-(1 << 63), (1 << 63) - 1)
+UNDETERMINED = {"und", "mul", "zxx", ""}
+ISO639_2 = {"eng": "en", "ger": "de", "deu": "de", "fre": "fr", "fra": "fr", "ita": "it", "spa": "es", "jpn": "ja", "chi": "zh",
+            "zho": "zh", "dut": "nl", "nld": "nl", "por": "pt", "rus": "ru", "pol": "pl", "cze": "cs", "ces": "cs", "swe": "sv",
+            "nor": "no", "nob": "no", "nno": "no", "nb": "no", "nn": "no", "dan": "da", "fin": "fi", "kor": "ko", "tur": "tr",
+            "ara": "ar", "heb": "he", "hun": "hu", "gre": "el", "ell": "el", "rum": "ro", "ron": "ro", "tha": "th", "vie": "vi",
+            "ind": "id", "may": "ms", "msa": "ms", "hin": "hi", "ukr": "uk", "bul": "bg", "hrv": "hr", "srp": "sr", "slo": "sk",
+            "slk": "sk", "slv": "sl", "est": "et", "lav": "lv", "lit": "lt", "ice": "is", "isl": "is", "cat": "ca", "baq": "eu",
+            "eus": "eu", "glg": "gl", "per": "fa", "fas": "fa", "wel": "cy", "cym": "cy", "tam": "ta", "tel": "te"}
+
+
+def primary_language(raw):
+    code = (raw or "").lower().split("-")[0]
+    return ISO639_2.get(code, code)
 
 
 def listdir(d):
@@ -365,9 +378,21 @@ class Checker:
         if sum(1 for s in subs if s.get("default") and not s.get("forced")) > 1:
             self.err(where, "more than one non-forced subtitle is default")
         by_id = {x["id"]: x for x in subs}
+
+        def is_forced(x):
+            return bool(x.get("forced")) or x.get("purpose") in ("forced", "signs-songs")
+
+        for x in audio + subs:
+            kind = "audio" if x in audio else "subtitle"
+            if x.get("purposeFrom") == "assumed" and x.get("purpose") not in ("dialogue", "main"):
+                self.err(where, f"{kind} {x['id']} purpose {x.get('purpose')} cannot be assumed; only dialogue or main can")
+            if (x.get("purposeFrom") is None) != (x.get("purpose") in (None, "unknown")):
+                self.err(where, f"{kind} {x['id']} needs purposeFrom exactly when its purpose is known")
         for x in subs:
             if x.get("forced") and x.get("purpose") not in (None, "forced", "signs-songs", "unknown"):
                 self.err(where, f"subtitle {x['id']} is flagged forced but its purpose is {x['purpose']}")
+            if x.get("default") and is_forced(x):
+                self.err(where, f"subtitle {x['id']} is a forced track flagged default: forced tracks are shown through the audio's forcedSubtitle")
         for a in audio:
             fs = a.get("forcedSubtitle")
             if fs is None:
@@ -375,8 +400,12 @@ class Checker:
             target = by_id.get(fs)
             if target is None:
                 self.err(where, f"audio {a['id']} forcedSubtitle {fs} is not a subtitle")
-            elif not (target.get("forced") or target.get("purpose") in ("forced", "signs-songs")):
+            elif not is_forced(target):
                 self.err(where, f"audio {a['id']} forcedSubtitle {fs} is not a forced or signs-and-songs track")
+            else:
+                al, sl = primary_language(a.get("language")), primary_language(target.get("language"))
+                if al not in UNDETERMINED and sl not in UNDETERMINED and al != sl:
+                    self.err(where, f"audio {a['id']} ({a.get('language')}) is paired with forced subtitle {fs} in another language ({target.get('language')})")
         if decisions and (audio or video):
             flagged_audio = [a["id"] for a in audio if a.get("default")]
             flagged_subs = [x["id"] for x in subs if x.get("default") and not x.get("forced")]
@@ -386,7 +415,7 @@ class Checker:
                 self.err(where, f"decisions.defaultAudio {decisions['defaultAudio']} is not the rendition flagged default ({flagged_audio[0]})")
             if decisions.get("defaultSubtitle") and decisions["defaultSubtitle"] not in {x["id"] for x in subs}:
                 self.err(where, f"decisions.defaultSubtitle {decisions['defaultSubtitle']} is not a subtitle")
-            elif decisions.get("defaultSubtitle") and by_id[decisions["defaultSubtitle"]].get("purpose") in ("forced", "signs-songs"):
+            elif decisions.get("defaultSubtitle") and is_forced(by_id[decisions["defaultSubtitle"]]):
                 self.err(where, f"decisions.defaultSubtitle {decisions['defaultSubtitle']} is a forced track: forced tracks are shown through the audio's forcedSubtitle")
             elif (decisions.get("defaultSubtitle") or None) != (flagged_subs[0] if flagged_subs else None):
                 self.err(where, f"decisions.defaultSubtitle {decisions.get('defaultSubtitle')} disagrees with the subtitle flagged default "

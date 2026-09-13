@@ -68,8 +68,24 @@ def essence(**kw):
     return base
 
 
+def probe_stream(st):
+    """A minimal ffprobe stream carrying the same flags and title the stream record claims."""
+    d = st.get("dispositions") or {}
+    raw = {"default": int(bool(d.get("default"))), "forced": int(bool(d.get("forced"))), "comment": int(bool(d.get("commentary"))),
+           "hearing_impaired": int(bool(d.get("hearingImpaired"))), "visual_impaired": int(bool(d.get("visualImpaired")))}
+    tags = {k: v for k, v in (("language", st.get("languageRaw")), ("title", st.get("title"))) if v}
+    if st.get("events") is not None:
+        tags["NUMBER_OF_FRAMES"] = str(st["events"])
+    out = {"index": st["index"], "codec_type": st["type"], "codec_name": st.get("codec"), "disposition": raw, "tags": tags}
+    if st["type"] == "audio":
+        out["channels"] = st["channels"]
+    if st["type"] == "video":
+        out.update(width=st.get("width"), height=st.get("height"))
+    return out
+
+
 def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms, quality="1080p", medium="disc"):
-    probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)}, "streams": [], "chapters": []}
+    probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)}, "streams": [probe_stream(x) for x in streams], "chapters": []}
     probe_bytes = write(os.path.join(item_dir, "source", sid, "ffprobe.json"), probe)
     return {
         "id": sid, "state": "present",
@@ -103,14 +119,15 @@ def audio(index, codec, channels, layout, title=None, commentary=False):
             "dispositions": {"default": index == 1, "commentary": commentary}, "profile": None, "channels": channels,
             "channelLayout": layout, "sampleRate": 48000, "bitDepth": None, "bitrate": None, "lossless": False,
             "objectAudio": "none", "titleClaim": None, "encoder": None,
-            "purpose": "commentary" if commentary else "main", "purposeFrom": "disposition" if commentary else "assumed"}
+            "purpose": "commentary" if commentary else "main", "purposeFrom": "disposition" if commentary else "assumed", "variant": None}
 
 
-def subtitle(index, title, forced=False, sdh=False):
+def subtitle(index, title, forced=False, sdh=False, events=900):
     purpose = "forced" if forced else "sdh" if sdh else "dialogue"
     return {"index": index, "type": "subtitle", "codec": "subrip", "language": "en", "languageRaw": "eng", "title": title,
             "dispositions": {"default": False, "forced": forced, "hearingImpaired": sdh}, "form": "text", "styled": False,
-            "variant": None, "purpose": purpose, "purposeFrom": "disposition" if (forced or sdh) else "assumed"}
+            "variant": None, "events": 40 if forced else events, "purpose": purpose,
+            "purposeFrom": "disposition" if (forced or sdh) else "assumed"}
 
 
 def playback(duration_ms, width, height, hdr, audio_src, ladder=False):
@@ -123,7 +140,8 @@ def playback(duration_ms, width, height, hdr, audio_src, ladder=False):
                        "dynamicRange": "hdr10" if hdr else "sdr", "sourceStreamIndex": 0} for i, (w, h, br) in enumerate(rungs)],
             "audio": [{"id": "a0", "dir": "hls/a0", "codec": "mp4a.40.2", "language": "eng", "title": "", "default": True,
                        "channels": 2, "bitrateBps": 192000, "segments": 15, "visible": True,
-                       "sourceStreamIndex": 1, "sourceChannels": audio_src}],
+                       "sourceStreamIndex": 1, "sourceChannels": audio_src, "purpose": "main", "purposeFrom": "assumed",
+                       "variant": None, "original": True, "forcedSubtitle": None}],
         },
         "subtitles": [], "trickplay": None,
     }
@@ -248,11 +266,11 @@ def main():
     ep_pb = playback(2700000, 3840, 2160, True, 6)
     # Characters speak an invented language in a few scenes: the forced track translates only those lines and is
     # shown with the English audio while subtitles are off; the full and SDH tracks are there to pick.
-    ep_pb["renditions"]["audio"][0].update(purpose="main", purposeFrom="assumed", original=True, forcedSubtitle="sub0")
+    ep_pb["renditions"]["audio"][0].update(forcedSubtitle="sub0")
     ep_pb["renditions"]["audio"].append({"id": "a1", "dir": "hls/a1", "codec": "mp4a.40.2", "language": "eng", "title": "Commentary",
                                          "default": False, "channels": 2, "bitrateBps": 192000, "segments": 15, "visible": True,
                                          "sourceStreamIndex": 2, "sourceChannels": 2, "purpose": "commentary", "purposeFrom": "disposition",
-                                         "original": None, "forcedSubtitle": None})
+                                         "variant": None, "original": None, "forcedSubtitle": "sub0"})
     ep_pb["subtitles"] = [
         {"id": "sub0", "path": "subs/0.vtt", "language": "eng", "title": "Forced", "default": False, "forced": True, "format": "webvtt",
          "visible": True, "sourceStreamIndex": 3, "purpose": "forced", "purposeFrom": "disposition", "variant": None},

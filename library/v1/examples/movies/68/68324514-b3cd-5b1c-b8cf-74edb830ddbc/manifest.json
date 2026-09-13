@@ -69,7 +69,12 @@
         "segments": 15,
         "visible": true,
         "sourceStreamIndex": 1,
-        "sourceChannels": 6
+        "sourceChannels": 6,
+        "purpose": "main",
+        "purposeFrom": "assumed",
+        "variant": null,
+        "original": true,
+        "forcedSubtitle": null
       }
     ]
   },
@@ -222,7 +227,8 @@
               "titleClaim": null,
               "encoder": null,
               "purpose": "main",
-              "purposeFrom": "assumed"
+              "purposeFrom": "assumed",
+              "variant": null
             },
             {
               "index": 2,
@@ -239,6 +245,7 @@
               "form": "text",
               "styled": false,
               "variant": null,
+              "events": 900,
               "purpose": "dialogue",
               "purposeFrom": "assumed"
             }
@@ -296,7 +303,7 @@
             "version": null,
             "at": "2026-09-13T12:00:00Z",
             "file": "source/aaedd282-8697-55f0-8023-aa424e9f6b47/ffprobe.json",
-            "sha256": "sha256:20a09425039c498bc9101a1e8bc9de6117ca3c42f045f1251b0628df3cb3dc04",
+            "sha256": "sha256:11c9759fcf190d5de55cb6ad8bbf2ce2c23c78fe096677f7233213c2185f6b6a",
             "note": null
           }
         }

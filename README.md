@@ -120,6 +120,12 @@ records a `review` for a person. `tools/make-library-examples.py` regenerates
 v1 is a draft until a platform service adopts it. Every change is listed here;
 rebuild a library with the current migrator after one.
 
+- **2026-09-13 (e)** — renditions require `purpose` and `purposeFrom`;
+  `purposeFrom` gains `content` (a forced track recognised by its small number of
+  events); subtitle streams record `events`; audio streams and renditions gain
+  `variant`; stream `dispositions` hold only the file's own flags; a
+  `forcedSubtitle` must be in its audio's language, and a forced track may not be
+  flagged default.
 - **2026-09-13 (d)** — audio and subtitle tracks record their `purpose`
   (subtitles: `dialogue`, `sdh`, `forced`, `signs-songs`, `commentary`, `lyrics`;
   audio: `main`, `commentary`, `description`) and `purposeFrom`; audio renditions

@@ -241,7 +241,7 @@
     },
     "audioRendition": {
       "type": "object",
-      "required": ["id", "dir", "codec", "language", "default", "channels", "bitrateBps", "segments"],
+      "required": ["id", "dir", "codec", "language", "default", "channels", "bitrateBps", "segments", "purpose", "purposeFrom"],
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string" },
@@ -257,14 +257,15 @@
         "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." },
         "sourceChannels": { "type": ["integer", "null"], "description": "Added in version 3: channels of the original track, e.g. 6 when a 5.1 track was downmixed to stereo." },
         "purpose": { "enum": ["main", "commentary", "description", "unknown"], "description": "Added in version 3. 'description' is audio description for blind and partially sighted viewers." },
-        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." },
-        "original": { "type": ["boolean", "null"], "description": "Added in version 3: the track is in the work's original language; null when unknown." },
-        "forcedSubtitle": { "type": ["string", "null"], "description": "Added in version 3: id of the subtitle shown automatically with this audio while the viewer has subtitles off — the forced track that translates only foreign-language dialogue and on-screen text. Null when there is none." }
+        "purposeFrom": { "enum": ["disposition", "title", "content", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, the track's content (a subtitle with a small fraction of the events of the full track in its language is forced), a person, or nothing (assumed: dialogue or main). Null only with purpose unknown." },
+        "variant": { "type": ["string", "null"], "description": "Added in version 3: region or dialect, e.g. 'Castilian', 'Latin American'." },
+        "original": { "type": ["boolean", "null"], "description": "Added in version 3: true when the file flags the track as the work's original language; null when unknown." },
+        "forcedSubtitle": { "type": ["string", "null"], "description": "Added in version 3: id of the subtitle shown automatically with this audio while the viewer has subtitles off — the forced or signs-and-songs track of the same language that translates only foreign-language dialogue and on-screen text. Null when no such track exists or the audio's language is unknown. A client that cannot render it picks another forced track of the same language, preferring text." }
       }
     },
     "subtitleRendition": {
       "type": "object",
-      "required": ["id", "path", "language", "format"],
+      "required": ["id", "path", "language", "format", "purpose", "purposeFrom"],
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string" },
@@ -277,7 +278,7 @@
         "visible": { "type": "boolean" },
         "sourceStreamIndex": { "type": ["integer", "null"], "description": "Added in version 3." },
         "purpose": { "$ref": "#/$defs/subtitlePurpose", "description": "Added in version 3." },
-        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." },
+        "purposeFrom": { "enum": ["disposition", "title", "content", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, the track's content (a subtitle with a small fraction of the events of the full track in its language is forced), a person, or nothing (assumed: dialogue or main). Null only with purpose unknown." },
         "variant": { "type": ["string", "null"], "description": "Added in version 3: region or script, e.g. 'Latin American', 'Simplified'." }
       }
     },
@@ -654,7 +655,7 @@
     },
     "subtitlePurpose": {
       "enum": ["dialogue", "sdh", "forced", "signs-songs", "commentary", "lyrics", "unknown"],
-      "description": "'dialogue': all spoken dialogue. 'sdh': dialogue plus sound cues and speaker names, for deaf and hard-of-hearing viewers. 'forced': only what a viewer of this language would not otherwise understand — foreign or invented languages, signs, letters. 'signs-songs': on-screen text and song lyrics only, the usual companion of a dubbed audio track. 'commentary': the text of a commentary. 'lyrics': song lyrics only."
+      "description": "'dialogue': all spoken dialogue (a full track normally includes the forced lines too). 'sdh': dialogue plus sound cues and speaker names, for deaf and hard-of-hearing viewers. 'forced': only what a viewer of this language would not otherwise understand — foreign or invented languages, signs, letters. 'signs-songs': on-screen text and song lyrics only, the usual companion of a dubbed audio track. 'commentary': the text of a commentary. 'lyrics': song lyrics only. 'unknown': the track could not be traced to the original's stream."
     },
     "streamBase": {
       "type": "object",
@@ -743,7 +744,8 @@
         },
         "encoder": { "type": ["string", "null"] },
         "purpose": { "enum": ["main", "commentary", "description", "unknown"] },
-        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." }
+        "purposeFrom": { "enum": ["disposition", "title", "content", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, the track's content (a subtitle with a small fraction of the events of the full track in its language is forced), a person, or nothing (assumed: dialogue or main). Null only with purpose unknown." },
+        "variant": { "type": ["string", "null"], "description": "Region or dialect, e.g. 'Castilian', 'Latin American'." }
       }
     },
     "subtitleStream": {
@@ -754,9 +756,10 @@
         "type": { "const": "subtitle" },
         "form": { "enum": ["text", "image"], "description": "Image subtitles (PGS, VobSub) cannot become text without OCR." },
         "styled": { "type": "boolean", "description": "ASS/SSA positioning and typesetting that plain WebVTT loses." },
-        "variant": { "type": ["string", "null"], "description": "Region or script, e.g. 'Latin American', 'Simplified'." },
+        "variant": { "type": ["string", "null"], "description": "Region or script, e.g. 'Latin American', 'Simplified', found anywhere in the title." },
+        "events": { "type": ["integer", "null"], "minimum": 0, "description": "Number of subtitle events the container records (NUMBER_OF_FRAMES)." },
         "purpose": { "$ref": "#/$defs/subtitlePurpose" },
-        "purposeFrom": { "enum": ["disposition", "title", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, a person, or nothing (assumed from the absence of any sign)." }
+        "purposeFrom": { "enum": ["disposition", "title", "content", "human", "assumed", null], "description": "What the purpose rests on: the file's stream flags, the track title, the track's content (a subtitle with a small fraction of the events of the full track in its language is forced), a person, or nothing (assumed: dialogue or main). Null only with purpose unknown." }
       }
     },
     "attachmentStream": {

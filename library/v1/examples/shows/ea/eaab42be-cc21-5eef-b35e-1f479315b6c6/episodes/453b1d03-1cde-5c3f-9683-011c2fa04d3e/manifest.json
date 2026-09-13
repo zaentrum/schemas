@@ -75,6 +75,7 @@
         "sourceChannels": 6,
         "purpose": "main",
         "purposeFrom": "assumed",
+        "variant": null,
         "original": true,
         "forcedSubtitle": "sub0"
       },
@@ -93,8 +94,9 @@
         "sourceChannels": 2,
         "purpose": "commentary",
         "purposeFrom": "disposition",
+        "variant": null,
         "original": null,
-        "forcedSubtitle": null
+        "forcedSubtitle": "sub0"
       }
     ]
   },
@@ -275,7 +277,8 @@
               "titleClaim": null,
               "encoder": null,
               "purpose": "main",
-              "purposeFrom": "assumed"
+              "purposeFrom": "assumed",
+              "variant": null
             },
             {
               "index": 2,
@@ -299,7 +302,8 @@
               "titleClaim": null,
               "encoder": null,
               "purpose": "commentary",
-              "purposeFrom": "disposition"
+              "purposeFrom": "disposition",
+              "variant": null
             },
             {
               "index": 3,
@@ -316,6 +320,7 @@
               "form": "text",
               "styled": false,
               "variant": null,
+              "events": 40,
               "purpose": "forced",
               "purposeFrom": "disposition"
             },
@@ -334,6 +339,7 @@
               "form": "text",
               "styled": false,
               "variant": null,
+              "events": 900,
               "purpose": "dialogue",
               "purposeFrom": "assumed"
             },
@@ -352,6 +358,7 @@
               "form": "text",
               "styled": false,
               "variant": null,
+              "events": 900,
               "purpose": "sdh",
               "purposeFrom": "disposition"
             }
@@ -402,7 +409,7 @@
             "version": null,
             "at": "2026-09-13T12:00:00Z",
             "file": "source/5b2f2568-e95b-5366-a2c9-7ea053a0d47a/ffprobe.json",
-            "sha256": "sha256:f6b6e07b5f6b404f7ce2d46f5eab7f43f62852cf496d8a118791a97340bf31b0",
+            "sha256": "sha256:e2ec5c45731fcb8b42722021812021203fde2049aaa824b674a8b91f3d6c674f",
             "note": null
           }
         }
@@ -627,7 +634,8 @@
               "titleClaim": null,
               "encoder": null,
               "purpose": "main",
-              "purposeFrom": "assumed"
+              "purposeFrom": "assumed",
+              "variant": null
             }
           ],
           "chapters": [],
@@ -670,7 +678,7 @@
             "version": null,
             "at": "2026-09-13T12:00:00Z",
             "file": "source/896e7615-5f8a-5661-9a4d-bcdfec2b62e7/ffprobe.json",
-            "sha256": "sha256:09fee82ea30254c33ea30683728fef996feed9d3e4d47d894506781cdcf21bee",
+            "sha256": "sha256:a15302ce95822d09c93fc4658f78d72c64f01cae3603d5d4145bdbd19536b08c",
             "note": null
           }
         }
@@ -760,7 +768,12 @@
                 "segments": 15,
                 "visible": true,
                 "sourceStreamIndex": 1,
-                "sourceChannels": 6
+                "sourceChannels": 6,
+                "purpose": "main",
+                "purposeFrom": "assumed",
+                "variant": null,
+                "original": true,
+                "forcedSubtitle": null
               }
             ]
           },

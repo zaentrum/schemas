@@ -60,7 +60,27 @@ ISO639 = {
     "ron": "ro", "tha": "th", "vie": "vi", "ind": "id", "may": "ms", "msa": "ms", "cat": "ca", "hrv": "hr",
     "slv": "sl", "slo": "sk", "slk": "sk", "srp": "sr", "bul": "bg", "est": "et", "lav": "lv", "lit": "lt",
     "ice": "is", "isl": "is", "fil": "fil", "tel": "te", "tam": "ta", "und": "und", "zxx": "zxx", "mul": "mul",
+    "baq": "eu", "eus": "eu", "glg": "gl", "kan": "kn", "mal": "ml", "ben": "bn", "mar": "mr", "urd": "ur", "per": "fa",
+    "fas": "fa", "wel": "cy", "cym": "cy", "arm": "hy", "hye": "hy", "geo": "ka", "kat": "ka", "mac": "mk", "mkd": "mk",
+    "alb": "sq", "sqi": "sq", "tgl": "tl", "lao": "lo", "khm": "km", "bur": "my", "mya": "my", "sin": "si", "nep": "ne",
+    "pan": "pa", "guj": "gu", "tib": "bo", "bod": "bo", "mon": "mn", "kaz": "kk", "uzb": "uz", "aze": "az", "bel": "be",
+    "bos": "bs", "gle": "ga", "bre": "br", "ltz": "lb", "afr": "af", "swa": "sw", "zul": "zu", "xho": "xh", "amh": "am",
+    "som": "so", "hau": "ha", "yor": "yo", "ibo": "ig", "epo": "eo", "lat": "la", "yid": "yi", "jav": "jv", "sun": "su",
+    "mao": "mi", "mri": "mi", "grn": "gn", "que": "qu", "nno": "nn", "fao": "fo", "kal": "kl", "iku": "iu", "tat": "tt",
+    "kur": "ku", "pus": "ps", "tuk": "tk", "kir": "ky", "tgk": "tg", "mlt": "mt", "roh": "rm", "sco": "sco", "haw": "haw",
 }
+
+def primary_language(raw):
+    """The primary language subtag, for matching audio and subtitles (Norwegian Bokmål and Nynorsk count as Norwegian)."""
+    code = (lang(raw)[0] or "und").split("-")[0]
+    return {"nb": "no", "nn": "no"}.get(code, code)
+
+VARIANT_WORDS = re.compile(r"\b(Latin[ -]?American|LatAm|European|Castilian|Canadian|Brazilian|Portugal|Simplified|Traditional|"
+                           r"Cantonese|Mandarin|Flemish|Swiss|Austrian|Mexican|Hong Kong|Taiwanese|Belgian|Qu[eé]b[eé]cois)\b", re.I)
+
+def title_variant(title):
+    m = VARIANT_WORDS.search(title or "")
+    return m.group(1) if m else None
 
 def lang(raw):
     if not raw:
@@ -133,12 +153,12 @@ def dispositions(s):
     t = ((s.get("tags") or {}).get("title") or "").lower()
     out = {
         "default": bool(d.get("default")),
-        "forced": bool(d.get("forced")) or "forced" in t,
+        "forced": bool(d.get("forced")),
         "original": bool(d.get("original")),
         "dub": bool(d.get("dub")),
-        "commentary": bool(d.get("comment")) or "commentary" in t,
-        "hearingImpaired": bool(d.get("hearing_impaired")) or bool(re.search(r"\bsdh\b|hearing", t)),
-        "visualImpaired": bool(d.get("visual_impaired")) or "audio description" in t,
+        "commentary": bool(d.get("comment")),
+        "hearingImpaired": bool(d.get("hearing_impaired")),
+        "visualImpaired": bool(d.get("visual_impaired")),
     }
     if d.get("attached_pic"):
         out["attachedPic"] = True
@@ -159,13 +179,13 @@ def subtitle_purpose(s):
         return "commentary", "disposition"
     if d.get("lyrics"):
         return "lyrics", "disposition"
-    if re.search(r"\bforced\b", t):
+    if re.search(r"\bforced\b", t) and not re.search(r"\b(non|not|no|un)[- ]?forced\b", t):
         return "forced", "title"
-    if re.search(r"\bsigns?\b.*\bsongs?\b|\bsigns\b", t):
+    if re.search(r"\bsigns?\b.{0,12}\bsongs?\b|\bsigns only\b", t):
         return "signs-songs", "title"
     if re.search(r"\bsdh\b|\bcc\b|hearing|closed caption", t):
         return "sdh", "title"
-    if re.search(r"commentary", t):
+    if re.search(r"commentary|kommentar|commentaire|comentario|commento|commentaar", t):
         return "commentary", "title"
     if re.search(r"\blyrics\b|karaoke", t):
         return "lyrics", "title"
@@ -178,9 +198,9 @@ def audio_purpose(s):
         return "commentary", "disposition"
     if d.get("visual_impaired") or d.get("descriptions"):
         return "description", "disposition"
-    if "commentary" in t:
+    if re.search(r"commentary|kommentar|commentaire|comentario|commento|commentaar", t):
         return "commentary", "title"
-    if re.search(r"audio description|descriptive|\bad\b", t):
+    if re.search(r"audio description|descriptive (video|audio)|audiodeskription|audiodescription", t):
         return "description", "title"
     return "main", "assumed"
 
@@ -294,19 +314,19 @@ def norm_stream(s):
             "encoder": tags.get("ENCODER") or tags.get("encoder"),
         })
         base["purpose"], base["purposeFrom"] = audio_purpose(s)
+        base["variant"] = title_variant(tags.get("title"))
         return base
     if t == "subtitle":
         codec = (s.get("codec_name") or "").lower()
         title = tags.get("title") or ""
-        m = re.search(r"\(([^)]+)\)", title)
-        variant = None
-        if m and not re.search(r"sdh|forced|commentary|srt|cc\b|signs|songs", m.group(1), re.I):
-            variant = m.group(1)
+        variant = title_variant(title)
+        events = next((num(v) for k, v in tags.items() if k.upper().startswith("NUMBER_OF_FRAMES")), None)
         base.update({
             "type": "subtitle",
             "form": "image" if codec in IMAGE_SUBS else "text",
             "styled": codec in ("ass", "ssa"),
             "variant": variant,
+            "events": events,
         })
         base["purpose"], base["purposeFrom"] = subtitle_purpose(s)
         return base
@@ -319,6 +339,17 @@ def norm_stream(s):
         return base
     base.update({"type": "data"})
     return base
+
+def infer_forced_by_size(streams):
+    """An untitled, unflagged subtitle with a small fraction of the events of the full track in its language is a
+    forced track: it translates a few lines, not the film."""
+    subs = [x for x in streams if x["type"] == "subtitle"]
+    for x in subs:
+        if x["purposeFrom"] != "assumed" or not x.get("events"):
+            continue
+        peers = [y["events"] for y in subs if y is not x and y.get("events") and primary_language(y.get("language")) == primary_language(x.get("language"))]
+        if peers and max(peers) >= 300 and x["events"] < 0.1 * max(peers):
+            x["purpose"], x["purposeFrom"] = "forced", "content"
 
 # ---------------------------------------------------------------- essence
 def source_essence(streams, chapters):
@@ -381,7 +412,7 @@ def package_essence(man):
         "audioLanguages": sorted({lang(x.get("language"))[0] for x in auds if x.get("language")}),
         "subtitleLanguages": sorted({lang(x.get("language"))[0] for x in subs if x.get("language")}),
         "subtitleTracks": len(subs),
-        "imageSubtitles": any((x.get("format") or "") in ("pgs", "sup", "vobsub") for x in subs),
+        "imageSubtitles": any((x.get("format") or "") in ("pgs", "sup", "vobsub", "dvb") for x in subs),
         "styledSubtitles": False,
         "fonts": False,
         "chapters": False,
@@ -875,6 +906,7 @@ def main():
         folder = fe.get("folder") or os.path.basename(os.path.dirname(src_path))
         is_iso = name.lower().endswith(".iso")
         streams = [norm_stream(s) for s in probe.get("streams") or []]
+        infer_forced_by_size(streams)
         vstreams = [s for s in streams if s["type"] == "video" and not s["dispositions"].get("attachedPic")]
         v0 = vstreams[0] if vstreams else {}
         astreams = [s for s in streams if s["type"] == "audio"]
@@ -913,7 +945,7 @@ def main():
             if w:
                 ed_ev.append({"signal": sig, "value": text, "weight": 0.9})
                 ed_kind, conf = w, 0.9
-        commentaries = [a["title"] for a in astreams if a["dispositions"].get("commentary")]
+        commentaries = [a["title"] for a in astreams if a.get("purpose") == "commentary"]
         if commentaries:
             ed_ev.append({"signal": "commentary-track", "value": commentaries[:3], "weight": 0.2,
                           "note": "commentary tracks identify the disc release, which usually names the cut"})
@@ -1059,6 +1091,7 @@ def main():
                 sa = src_audio.get(sidx) or {}
                 audio.append({**a, "sourceStreamIndex": sidx, "sourceChannels": sch,
                               "purpose": sa.get("purpose", "unknown"), "purposeFrom": sa.get("purposeFrom"),
+                              "variant": sa.get("variant"),
                               "original": True if (sa.get("dispositions") or {}).get("original") else None,
                               "forcedSubtitle": None})
                 if sch and a.get("channels") and a["channels"] < sch:
@@ -1085,23 +1118,41 @@ def main():
             for sub in man.get("subtitles") or []:
                 m_i = re.match(r"subs/(\d+)\.", sub.get("path") or "")
                 ss = s_subs[int(m_i.group(1))] if m_i and int(m_i.group(1)) < len(s_subs) else None
-                p_subs.append({**sub, "sourceStreamIndex": ss["index"] if ss else None,
-                               "purpose": ss["purpose"] if ss else "unknown", "purposeFrom": ss["purposeFrom"] if ss else None,
+                if ss:
+                    purpose, purpose_from = ss["purpose"], ss["purposeFrom"]
+                elif sub.get("forced"):
+                    purpose, purpose_from = "forced", "disposition"
+                else:
+                    purpose, purpose_from = "unknown", None
+                p_subs.append({**sub, "sourceStreamIndex": ss["index"] if ss else None, "purpose": purpose, "purposeFrom": purpose_from,
                                "variant": ss.get("variant") if ss else None})
-                if ss and ss["purpose"] == "forced" and not sub.get("forced"):
+                if purpose in ("forced", "signs-songs") and not sub.get("forced"):
                     report["package-forced-flag-missing"].append(
-                        f"{item['title']}: {sub['id']} '{sub.get('title') or ''}' is a forced track ({ss['purposeFrom']}) but the package does not flag it forced")
-            # Pair each main audio track with the forced subtitle of its language, shown while subtitles are off.
+                        f"{item['title']}: {sub['id']} '{sub.get('title') or ''}' is a {purpose} track ({purpose_from}) the package does not flag forced")
+                if purpose in ("forced", "signs-songs") and sub.get("default"):
+                    report["forced-track-flagged-default"].append(f"{item['title']}: {sub['id']} '{sub.get('title') or ''}' is {purpose} but flagged default")
+            events = {x["index"]: x.get("events") for x in s_subs}
+            # Pair every audio track with the forced subtitle of its language, as players choose forced tracks by language.
             for a in audio:
-                if a["purpose"] not in ("main", "unknown"):
+                al = primary_language(a.get("language"))
+                if al in ("und", "mul", "zxx"):
                     continue
-                al = lang(a.get("language"))[0]
-                cands = [x for x in p_subs if x["purpose"] in ("forced", "signs-songs") and lang(x.get("language"))[0] == al]
-                cands.sort(key=lambda x: x["purpose"] != "forced")
+                cands = [x for x in p_subs if x["purpose"] in ("forced", "signs-songs") and primary_language(x.get("language")) == al]
+                if a.get("variant") and any(x.get("variant") == a["variant"] for x in cands):
+                    cands = [x for x in cands if x.get("variant") == a["variant"]]
+                cands.sort(key=lambda x: (x["purpose"] != "forced", -(events.get(x["sourceStreamIndex"]) or 0),
+                                          {"disposition": 0, "title": 1, "content": 2}.get(x["purposeFrom"], 3),
+                                          (x.get("format") or "") in ("pgs", "vobsub", "dvb")))
                 if cands:
                     a["forcedSubtitle"] = cands[0]["id"]
-            src_forced = {lang(x.get("language"))[0] for x in s_subs if x.get("purpose") in ("forced", "signs-songs")}
-            pkg_forced = {lang(x.get("language"))[0] for x in p_subs if x["purpose"] in ("forced", "signs-songs")}
+                    same_rank = [x for x in cands if x["purpose"] == cands[0]["purpose"]]
+                    if len(same_rank) > 1:
+                        report["forced-pairing-ambiguous"].append(
+                            f"{item['title']}: audio {a['id']} ({al}) has {len(same_rank)} {cands[0]['purpose']} tracks; chose {cands[0]['id']}, the one with most events")
+            if any(x.get("purpose") == "commentary" for x in s_subs) and not any(x.get("purpose") == "commentary" for x in astreams):
+                report["commentary-subtitles-without-commentary-audio"].append(f"{item['title']}: set the purpose of the commentary audio tracks by hand")
+            src_forced = {primary_language(x.get("language")) for x in s_subs if x.get("purpose") in ("forced", "signs-songs")}
+            pkg_forced = {primary_language(x.get("language")) for x in p_subs if x["purpose"] in ("forced", "signs-songs")}
             if src_forced - pkg_forced:
                 losses.append({"kind": "subtitle-dropped", "detail": f"forced subtitles not packaged: {','.join(sorted(src_forced - pkg_forced))}", "sourceStreamIndex": None})
             if v0.get("closedCaptions"):
