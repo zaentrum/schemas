@@ -1,0 +1,58 @@
+name: Publish schemas (Pages)
+
+# Serves the published contracts at https://zaentrum.github.io/schemas/.
+# Every schema's $id is its own URL here, e.g.
+#   https://zaentrum.github.io/schemas/library/v1/work.schema.json
+# Only the landing page and library/ are published; tooling is not.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "library/**"
+      - "index.html"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      # Refuse to publish a schema whose $id does not match the URL it will be served at.
+      - name: ids match their published URLs
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          bad = 0
+          for p in sorted(pathlib.Path("library").rglob("*.schema.json")):
+              want = "https://zaentrum.github.io/schemas/" + p.as_posix()
+              got = json.loads(p.read_text()).get("$id")
+              ok = got == want
+              bad += not ok
+              print(("ok   " if ok else "FAIL ") + p.as_posix() + ("" if ok else f"  $id={got}"))
+          sys.exit(1 if bad else 0)
+          PY
+      - name: assemble site
+        run: |
+          mkdir -p _site
+          cp index.html .nojekyll _site/
+          cp -R library _site/library
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
