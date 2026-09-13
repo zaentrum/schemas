@@ -50,7 +50,7 @@
         "codec": "hev1.1.6.L120.B0",
         "width": 3840,
         "height": 2160,
-        "bitrateBps": 0,
+        "bitrateBps": 8000000,
         "hdr": true,
         "frameRate": "24/1",
         "segments": 10,
@@ -116,25 +116,23 @@
           "id": "5b2f2568-e95b-5366-a2c9-7ea053a0d47a",
           "state": "present",
           "file": {
-            "name": "Example Show (US) - S01E01 - Pilot WEBDL-2160p.mkv",
+            "name": "Example Show (US) - S01E01 - Pilot.mkv",
             "kind": "stream-container",
             "sizeBytes": 6300000000,
             "mtime": "2026-09-13T12:00:00Z",
             "fixity": {
-              "qh1": "sha256:adebeaefd885237a2b6939d60d4ff49319eef71e6bc4a62bd8a616556164cd2b"
+              "qh1": "sha256:7dd0aa0d0d8fbc2de8c1cf8771c626d0b964551c4b2742c081c8ed72e85cc460"
             },
             "origin": {
-              "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot WEBDL-2160p.mkv",
+              "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot.mkv",
               "folder": "tv/Example Show (US)/Season 01"
             },
             "part": null
           },
           "labels": {
-            "quality": "Bluray-1080p",
-            "releaseSource": "bluray",
-            "resolution": "1080p",
-            "proper": false,
-            "revision": null,
+            "quality": "2160p",
+            "medium": "web",
+            "resolution": "2160p",
             "edition": null,
             "folderEdition": null
           },
@@ -247,7 +245,7 @@
             "version": null,
             "at": "2026-09-13T12:00:00Z",
             "file": "source/5b2f2568-e95b-5366-a2c9-7ea053a0d47a/ffprobe.json",
-            "sha256": "sha256:99f74d9cbd4112d0b4e0eb3fc302ac12e33e1d434a024d785f90176575c27f23",
+            "sha256": "sha256:f6b6e07b5f6b404f7ce2d46f5eab7f43f62852cf496d8a118791a97340bf31b0",
             "note": null
           }
         }
@@ -256,6 +254,8 @@
         "id": "d3704871-11a7-5dd7-b779-0d85f470b4c8",
         "state": "complete",
         "role": "derived",
+        "sizeBytes": 2700000000,
+        "bitrateBps": 8000000,
         "fidelity": {
           "lossless": false,
           "droppedSourceStreams": [],
@@ -365,25 +365,23 @@
           "id": "896e7615-5f8a-5661-9a4d-bcdfec2b62e7",
           "state": "present",
           "file": {
-            "name": "Example Show (US) - S01E01 - Pilot (Black and White) WEBDL-2160p.mkv",
+            "name": "Example Show (US) - S01E01 - Pilot (Black and White).mkv",
             "kind": "stream-container",
             "sizeBytes": 6300000000,
             "mtime": "2026-09-13T12:00:00Z",
             "fixity": {
-              "qh1": "sha256:956b5b39a0d5b5b80b921830258a302af247a71a67377719f0e5a98a307909d5"
+              "qh1": "sha256:a0c777b1e6aa43bfacce2b99516226039466ca5f0ac2ecfdc2bdf413846e1692"
             },
             "origin": {
-              "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot (Black and White) WEBDL-2160p.mkv",
+              "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot (Black and White).mkv",
               "folder": "tv/Example Show (US)/Season 01"
             },
             "part": null
           },
           "labels": {
-            "quality": "Bluray-1080p",
-            "releaseSource": "bluray",
-            "resolution": "1080p",
-            "proper": false,
-            "revision": null,
+            "quality": "2160p",
+            "medium": "web",
+            "resolution": "2160p",
             "edition": null,
             "folderEdition": null
           },
@@ -496,7 +494,7 @@
             "version": null,
             "at": "2026-09-13T12:00:00Z",
             "file": "source/896e7615-5f8a-5661-9a4d-bcdfec2b62e7/ffprobe.json",
-            "sha256": "sha256:677054ba6191569be6d1a32514d736ad035112c954a3f975572031bfb5121473",
+            "sha256": "sha256:09fee82ea30254c33ea30683728fef996feed9d3e4d47d894506781cdcf21bee",
             "note": null
           }
         }
@@ -505,6 +503,8 @@
         "id": "62853401-77d0-5389-a1fd-cda9c3d88b30",
         "state": "complete",
         "role": "derived",
+        "sizeBytes": 2700000000,
+        "bitrateBps": 8000000,
         "fidelity": {
           "lossless": false,
           "droppedSourceStreams": [],
@@ -557,7 +557,7 @@
                 "codec": "hev1.1.6.L120.B0",
                 "width": 3840,
                 "height": 2160,
-                "bitrateBps": 0,
+                "bitrateBps": 8000000,
                 "hdr": true,
                 "frameRate": "24/1",
                 "segments": 10,

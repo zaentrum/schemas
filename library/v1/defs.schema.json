@@ -30,7 +30,7 @@
     "relPath": {
       "type": "string",
       "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
-      "description": "Path relative to the folder of the document that contains it. Never absolute, never escaping upward. '.' is the folder itself."
+      "description": "A relative path, never absolute and never escaping upward. Which folder it is relative to is stated by the field that uses it."
     },
     "rev": {
       "type": "integer",

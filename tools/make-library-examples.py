@@ -2,10 +2,11 @@
 """Regenerate library/v1/examples: one movie and one series with an episode in two versions.
 
 The fixtures are neutral (an open movie and a fictional show) and exercise the parts of the
-schema a reader most needs to see: a 5.1 original downmixed to stereo, chapters the package
-does not carry, a series folder with an episode sub-item, season artwork, and a second version
-(black-and-white) stored in versions/<id>/ with its own playback block. Images are 1x1
-placeholders; hashes and sizes are computed, never typed.
+schema a reader most needs to see: a 5.1 original downmixed to stereo, a two-rung quality ladder,
+chapters the package does not carry, a series folder with an episode sub-item, season artwork,
+and a second version (black-and-white) stored in versions/<id>/ with its own playback block.
+Images are 1x1 placeholders and rendition folders are empty; hashes and sizes are computed,
+never typed. The tree passes validate-library.py --check-media.
 """
 import base64, hashlib, json, os, shutil, uuid
 
@@ -30,6 +31,11 @@ def sha(b):
     return "sha256:" + hashlib.sha256(b).hexdigest()
 
 
+def keep(path):
+    """An empty rendition folder, kept in git by a .keep file."""
+    write(os.path.join(path, ".keep"), b"")
+
+
 def write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if not isinstance(data, bytes):
@@ -43,10 +49,10 @@ def audit():
     return {"rev": 1, "createdAt": AT, "createdBy": "make-library-examples", "updatedAt": AT, "updatedBy": "make-library-examples"}
 
 
-def image(folder, kind, name, data, ctype, season=None, series=False):
+def image(folder, kind, name, data, ctype, season=None, series=False, language=None):
     write(os.path.join(folder, name), data)
     entry = {"kind": kind, "file": name, "sha256": sha(data), "contentType": ctype, "sizeBytes": len(data),
-             "width": 1, "height": 1, "sourceUrl": None, "fetchedAt": None, "origin": "manual"}
+             "width": 1, "height": 1, "language": language, "sourceUrl": None, "fetchedAt": None, "origin": "manual"}
     if series:
         entry["season"] = season
     return entry
@@ -61,7 +67,7 @@ def essence(**kw):
     return base
 
 
-def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms):
+def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms, quality="1080p", medium="disc"):
     probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)}, "streams": [], "chapters": []}
     probe_bytes = write(os.path.join(item_dir, "source", sid, "ffprobe.json"), probe)
     return {
@@ -69,8 +75,7 @@ def source(item_dir, sid, name, library_path, streams, chapters, src_essence, du
         "file": {"name": name, "kind": "stream-container", "sizeBytes": 6300000000, "mtime": AT,
                  "fixity": {"qh1": sha(name.encode())}, "origin": {"libraryPath": library_path, "folder": os.path.dirname(library_path)},
                  "part": None},
-        "labels": {"quality": "Bluray-1080p", "releaseSource": "bluray", "resolution": "1080p", "proper": False, "revision": None,
-                   "edition": None, "folderEdition": None},
+        "labels": {"quality": quality, "medium": medium, "resolution": quality, "edition": None, "folderEdition": None},
         "container": {"format": "matroska,webm", "durationMs": duration_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
         "fidelity": {"class": "original", "evidence": []},
@@ -99,13 +104,14 @@ def audio(index, codec, channels, layout, title=None, commentary=False):
             "objectAudio": "none", "titleClaim": None, "encoder": None}
 
 
-def playback(duration_ms, width, height, hdr, audio_src):
+def playback(duration_ms, width, height, hdr, audio_src, ladder=False):
+    rungs = [(width, height, 8000000)] + ([(width * 2 // 3, height * 2 // 3, 3000000)] if ladder else [])
     return {
         "durationMs": duration_ms, "packagedAt": "2026-09-01T10:00:00+00:00", "packager": "packager example",
         "renditions": {
-            "video": [{"id": "v0", "dir": "hls/v0", "codec": "hev1.1.6.L120.B0", "width": width, "height": height, "bitrateBps": 0,
-                       "hdr": hdr, "frameRate": "24/1", "segments": 10, "targetDuration": 6,
-                       "dynamicRange": "hdr10" if hdr else "sdr", "sourceStreamIndex": 0}],
+            "video": [{"id": f"v{i}", "dir": f"hls/v{i}", "codec": "hev1.1.6.L120.B0" if i == 0 else "hev1.1.6.L93.B0", "width": w, "height": h,
+                       "bitrateBps": br, "hdr": hdr, "frameRate": "24/1", "segments": 10, "targetDuration": 6,
+                       "dynamicRange": "hdr10" if hdr else "sdr", "sourceStreamIndex": 0} for i, (w, h, br) in enumerate(rungs)],
             "audio": [{"id": "a0", "dir": "hls/a0", "codec": "mp4a.40.2", "language": "eng", "title": "", "default": True,
                        "channels": 2, "bitrateBps": 192000, "segments": 15, "visible": True,
                        "sourceStreamIndex": 1, "sourceChannels": audio_src}],
@@ -124,8 +130,10 @@ def main():
     vid, sid, pid = uid(mid, "version"), uid(mid, "source"), uid(mid, "package")
     chapters = [{"startMs": 0, "endMs": 300000, "title": "Chapter 1"}, {"startMs": 300000, "endMs": 734000, "title": "Chapter 2"}]
     src_es = essence(maxAudioChannels=6, surround=True, chapters=True, subtitleLanguages=["en"], subtitleTracks=1)
-    pb = playback(734000, 1920, 800, False, 6)
+    pb = playback(734000, 1920, 800, False, 6, ladder=True)
     write(os.path.join(mdir, ".complete"), b"packager example 2026-09-01\n")
+    for r in pb["renditions"]["video"] + pb["renditions"]["audio"]:
+        keep(os.path.join(mdir, r["dir"]))
     manifest = {
         "schema": "zaentrum.library.manifest/1", "version": 3, "itemId": mid, **audit(),
         "type": "movie", "title": "Tears of Steel", "year": 2012, "tmdbId": "133701",
@@ -143,14 +151,14 @@ def main():
             "completeness": {"status": "complete", "evidence": []},
             "master": {"fingerprint": "h264/high/8bit/sdr/1920x800", "fidelity": "original"},
             "truth": {"kind": "source", "since": AT, "note": "the original still exists"},
-            "sources": [source(mdir, sid, "Tears of Steel (2012) Bluray-1080p.mkv", "movies/Tears of Steel (2012)/Tears of Steel (2012) Bluray-1080p.mkv",
+            "sources": [source(mdir, sid, "Tears of Steel (2012).mkv", "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
                                [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)"),
                                 {"index": 2, "type": "subtitle", "codec": "subrip", "language": "en", "languageRaw": "eng", "title": None,
                                  "dispositions": {"default": False}, "form": "text", "styled": False, "variant": None}],
                                chapters, src_es, 734000)],
             "package": {
-                "id": pid, "state": "complete", "role": "derived",
-                "recipe": {"video": "hevc re-encode", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt"},
+                "id": pid, "state": "complete", "role": "derived", "sizeBytes": 734000000, "bitrateBps": 8000000,
+                "recipe": {"video": "hevc re-encode, 800p and 533p", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt"},
                 "fidelity": {"lossless": False, "droppedSourceStreams": [2], "losses": [
                     {"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                     {"kind": "subtitle-dropped", "detail": "1 of 1 source subtitle track(s) not packaged", "sourceStreamIndex": 2},
@@ -175,7 +183,9 @@ def main():
         "collection": None,
         "images": [image(meta_dir, "poster", "poster.jpg", JPEG, "image/jpeg"),
                    image(meta_dir, "backdrop", "backdrop.jpg", JPEG, "image/jpeg"),
-                   image(meta_dir, "logo", "logo.png", PNG, "image/png")],
+                   image(meta_dir, "logo", "logo.png", PNG, "image/png", language="en")],
+        "videos": [{"site": "example.org", "key": "tears-of-steel-trailer", "url": None, "name": "Trailer", "kind": "trailer",
+                    "language": "en", "durationMs": 60000, "publishedAt": "2012-09-26T00:00:00Z", "origin": "manual"}],
         "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
         "fieldOrigins": {"titles.primary": "tmdb", "releaseDate": "tmdb", "genres": "tmdb", "credits": "tmdb", "images": "manual"},
     }
@@ -207,7 +217,7 @@ def main():
                                         "overview": "A fictional series used to illustrate the library layout."}}},
         "genres": ["Drama"], "tags": [], "rating": None, "contentRating": None, "credits": [],
         "series": {"status": "returning", "firstAirDate": "2024-01-10", "lastAirDate": "2024-03-06", "network": None,
-                   "seasons": [{"number": 1, "name": "Season 1", "overview": "The first season.", "airDate": "2024-01-10", "episodeCountReference": 8}]},
+                   "seasons": [{"number": 1, "tmdbSeason": None, "name": "Season 1", "overview": "The first season.", "airDate": "2024-01-10", "episodeCountReference": 8}]},
         "images": [image(smeta_dir, "poster", "poster.jpg", JPEG, "image/jpeg", series=True),
                    image(smeta_dir, "poster", "season-01-poster.jpg", JPEG, "image/jpeg", season=1, series=True)],
         "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
@@ -218,6 +228,9 @@ def main():
 
     write(os.path.join(edir, ".complete"), b"packager example 2026-09-01\n")
     write(os.path.join(edir, "versions", v_bw, ".complete"), b"packager example 2026-09-02\n")
+    for base in (edir, os.path.join(edir, "versions", v_bw)):
+        for r in ("hls/v0", "hls/a0"):
+            keep(os.path.join(base, r))
     hdr_es = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=True)
     bw_es = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=True)
     ep_pb = playback(2700000, 3840, 2160, True, 6)
@@ -238,10 +251,10 @@ def main():
              "runtime": {"measuredMs": 2700000, "referenceMs": None, "deltaMs": None},
              "master": {"fingerprint": "hevc/main10/10bit/hdr10/3840x2160", "fidelity": "original"},
              "truth": {"kind": "source", "since": AT, "note": None},
-             "sources": [source(edir, s_colour, "Example Show (US) - S01E01 - Pilot WEBDL-2160p.mkv",
-                                "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot WEBDL-2160p.mkv",
-                                [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")], [], hdr_es, 2700000)],
-             "package": {"id": uid(eid, "package", "colour"), "state": "complete", "role": "derived",
+             "sources": [source(edir, s_colour, "Example Show (US) - S01E01 - Pilot.mkv",
+                                "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot.mkv",
+                                [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")], [], hdr_es, 2700000, "2160p", "web")],
+             "package": {"id": uid(eid, "package", "colour"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "bitrateBps": 8000000,
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                                                  {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}]},
@@ -257,10 +270,10 @@ def main():
              "runtime": {"measuredMs": 2700000, "referenceMs": None, "deltaMs": None},
              "master": {"fingerprint": "hevc/main10/10bit/hdr10/3840x2160", "fidelity": "original"},
              "truth": {"kind": "source", "since": AT, "note": None},
-             "sources": [source(edir, s_bw, "Example Show (US) - S01E01 - Pilot (Black and White) WEBDL-2160p.mkv",
-                                "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot (Black and White) WEBDL-2160p.mkv",
-                                [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")], [], bw_es, 2700000)],
-             "package": {"id": uid(eid, "package", "black-and-white"), "state": "complete", "role": "derived",
+             "sources": [source(edir, s_bw, "Example Show (US) - S01E01 - Pilot (Black and White).mkv",
+                                "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot (Black and White).mkv",
+                                [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")], [], bw_es, 2700000, "2160p", "web")],
+             "package": {"id": uid(eid, "package", "black-and-white"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "bitrateBps": 8000000,
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1}]},
                          "essence": essence(maxVideoHeight=2160, videoBitDepth=10), "chapters": [],

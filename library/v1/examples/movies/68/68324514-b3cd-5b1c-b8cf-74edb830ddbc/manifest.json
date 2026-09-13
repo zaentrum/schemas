@@ -33,7 +33,21 @@
         "codec": "hev1.1.6.L120.B0",
         "width": 1920,
         "height": 800,
-        "bitrateBps": 0,
+        "bitrateBps": 8000000,
+        "hdr": false,
+        "frameRate": "24/1",
+        "segments": 10,
+        "targetDuration": 6,
+        "dynamicRange": "sdr",
+        "sourceStreamIndex": 0
+      },
+      {
+        "id": "v1",
+        "dir": "hls/v1",
+        "codec": "hev1.1.6.L93.B0",
+        "width": 1280,
+        "height": 533,
+        "bitrateBps": 3000000,
         "hdr": false,
         "frameRate": "24/1",
         "segments": 10,
@@ -114,25 +128,23 @@
           "id": "aaedd282-8697-55f0-8023-aa424e9f6b47",
           "state": "present",
           "file": {
-            "name": "Tears of Steel (2012) Bluray-1080p.mkv",
+            "name": "Tears of Steel (2012).mkv",
             "kind": "stream-container",
             "sizeBytes": 6300000000,
             "mtime": "2026-09-13T12:00:00Z",
             "fixity": {
-              "qh1": "sha256:8535192e9480974d49692f264f4eb961ccea30a75dabbe2dc392016de81d9650"
+              "qh1": "sha256:1c801e380315cb4fdeb04260138edcbfb3f1db77739b59a1ee9254b86ff814a9"
             },
             "origin": {
-              "libraryPath": "movies/Tears of Steel (2012)/Tears of Steel (2012) Bluray-1080p.mkv",
+              "libraryPath": "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
               "folder": "movies/Tears of Steel (2012)"
             },
             "part": null
           },
           "labels": {
-            "quality": "Bluray-1080p",
-            "releaseSource": "bluray",
+            "quality": "1080p",
+            "medium": "disc",
             "resolution": "1080p",
-            "proper": false,
-            "revision": null,
             "edition": null,
             "folderEdition": null
           },
@@ -272,7 +284,7 @@
             "version": null,
             "at": "2026-09-13T12:00:00Z",
             "file": "source/aaedd282-8697-55f0-8023-aa424e9f6b47/ffprobe.json",
-            "sha256": "sha256:2e0a0037efb951e09875384c555da1bc180c3a67b6149381e337be6a86ac14d9",
+            "sha256": "sha256:20a09425039c498bc9101a1e8bc9de6117ca3c42f045f1251b0628df3cb3dc04",
             "note": null
           }
         }
@@ -281,8 +293,10 @@
         "id": "5dd19038-1318-570c-95fd-28cc940cc22b",
         "state": "complete",
         "role": "derived",
+        "sizeBytes": 734000000,
+        "bitrateBps": 8000000,
         "recipe": {
-          "video": "hevc re-encode",
+          "video": "hevc re-encode, 800p and 533p",
           "audio": "aac-lc 2ch 192k",
           "subtitles": "text -> webvtt"
         },

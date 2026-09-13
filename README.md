@@ -1,8 +1,12 @@
 # schemas
 
-Avro schemas for the zaentrum event-driven platform. This repo is the
-single source of truth for Kafka event payload shapes across the platform,
-published to a shared Apicurio schema registry.
+Published contracts for the zaentrum platform, in two families:
+
+- **Event payloads** — Avro schemas for Kafka events, the single source of
+  truth for event shapes, published to a shared Apicurio schema registry.
+- **Library storage** — JSON Schemas for the on-storage library (item
+  `manifest.json` and `metadata/metadata.json`), served at
+  <https://zaentrum.github.io/schemas/>. See [Library storage schemas](#library-storage-schemas).
 
 ## Status
 
@@ -19,8 +23,15 @@ stube/
   playback/   session lifecycle from chino-stream / tv-stream / musig-stream
   download/   download-gateway adapter completion events
   notify/     fan-out push notification requests
+library/v1/
+  manifest.schema.json, metadata.schema.json, defs.schema.json
+  examples/                a movie and a series in the storage layout
 tools/
-  publish-to-apicurio.sh   helper for publishing schemas to a registry
+  publish-to-apicurio.sh           publish Avro schemas to a registry
+  validate-library.py              validate a library tree
+  test-validate-library.py         broken trees the validator must reject
+  library-migrate.py               reference migrator from a legacy catalog
+  make-library-examples.py         regenerate library/v1/examples
 ```
 
 The top-level `stube/` directory mirrors the Avro namespace and Kafka topic
@@ -95,15 +106,21 @@ Validate a tree (schemas plus the cross-file rules: ids match folders, images
 match their hashes, a series lists exactly its episode folders):
 
 ```sh
-pip install "jsonschema>=4.23" referencing
+pip install "jsonschema[format-nongpl]>=4.23" referencing
 python tools/validate-library.py <root-with-movies-and-shows>
 python tools/validate-library.py --check-media <root>    # also require every playback path to exist
+python tools/test-validate-library.py                    # prove the validator rejects broken trees
 ```
 
 `tools/library-migrate.py` is a reference migrator that builds item folders
-from a legacy catalog export plus probe output. It never invents a value: a
-field the source data does not hold is left empty and reported.
-`tools/make-library-examples.py` regenerates `library/v1/examples`.
+from a legacy catalog export plus probe output. A value the export does not
+hold stays empty rather than guessed, and where automation cannot decide it
+records a `review` for a person. `tools/make-library-examples.py` regenerates
+`library/v1/examples`.
+
+Schema v1 was revised on 2026-09-13, before any service adopted it, from a
+four-document layout (work, version, source, package) to the two documents
+above. Its URLs are stable from that revision on.
 
 The format is documented in the
 [zaentrum wiki](https://github.com/zaentrum/zaentrum/wiki/library).

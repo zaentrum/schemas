@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v1/manifest.schema.json",
   "title": "manifest.json — the entry point of a library item",
-  "description": "One manifest per item folder: a movie, a series or an episode. It says what the item is (title, reference ids), what is playable (the playback fields a streaming service reads, unchanged from the version 2 layout), and for every version what the original file contained and what the package carries and lost. Texts and images are not here: they live in metadata/metadata.json next to this file. Every path is relative to this file's folder.\n\nLayout:\n  movies/<aa>/<movieId>/manifest.json, metadata/, hls/, subs/, trickplay/, source/\n  shows/<aa>/<seriesId>/manifest.json, metadata/, episodes/<episodeId>/{manifest.json, metadata/, hls/, ...}",
+  "description": "One manifest per item folder: a movie, a series or an episode. It says what the item is (title, reference ids), what is playable (the playback fields a streaming service reads, unchanged from the version 2 layout), and for every version what the original file contained and what the package carries and lost. Texts and images are not here: they live in metadata/metadata.json next to this file. Paths in the top-level playback fields, versions[].path, probe files and sidecars are relative to this file's folder; paths inside a package.playback block are relative to that version's folder; source origin.libraryPath is relative to the root of the source library.\n\nLayout:\n  movies/<aa>/<movieId>/manifest.json, metadata/, hls/, subs/, trickplay/, source/\n  shows/<aa>/<seriesId>/manifest.json, metadata/, episodes/<episodeId>/{manifest.json, metadata/, hls/, ...}",
   "type": "object",
   "required": ["schema", "version", "itemId", "rev", "createdAt", "updatedAt", "type", "title", "externalIds", "match", "metadata"],
   "allOf": [
@@ -13,6 +13,8 @@
         "required": ["series"],
         "not": { "anyOf": [
           { "required": ["episode"] }, { "required": ["versions"] }, { "required": ["renditions"] },
+          { "required": ["durationMs"] }, { "required": ["packagedAt"] }, { "required": ["packager"] },
+          { "required": ["subtitles"] }, { "required": ["trickplay"] }, { "required": ["trailers"] }, { "required": ["tmdbId"] },
           { "required": ["seriesTitle"] }, { "required": ["seasonNumber"] }, { "required": ["episodeNumber"] }, { "required": ["episodeCode"] }
         ] }
       }
@@ -123,7 +125,7 @@
         },
         "masters": {
           "type": "array",
-          "description": "Distinct technical masters across the episodes. More than one means a season mixes sources, and a viewer may see HDR and SDR, or two cuts, side by side.",
+          "description": "Distinct technical masters across all episodes of the series. More than one means the series mixes sources; compare each master's episodes with seasons to see which seasons are affected (a viewer may see HDR and SDR, or two cuts, side by side).",
           "items": {
             "type": "object",
             "required": ["fingerprint", "episodes"],
@@ -165,7 +167,7 @@
     },
 
     "durationMs": { "type": "integer", "minimum": 0, "description": "Version 2 playback field: duration of the package in this folder." },
-    "packagedAt": { "type": "string", "description": "Version 2 playback field." },
+    "packagedAt": { "$ref": "defs.schema.json#/$defs/timestamp", "description": "Version 2 playback field. The version 2 reader decodes it as an RFC 3339 time." },
     "packager": { "type": "string", "description": "Version 2 playback field." },
     "renditions": {
       "type": "object",
@@ -190,7 +192,7 @@
 
     "processing": {
       "type": "object",
-      "description": "Terminal outcomes of pipeline steps, so a rebuilt system does not redo expensive work. In-flight state stays in the database.",
+      "description": "The last recorded outcome of each pipeline step, so a rebuilt system does not redo expensive work.",
       "additionalProperties": {
         "type": "object",
         "required": ["status"],
@@ -209,7 +211,9 @@
       "properties": {
         "migratedFrom": { "enum": ["legacy-catalog", "scan", "manual"] },
         "migratedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
-        "legacyItemId": { "$ref": "defs.schema.json#/$defs/uuid" }
+        "legacyItemId": { "$ref": "defs.schema.json#/$defs/uuid" },
+        "legacyCreatedBy": { "type": ["string", "null"] },
+        "legacyModifiedBy": { "type": ["string", "null"] }
       }
     }
   },
@@ -242,7 +246,7 @@
         "id": { "type": "string" },
         "dir": { "$ref": "defs.schema.json#/$defs/relPath" },
         "codec": { "type": "string" },
-        "language": { "type": "string" },
+        "language": { "$ref": "defs.schema.json#/$defs/language" },
         "title": { "type": "string" },
         "default": { "type": "boolean" },
         "channels": { "type": "integer" },
@@ -260,7 +264,7 @@
       "properties": {
         "id": { "type": "string" },
         "path": { "$ref": "defs.schema.json#/$defs/relPath" },
-        "language": { "type": "string" },
+        "language": { "$ref": "defs.schema.json#/$defs/language" },
         "title": { "type": "string" },
         "default": { "type": "boolean" },
         "forced": { "type": "boolean" },
@@ -301,7 +305,7 @@
       "additionalProperties": false,
       "properties": {
         "durationMs": { "type": "integer", "minimum": 0 },
-        "packagedAt": { "type": "string" },
+        "packagedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
         "packager": { "type": "string" },
         "renditions": {
           "type": "object",
@@ -323,7 +327,7 @@
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "defs.schema.json#/$defs/uuid" },
-        "path": { "$ref": "defs.schema.json#/$defs/relPath", "description": "'.' for the package in this folder, otherwise versions/<id>/." },
+        "path": { "type": "string", "pattern": "^(\\.|versions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)$", "description": "'.' for the package in this folder, otherwise versions/<id>/ (the validator requires <id> to be this version's id)." },
         "label": { "type": ["string", "null"], "description": "What a viewer picks between, e.g. 'Director's Cut' or 'Black & White'. Null when nothing distinguishes it." },
         "primary": { "type": "boolean", "description": "Played when a viewer does not choose. Independent of where the version is stored." },
         "edition": {
@@ -445,14 +449,12 @@
         },
         "labels": {
           "type": "object",
-          "description": "What the filename and folder CLAIM. Unreliable, but the only quality claim on record.",
+          "description": "What the filename and folder CLAIM. Unreliable (a name can claim a disc copy that is a re-encode), but the only claim on record.",
           "additionalProperties": false,
           "properties": {
-            "quality": { "type": ["string", "null"] },
-            "releaseSource": { "enum": ["remux", "bluray", "webdl", "webrip", "hdtv", "sdtv", "dvd", "telesync", "cam", "unknown", null] },
+            "quality": { "type": ["string", "null"], "description": "The quality token exactly as it appears in the filename, e.g. '1080p'." },
+            "medium": { "enum": ["disc", "web", "broadcast", "unknown", null], "description": "The physical source the name claims." },
             "resolution": { "type": ["string", "null"] },
-            "proper": { "type": "boolean" },
-            "revision": { "type": ["string", "null"] },
             "edition": { "type": ["string", "null"] },
             "folderEdition": { "type": ["string", "null"] }
           }
@@ -465,7 +467,7 @@
             "format": { "type": "string" },
             "durationMs": { "type": ["integer", "null"] },
             "bitrate": { "type": ["integer", "null"] },
-            "title": { "type": ["string", "null"], "description": "Container title tag: often the original release name, and the richest record of what the file was before any re-encode." },
+            "title": { "type": ["string", "null"], "description": "Container title tag: often the richest record of what the file was before any re-encode." },
             "muxingApp": { "type": ["string", "null"] },
             "writingApp": { "type": ["string", "null"] },
             "creationTime": { "type": ["string", "null"] },
@@ -567,6 +569,8 @@
         "id": { "$ref": "defs.schema.json#/$defs/uuid" },
         "state": { "enum": ["complete", "failed", "stale", "building"] },
         "role": { "enum": ["derived", "canonical"] },
+        "sizeBytes": { "type": ["integer", "null"], "minimum": 0, "description": "Total size of the package's files." },
+        "bitrateBps": { "type": ["integer", "null"], "minimum": 0, "description": "Average video bitrate of the package. The version 2 rendition field bitrateBps is often 0." },
         "recipe": {
           "type": "object",
           "additionalProperties": false,

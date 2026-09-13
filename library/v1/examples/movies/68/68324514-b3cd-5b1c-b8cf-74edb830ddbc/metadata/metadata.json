@@ -52,6 +52,7 @@
       "sizeBytes": 134,
       "width": 1,
       "height": 1,
+      "language": null,
       "sourceUrl": null,
       "fetchedAt": null,
       "origin": "manual"
@@ -64,6 +65,7 @@
       "sizeBytes": 134,
       "width": 1,
       "height": 1,
+      "language": null,
       "sourceUrl": null,
       "fetchedAt": null,
       "origin": "manual"
@@ -76,8 +78,22 @@
       "sizeBytes": 68,
       "width": 1,
       "height": 1,
+      "language": "en",
       "sourceUrl": null,
       "fetchedAt": null,
+      "origin": "manual"
+    }
+  ],
+  "videos": [
+    {
+      "site": "example.org",
+      "key": "tears-of-steel-trailer",
+      "url": null,
+      "name": "Trailer",
+      "kind": "trailer",
+      "language": "en",
+      "durationMs": 60000,
+      "publishedAt": "2012-09-26T00:00:00Z",
       "origin": "manual"
     }
   ],

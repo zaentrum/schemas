@@ -114,6 +114,7 @@
             "additionalProperties": false,
             "properties": {
               "number": { "type": "integer", "minimum": 0, "description": "0 = specials." },
+              "tmdbSeason": { "type": ["string", "null"], "pattern": "^[0-9]+$", "description": "Kept here too, so a season with no episodes on storage keeps its reference id." },
               "name": { "type": ["string", "null"], "description": "Anthology and anime seasons carry their own titles." },
               "overview": { "type": ["string", "null"] },
               "airDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
@@ -161,6 +162,27 @@
       }
     },
 
+    "videos": {
+      "type": "array",
+      "description": "Trailers, teasers and clips published elsewhere, by reference. A downloaded, packaged trailer is listed in the manifest's trailers instead.",
+      "items": {
+        "type": "object",
+        "required": ["site", "key"],
+        "additionalProperties": false,
+        "properties": {
+          "site": { "type": "string", "description": "Hosting site, e.g. 'YouTube'." },
+          "key": { "type": "string", "description": "The site's id for the video." },
+          "url": { "type": ["string", "null"] },
+          "name": { "type": ["string", "null"] },
+          "kind": { "enum": ["trailer", "teaser", "clip", "featurette", "other", null] },
+          "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
+          "durationMs": { "type": ["integer", "null"], "minimum": 0 },
+          "publishedAt": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+          "origin": { "enum": ["legacy-catalog", "tmdb", "manual"] }
+        }
+      }
+    },
+
     "curation": {
       "type": "object",
       "description": "Everything a person decided about the texts and images. A re-sync never overwrites a locked field.",
@@ -173,8 +195,8 @@
     },
     "fieldOrigins": {
       "type": "object",
-      "description": "Where each value came from, keyed by field path. Lists only fields that are set.",
-      "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "file-tags", "manual"] }
+      "description": "Where each value came from, keyed by field path. Lists only fields that are set. Images carry their own origin.",
+      "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"] }
     }
   }
 }

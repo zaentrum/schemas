@@ -1,33 +1,50 @@
 #!/usr/bin/env python3
-"""Validate a zaentrum library tree against the published JSON Schemas and its own structure.
+"""Validate a zaentrum library tree against the JSON Schemas and its own cross-file rules.
 
 Usage:
   validate-library.py [--check-media] [--schemas URL-or-dir] ROOT [ROOT ...]
 
 ROOT is a folder holding movies/ and/or shows/. Every item folder must contain manifest.json and
-metadata/metadata.json. Beyond JSON Schema, the checks that span files:
+metadata/metadata.json. Beyond JSON Schema, this checks what spans files or needs arithmetic:
 
-  - itemId equals the folder name, and the metadata belongs to the same item and type
-  - every image listed in metadata.json exists in metadata/ with the recorded sha256 and size,
-    and metadata/ holds no unlisted files
-  - a series lists exactly the episode folders under episodes/, and each names the series as its parent
-  - every version path exists, exactly one version is primary, and probe files match their sha256
-  - with --check-media: every playback path named by the manifest exists (rendition dirs,
-    subtitle files, trickplay), so a package folder is really playable
+  folders      itemId equals the folder name and the folder sits in shard <first two chars>; an item
+               folder holds only known entries; source/ and versions/ hold only what the manifest names
+  metadata     same item and type as the manifest; every image exists with the recorded sha256, size,
+               content type and dimensions, is listed once, and nothing unlisted sits in metadata/
+  series       season numbers are unique; the series lists exactly the folders under episodes/; each
+               episode names the series, carries the series' TV id, and agrees with the listing and with
+               its version 2 numbering fields
+  versions     unique ids, exactly one primary, '.' or versions/<own id>/; the top-level playback fields
+               exist exactly when the version stored in the item folder has a package; one default audio
+               rendition per playback set; decisions name real renditions; lossless means no losses;
+               truth, role and source state agree; probe files and sidecars match their hashes
+  --check-media every playback path exists, a complete package has renditions, and a .complete marker
+               sits exactly where a complete package is
 
-The schemas are loaded from the local library/v1 folder next to this tool by default; pass
---schemas https://zaentrum.github.io/schemas/library/v1 to validate against the published copies.
+The schemas are loaded from the library/v1 folder next to this tool by default; pass
+--schemas https://zaentrum.github.io/schemas/library/v1 to use the published copies.
+Needs: pip install "jsonschema[format-nongpl]>=4.23" referencing
 """
-import argparse, hashlib, json, os, sys, urllib.request
-from jsonschema import Draft202012Validator, FormatChecker
+import argparse, hashlib, json, os, re, sys, urllib.request
+from jsonschema import Draft202012Validator, FormatChecker, validators
+from jsonschema.exceptions import best_match
 from referencing import Registry, Resource
 
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "library", "v1")
 NAMES = ["defs", "manifest", "metadata"]
 BASE = "https://zaentrum.github.io/schemas/library/v1/"
+ITEM_ENTRIES = {"manifest.json", "metadata", "source", "versions", "hls", "subs", "trickplay", "trailers", ".complete", ".failed", ".packaging"}
+SERIES_ENTRIES = {"manifest.json", "metadata", "episodes"}
+ID_KEYS = {"schema", "itemId", "id", "seriesId", "personId", "path", "dir", "file", "vttPath", "manifestPath", "language", "type", "kind",
+           "tmdbMovie", "tmdbTv", "tmdbSeason", "tmdbEpisode", "tmdbCollection", "imdb", "tvdb", "tmdbPerson", "sha256", "qh1"}
+SEASON_EPISODE = re.compile(r"^S(\d+)E(\d+)$")
 
 
+# ---------------------------------------------------------------- schemas
 def load_schemas(where):
+    fc = FormatChecker()
+    if "date-time" not in fc.checkers:
+        raise SystemExit('date-time values cannot be checked in this environment: pip install "jsonschema[format-nongpl]>=4.23"')
     docs = {}
     for n in NAMES:
         if where.startswith("http"):
@@ -36,13 +53,34 @@ def load_schemas(where):
         else:
             docs[n] = json.load(open(os.path.join(where, f"{n}.schema.json")))
     registry = Registry().with_resources((BASE + f"{n}.schema.json", Resource.from_contents(d)) for n, d in docs.items())
+    # JSON Schema counts 7.0 as an integer; the Go reader of the playback fields does not.
+    types = Draft202012Validator.TYPE_CHECKER.redefine(
+        "integer", lambda checker, x: isinstance(x, int) and not isinstance(x, bool))
+    Strict = validators.extend(Draft202012Validator, type_checker=types)
     for n, d in docs.items():
         Draft202012Validator.check_schema(d)
         if d["$id"] != BASE + f"{n}.schema.json":
             raise SystemExit(f"{n}.schema.json: $id {d['$id']} is not {BASE}{n}.schema.json")
-    return {n: Draft202012Validator(docs[n], registry=registry, format_checker=FormatChecker()) for n in ("manifest", "metadata")}
+    return {n: Strict(docs[n], registry=registry, format_checker=fc) for n in ("manifest", "metadata")}
 
 
+def describe(e):
+    """A short, specific reason: the deepest relevant error, never a dump of the whole document."""
+    if e.context:
+        return describe(best_match(e.context))
+    where = e.json_path
+    if e.validator == "not" and isinstance(e.instance, dict):
+        forbidden = [r for sub in (e.validator_value.get("anyOf") or [e.validator_value]) for r in (sub.get("required") or [])]
+        present = [f for f in forbidden if f in e.instance]
+        return f"{where}: must not have {', '.join(present) or 'this combination'} here"
+    msg = e.message
+    r = repr(e.instance)
+    if len(r) > 80 and r in msg:
+        msg = msg.replace(r, "<value>")
+    return f"{where}: {msg[:240]}"
+
+
+# ---------------------------------------------------------------- files
 def sha_file(p):
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -51,6 +89,54 @@ def sha_file(p):
     return "sha256:" + h.hexdigest()
 
 
+def sniff_image(p):
+    """(content type, width, height) from the file header; None where unknown."""
+    with open(p, "rb") as f:
+        b = f.read(1 << 16)
+    if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) >= 24:
+        return "image/png", int.from_bytes(b[16:20], "big"), int.from_bytes(b[20:24], "big")
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        chunk = b[12:16]
+        if chunk == b"VP8X" and len(b) >= 30:
+            return "image/webp", 1 + int.from_bytes(b[24:27], "little"), 1 + int.from_bytes(b[27:30], "little")
+        if chunk == b"VP8 " and len(b) >= 30:
+            return "image/webp", int.from_bytes(b[26:28], "little") & 0x3FFF, int.from_bytes(b[28:30], "little") & 0x3FFF
+        if chunk == b"VP8L" and len(b) >= 25:
+            v = int.from_bytes(b[21:25], "little")
+            return "image/webp", (v & 0x3FFF) + 1, ((v >> 14) & 0x3FFF) + 1
+        return "image/webp", None, None
+    if b[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(b):
+            if b[i] != 0xFF:
+                i += 1
+                continue
+            m = b[i + 1]
+            if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                return "image/jpeg", int.from_bytes(b[i + 7:i + 9], "big"), int.from_bytes(b[i + 5:i + 7], "big")
+            if m in (0xD8, 0x01) or 0xD0 <= m <= 0xD7:
+                i += 2
+                continue
+            i += 2 + int.from_bytes(b[i + 2:i + 4], "big")
+        return "image/jpeg", None, None
+    return None, None, None
+
+
+EXT_TYPE = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+
+
+def walk_strings(o, key=None):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield from walk_strings(v, k)
+    elif isinstance(o, list):
+        for v in o:
+            yield from walk_strings(v, key)
+    elif isinstance(o, str):
+        yield key, o
+
+
+# ---------------------------------------------------------------- checker
 class Checker:
     def __init__(self, validators, check_media):
         self.v = validators
@@ -61,126 +147,306 @@ class Checker:
     def err(self, where, msg):
         self.errors.append(f"{where}: {msg}")
 
-    def schema(self, kind, doc, where):
-        for e in sorted(self.v[kind].iter_errors(doc), key=lambda e: list(e.absolute_path)):
-            self.err(where, f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message[:300]}")
-
     def load(self, p):
         try:
-            return json.load(open(p))
+            with open(p) as f:
+                return json.load(f)
         except FileNotFoundError:
             self.err(p, "missing")
         except json.JSONDecodeError as e:
             self.err(p, f"not JSON: {e}")
         return None
 
-    def item(self, d, expect_type=None, parent=None):
+    def schema_ok(self, kind, doc, where):
+        errs = list(self.v[kind].iter_errors(doc))
+        for e in sorted(errs, key=lambda e: list(map(str, e.absolute_path))):
+            self.err(where, describe(e))
+        for k, s in walk_strings(doc):
+            if k in ID_KEYS and "\n" in s:
+                self.err(where, f"{k} contains a line break: {s!r}")
+                errs.append(k)
+        return not errs
+
+    # ------------------------------------------------------------ one item folder
+    def item(self, d, expect_type, series=None):
+        try:
+            self._item(d, expect_type, series)
+        except Exception as e:  # a malformed document must not stop the run
+            self.err(d, f"cannot check: {type(e).__name__}: {e}")
+
+    def _item(self, d, expect_type, series):
         mp = os.path.join(d, "manifest.json")
         man = self.load(mp)
         if man is None:
-            return None
-        self.schema("manifest", man, mp)
-        if man.get("itemId") != os.path.basename(d.rstrip("/")):
-            self.err(mp, f"itemId {man.get('itemId')} does not match folder {os.path.basename(d)}")
-        if expect_type and man.get("type") != expect_type:
-            self.err(mp, f"type {man.get('type')} where {expect_type} was expected")
-        t = man.get("type")
+            return
+        if not isinstance(man, dict):
+            self.err(mp, "not a JSON object")
+            return
+        valid = self.schema_ok("manifest", man, mp)
+        iid, t = man.get("itemId"), man.get("type")
+        if iid != os.path.basename(d.rstrip("/")):
+            self.err(mp, f"itemId {iid} does not match folder {os.path.basename(d)}")
+        if t != expect_type:
+            self.err(mp, f"type {t} where {expect_type} was expected")
         if t in self.counts:
             self.counts[t] += 1
-
-        md = os.path.join(d, "metadata")
-        meta = self.load(os.path.join(md, "metadata.json"))
-        if meta is not None:
-            self.schema("metadata", meta, os.path.join(md, "metadata.json"))
-            if meta.get("itemId") != man.get("itemId"):
-                self.err(md, "metadata itemId differs from manifest")
-            if meta.get("type") != t:
-                self.err(md, "metadata type differs from manifest")
-            listed = set()
-            for img in meta.get("images") or []:
-                f = os.path.join(md, img.get("file", ""))
-                listed.add(img.get("file"))
-                if not os.path.isfile(f):
-                    self.err(f, "image listed in metadata.json does not exist")
-                    continue
-                self.counts["images"] += 1
-                if os.path.getsize(f) != img.get("sizeBytes"):
-                    self.err(f, f"size {os.path.getsize(f)} != {img.get('sizeBytes')}")
-                if sha_file(f) != img.get("sha256"):
-                    self.err(f, "sha256 does not match metadata.json")
-                if t != "series" and img.get("season") is not None:
-                    self.err(f, "season-specific image on a non-series item")
-            if os.path.isdir(md):
-                for name in os.listdir(md):
-                    if name != "metadata.json" and name not in listed:
-                        self.err(os.path.join(md, name), "file in metadata/ is not listed in metadata.json")
-            if t == "series":
-                known = {s.get("number") for s in (meta.get("series") or {}).get("seasons") or []}
-                for img in meta.get("images") or []:
-                    if img.get("season") is not None and known and img["season"] not in known:
-                        self.err(md, f"image {img['file']} names season {img['season']} that metadata does not describe")
-
-        if t == "episode" and parent is not None and (man.get("episode") or {}).get("seriesId") != parent:
-            self.err(mp, f"episode.seriesId {(man.get('episode') or {}).get('seriesId')} is not the enclosing series {parent}")
-        if t == "episode" and parent is None:
-            self.err(mp, "episode outside a series folder")
-
+        allowed = SERIES_ENTRIES if expect_type == "series" else ITEM_ENTRIES
+        for name in sorted(os.listdir(d)):
+            if name not in allowed:
+                self.err(os.path.join(d, name), f"unexpected entry in a {expect_type} folder")
+        self.metadata(d, man)
+        if not valid:
+            return  # cross-file rules assume the documented shape
+        ids = man.get("externalIds") or {}
+        if t == "movie" and set(ids) & {"tmdbTv", "tmdbSeason", "tmdbEpisode"}:
+            self.err(mp, "a movie carries series or episode reference ids")
+        if t == "series" and set(ids) & {"tmdbMovie", "tmdbSeason", "tmdbEpisode", "tmdbCollection"}:
+            self.err(mp, "a series carries movie, season or episode reference ids")
+        if t == "episode":
+            if "tmdbMovie" in ids or "tmdbCollection" in ids:
+                self.err(mp, "an episode carries movie reference ids")
+            self.episode(mp, man, series)
         if t == "series":
-            listed = {}
-            for s in (man.get("series") or {}).get("seasons") or []:
-                for e in s.get("episodes") or []:
-                    if e["itemId"] in listed:
-                        self.err(mp, f"episode {e['itemId']} listed twice")
-                    listed[e["itemId"]] = e["path"]
-                    if e["path"].rstrip("/") != f"episodes/{e['itemId']}":
-                        self.err(mp, f"episode path {e['path']} is not episodes/{e['itemId']}/")
-            ed = os.path.join(d, "episodes")
-            present = set(os.listdir(ed)) if os.path.isdir(ed) else set()
-            for missing in sorted(set(listed) - present):
-                self.err(mp, f"lists episode {missing} but episodes/{missing}/ does not exist")
-            for orphan in sorted(present - set(listed)):
-                self.err(os.path.join(ed, orphan), "episode folder not listed in the series manifest")
-            for eid in sorted(present & set(listed)):
-                self.item(os.path.join(ed, eid), "episode", parent=man.get("itemId"))
+            self.series(d, mp, man)
+        else:
+            self.versions(d, mp, man)
 
-        versions = man.get("versions") or []
-        if versions and sum(1 for v in versions if v.get("primary")) != 1:
+    # ------------------------------------------------------------ metadata/
+    def metadata(self, d, man):
+        md = os.path.join(d, "metadata")
+        where = os.path.join(md, "metadata.json")
+        meta = self.load(where)
+        if meta is None or not isinstance(meta, dict):
+            return
+        valid = self.schema_ok("metadata", meta, where)
+        if meta.get("itemId") != man.get("itemId"):
+            self.err(where, "itemId differs from the manifest")
+        if meta.get("type") != man.get("type"):
+            self.err(where, "type differs from the manifest")
+        if not valid:
+            return
+        listed = set()
+        seasons = {s["number"] for s in (man.get("series") or {}).get("seasons") or []} | \
+                  {s["number"] for s in (meta.get("series") or {}).get("seasons") or []}
+        numbers = [s["number"] for s in (meta.get("series") or {}).get("seasons") or []]
+        if len(numbers) != len(set(numbers)):
+            self.err(where, "series.seasons lists a season number twice")
+        for img in meta["images"]:
+            name = img["file"]
+            f = os.path.join(md, name)
+            if name in listed:
+                self.err(f, "listed twice in metadata.json")
+            listed.add(name)
+            if not os.path.isfile(f):
+                self.err(f, "listed in metadata.json but does not exist")
+                continue
+            self.counts["images"] += 1
+            if os.path.getsize(f) != img["sizeBytes"]:
+                self.err(f, f"size {os.path.getsize(f)} != recorded {img['sizeBytes']}")
+            if sha_file(f) != img["sha256"]:
+                self.err(f, "sha256 does not match metadata.json")
+            ctype, w, h = sniff_image(f)
+            if ctype != img["contentType"]:
+                self.err(f, f"content is {ctype or 'not a known image'} but recorded as {img['contentType']}")
+            if EXT_TYPE.get(name.rsplit(".", 1)[-1]) != img["contentType"]:
+                self.err(f, f"extension does not match {img['contentType']}")
+            for label, actual, recorded in (("width", w, img.get("width")), ("height", h, img.get("height"))):
+                if actual is not None and recorded is not None and actual != recorded:
+                    self.err(f, f"{label} is {actual} but recorded as {recorded}")
+            if man.get("type") != "series" and img.get("season") is not None:
+                self.err(f, "season-specific image on a non-series item")
+            if img.get("season") is not None and img["season"] not in seasons:
+                self.err(f, f"names season {img['season']}, which neither the manifest nor metadata describes")
+        if os.path.isdir(md):
+            for name in sorted(os.listdir(md)):
+                if name != "metadata.json" and name not in listed:
+                    self.err(os.path.join(md, name), "not listed in metadata.json")
+
+    # ------------------------------------------------------------ series and episodes
+    def series(self, d, mp, man):
+        s = man["series"]
+        numbers = [x["number"] for x in s["seasons"]]
+        if len(numbers) != len(set(numbers)):
+            self.err(mp, "series.seasons lists a season number twice")
+        listed = {}
+        for season in s["seasons"]:
+            for e in season["episodes"]:
+                eid = e["itemId"]
+                if eid in listed:
+                    self.err(mp, f"episode {eid} listed twice")
+                listed[eid] = {"season": season["number"], "episode": e.get("episode"), "episodeEnd": e.get("episodeEnd")}
+                if e["path"] != f"episodes/{eid}/":
+                    self.err(mp, f"episode path {e['path']} is not episodes/{eid}/")
+        for m in s.get("masters") or []:
+            for eid in m["episodes"]:
+                if eid not in listed:
+                    self.err(mp, f"masters names {eid}, which is not a listed episode")
+        ed = os.path.join(d, "episodes")
+        present = set(os.listdir(ed)) if os.path.isdir(ed) else set()
+        for missing in sorted(set(listed) - present):
+            self.err(mp, f"lists episode {missing} but episodes/{missing}/ does not exist")
+        for orphan in sorted(present - set(listed)):
+            self.err(os.path.join(ed, orphan), "episode folder not listed in the series manifest")
+        context = {"itemId": man["itemId"], "tmdbTv": (man.get("externalIds") or {}).get("tmdbTv"),
+                   "ordering": s["defaultOrdering"], "listed": listed}
+        for eid in sorted(present & set(listed)):
+            self.item(os.path.join(ed, eid), "episode", series=context)
+
+    def episode(self, mp, man, series):
+        e = man["episode"]
+        if series is None:
+            self.err(mp, "episode outside a series folder")
+            return
+        if e["seriesId"] != series["itemId"]:
+            self.err(mp, f"episode.seriesId {e['seriesId']} is not the enclosing series {series['itemId']}")
+        tv = (man.get("externalIds") or {}).get("tmdbTv")
+        if tv and series["tmdbTv"] and tv != series["tmdbTv"]:
+            self.err(mp, f"externalIds.tmdbTv {tv} differs from the series' {series['tmdbTv']}")
+        listing = series["listed"].get(man["itemId"])
+        coords = [c for c in e["coordinates"] if c["scheme"] == series["ordering"]]
+        if listing and coords:
+            c = coords[0]
+            if (c.get("season"), c["episode"]) != (listing["season"], listing["episode"]):
+                self.err(mp, f"{series['ordering']} coordinates S{c.get('season')}E{c['episode']} differ from the series listing "
+                             f"S{listing['season']}E{listing['episode']}")
+        aired = next((c for c in e["coordinates"] if c["scheme"] == "aired"), None)
+        if aired:
+            for field, value in (("seasonNumber", aired.get("season")), ("episodeNumber", aired["episode"])):
+                if field in man and man[field] is not None and man[field] != value:
+                    self.err(mp, f"{field} {man[field]} differs from the aired coordinates ({value})")
+            m = SEASON_EPISODE.match(man.get("episodeCode") or "")
+            if m and (int(m.group(1)), int(m.group(2))) != (aired.get("season"), aired["episode"]):
+                self.err(mp, f"episodeCode {man['episodeCode']} differs from the aired coordinates")
+
+    # ------------------------------------------------------------ versions, sources, packages
+    def playback_set(self, where, pb, decisions):
+        audio = (pb.get("renditions") or {}).get("audio") or []
+        video = (pb.get("renditions") or {}).get("video") or []
+        subs = pb.get("subtitles") or []
+        for kind, items in (("video", video), ("audio", audio), ("subtitle", subs)):
+            ids = [x["id"] for x in items]
+            if len(ids) != len(set(ids)):
+                self.err(where, f"{kind} rendition ids are not unique")
+        if audio and sum(1 for a in audio if a.get("default")) != 1:
+            self.err(where, f"exactly one audio rendition must be default, found {sum(1 for a in audio if a.get('default'))}")
+        if sum(1 for s in subs if s.get("default") and not s.get("forced")) > 1:
+            self.err(where, "more than one non-forced subtitle is default")
+        if decisions:
+            if decisions.get("defaultAudio") and decisions["defaultAudio"] not in {a["id"] for a in audio}:
+                self.err(where, f"decisions.defaultAudio {decisions['defaultAudio']} is not an audio rendition")
+            if decisions.get("defaultSubtitle") and decisions["defaultSubtitle"] not in {s["id"] for s in subs}:
+                self.err(where, f"decisions.defaultSubtitle {decisions['defaultSubtitle']} is not a subtitle")
+
+    def versions(self, d, mp, man):
+        versions = man["versions"]
+        ids = [v["id"] for v in versions]
+        if len(ids) != len(set(ids)):
+            self.err(mp, "version ids are not unique")
+        if sum(1 for v in versions if v["primary"]) != 1:
             self.err(mp, "exactly one version must be primary")
+        here = [v for v in versions if v["path"] == "."]
+        if len(here) > 1:
+            self.err(mp, "more than one version is stored in the item folder (path '.')")
+        root_pkg = here[0]["package"] if here else None
+        if root_pkg is not None and "renditions" not in man and root_pkg["state"] == "complete":
+            self.err(mp, "the version stored in the item folder has a complete package but the manifest has no playback fields")
+        if root_pkg is None and "renditions" in man:
+            self.err(mp, "playback fields present but no version in the item folder has a package")
+
+        referenced_versions, referenced_sources = set(), set()
         for v in versions:
-            vp = os.path.normpath(os.path.join(d, v.get("path", ".")))
+            vw = f"{mp} version {v['id']}"
+            if v["path"] != "." and v["path"] != f"versions/{v['id']}/":
+                self.err(vw, f"path {v['path']} is not versions/{v['id']}/")
+            vp = os.path.normpath(os.path.join(d, v["path"]))
+            if v["path"] != ".":
+                referenced_versions.add(v["id"])
             if not os.path.isdir(vp):
-                self.err(mp, f"version path {v.get('path')} does not exist")
-            for s in v.get("sources") or []:
-                pf = (s.get("probe") or {}).get("file")
+                self.err(vw, f"folder {v['path']} does not exist")
+            pkg = v["package"]
+            sources = v["sources"]
+            all_deleted = all(s["state"] == "deleted" for s in sources)
+            if (v["truth"]["kind"] == "package") != all_deleted:
+                self.err(vw, "truth.kind must be 'package' exactly when every source is deleted")
+            if pkg is not None and (pkg["role"] == "canonical") != (v["truth"]["kind"] == "package"):
+                self.err(vw, "package.role must be 'canonical' exactly when truth.kind is 'package'")
+            if all_deleted and pkg is None:
+                self.err(vw, "every source is deleted and there is no package: nothing of this version remains")
+            for s in sources:
+                referenced_sources.add(s["id"])
+                if s["state"] == "deleted" and not s["file"].get("deletedAt"):
+                    self.err(vw, f"source {s['id']} is deleted without file.deletedAt")
+                pf, psha = s["probe"].get("file"), s["probe"].get("sha256")
                 if pf:
                     f = os.path.join(d, pf)
                     if not os.path.isfile(f):
                         self.err(f, "probe file missing")
                     else:
                         self.counts["probes"] += 1
-                        if sha_file(f) != s["probe"].get("sha256"):
+                        if sha_file(f) != psha:
                             self.err(f, "probe sha256 does not match the manifest")
+                elif psha:
+                    self.err(vw, f"source {s['id']} records a probe sha256 but no probe file")
                 for sc in s.get("sidecars") or []:
-                    if not os.path.isfile(os.path.join(d, sc["file"])):
-                        self.err(os.path.join(d, sc["file"]), "sidecar missing")
-            pkg = v.get("package")
-            if v.get("path") == "." and pkg and pkg.get("state") == "complete" and "renditions" not in man:
-                self.err(mp, "the version stored in this folder has a complete package but the manifest has no playback fields")
-            if self.check_media and pkg and pkg.get("state") == "complete":
-                pb = man if v.get("path") == "." else (pkg.get("playback") or {})
-                for r in ((pb.get("renditions") or {}).get("video") or []) + ((pb.get("renditions") or {}).get("audio") or []):
-                    if not os.path.isdir(os.path.join(vp, r["dir"])):
-                        self.err(vp, f"rendition dir {r['dir']} missing")
-                for sub in pb.get("subtitles") or []:
-                    if not os.path.isfile(os.path.join(vp, sub["path"])):
-                        self.err(vp, f"subtitle {sub['path']} missing")
-                tp = pb.get("trickplay")
-                if tp and not os.path.isfile(os.path.join(vp, tp["vttPath"])):
-                    self.err(vp, f"trickplay {tp['vttPath']} missing")
-                if not os.path.isfile(os.path.join(vp, ".complete")):
-                    self.err(vp, ".complete marker missing")
-        return man
+                    f = os.path.join(d, sc["file"])
+                    if not os.path.isfile(f):
+                        self.err(f, "sidecar missing")
+                        continue
+                    if "sizeBytes" in sc and os.path.getsize(f) != sc["sizeBytes"]:
+                        self.err(f, "sidecar size does not match the manifest")
+                    if "sha256" in sc and sha_file(f) != sc["sha256"]:
+                        self.err(f, "sidecar sha256 does not match the manifest")
+            if pkg is not None:
+                if pkg["fidelity"]["lossless"] != (not pkg["fidelity"]["losses"]):
+                    self.err(vw, "fidelity.lossless must be true exactly when losses is empty")
+                if pkg["role"] == "canonical" and any(s.get("chapters") for s in sources) and not pkg.get("chapters"):
+                    self.err(vw, "a canonical package must carry the chapters its original had")
+                pb = man if v["path"] == "." else pkg.get("playback") or {}
+                self.playback_set(vw, pb, pkg.get("decisions"))
+            if self.check_media:
+                self.media(vw, vp, v, man)
+        # nothing unreferenced under source/ or versions/
+        for sub, refs in (("source", referenced_sources), ("versions", referenced_versions)):
+            base = os.path.join(d, sub)
+            if os.path.isdir(base):
+                for name in sorted(os.listdir(base)):
+                    if name not in refs:
+                        self.err(os.path.join(base, name), f"not referenced by the manifest")
+        src_dir = os.path.join(d, "source")
+        for v in versions:
+            for s in v["sources"]:
+                sd = os.path.join(src_dir, s["id"])
+                if os.path.isdir(sd):
+                    known = {os.path.basename(s["probe"].get("file") or "")} | {os.path.basename(x["file"]) for x in s.get("sidecars") or []}
+                    for name in sorted(os.listdir(sd)):
+                        if name not in known:
+                            self.err(os.path.join(sd, name), "not the probe or a sidecar of this source")
 
+    def media(self, vw, vp, v, man):
+        pkg = v["package"]
+        marker = os.path.isfile(os.path.join(vp, ".complete"))
+        complete = pkg is not None and pkg["state"] == "complete"
+        if marker and not complete:
+            self.err(vw, ".complete marker present but the package is not complete")
+        if not complete:
+            return
+        if not marker:
+            self.err(vw, ".complete marker missing")
+        pb = man if v["path"] == "." else pkg.get("playback") or {}
+        ren = pb.get("renditions") or {}
+        if not ren.get("video") or not ren.get("audio"):
+            self.err(vw, "a complete package needs at least one video and one audio rendition")
+        for r in (ren.get("video") or []) + (ren.get("audio") or []):
+            if not os.path.isdir(os.path.join(vp, r["dir"])):
+                self.err(vw, f"rendition dir {r['dir']} missing")
+        for sub in pb.get("subtitles") or []:
+            if not os.path.isfile(os.path.join(vp, sub["path"])):
+                self.err(vw, f"subtitle {sub['path']} missing")
+        tp = pb.get("trickplay")
+        if tp and not os.path.isfile(os.path.join(vp, tp["vttPath"])):
+            self.err(vw, f"trickplay {tp['vttPath']} missing")
+
+    # ------------------------------------------------------------ roots
     def root(self, r):
         found = 0
         for category, kind in (("movies", "movie"), ("shows", "series")):
@@ -190,11 +456,18 @@ class Checker:
             for shard in sorted(os.listdir(base)):
                 sd = os.path.join(base, shard)
                 if not os.path.isdir(sd):
+                    self.err(sd, "unexpected file among the shard folders")
                     continue
+                if not re.fullmatch(r"[0-9a-f]{2}", shard):
+                    self.err(sd, "shard folders are the first two characters of an item id")
                 for iid in sorted(os.listdir(sd)):
-                    if not iid.startswith(shard):
-                        self.err(os.path.join(sd, iid), f"item folder is not in shard {iid[:2]}")
-                    self.item(os.path.join(sd, iid), kind)
+                    p = os.path.join(sd, iid)
+                    if iid[:2] != shard:
+                        self.err(p, f"item folder is not in shard {iid[:2]}")
+                    if not os.path.isdir(p):
+                        self.err(p, "unexpected file in a shard folder")
+                        continue
+                    self.item(p, kind)
                     found += 1
         if not found:
             self.err(r, "no items found under movies/ or shows/")

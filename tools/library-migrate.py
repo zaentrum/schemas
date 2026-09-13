@@ -371,7 +371,9 @@ def essence_gap(src, pkg):
     return gap
 
 # ---------------------------------------------------------------- filename labels
-QUALITY = re.compile(r"\b(Remux|Bluray|WEBDL|WEB-DL|WEBRip|HDTV|SDTV|DVD|TELESYNC|TS|CAM)[- ]?(\d{3,4}p)?\b", re.I)
+QUALITY = re.compile(r"\b(Remux|Blu-?ray|DVD|WEB-?DL|WEBRip|WEB|HDTV|SDTV)[- ]?(\d{3,4}p)?\b|\b(\d{3,4}p)\b", re.I)
+MEDIUM = {"remux": "disc", "bluray": "disc", "blu-ray": "disc", "dvd": "disc", "webdl": "web", "web-dl": "web", "webrip": "web", "web": "web",
+          "hdtv": "broadcast", "sdtv": "broadcast"}
 EDITION_WORDS = [
     ("directors-cut", r"director'?s?[ ._-]?cut"),
     ("extended", r"\bextended\b"),
@@ -394,25 +396,37 @@ def edition_word(text):
 
 def labels(name, folder):
     m = QUALITY.search(name)
-    src = None
-    if m:
-        k = m.group(1).lower().replace("-", "")
-        src = {"remux": "remux", "bluray": "bluray", "webdl": "webdl", "webrip": "webrip", "hdtv": "hdtv",
-               "sdtv": "sdtv", "dvd": "dvd", "telesync": "telesync", "ts": "telesync", "cam": "cam"}.get(k, "unknown")
-    rev = re.search(r"\b(v[2-9])\b", name)
+    medium = MEDIUM.get(m.group(1).lower(), "unknown") if m and m.group(1) else None
     fold_ed = None
     fm = re.search(r" - ([^()]+?) \(\d{4}\)$", folder or "")
     if fm and edition_word(fm.group(1)):
         fold_ed = fm.group(1).strip()
     return {
         "quality": m.group(0) if m else None,
-        "releaseSource": src,
-        "resolution": (m.group(2) if m and m.group(2) else None),
-        "proper": bool(re.search(r"\bproper\b", name, re.I)),
-        "revision": rev.group(1) if rev else None,
-        "edition": next((w for w in [edition_word(name)] if w), None),
+        "medium": medium,
+        "resolution": ((m.group(2) or m.group(3)) if m else None),
+        "edition": edition_word(name),
         "folderEdition": fold_ed,
     }
+
+def file_title(name):
+    """The episode title an original filename carries after its SxxEyy code, without the quality token."""
+    stem = os.path.splitext(name)[0]
+    m = re.search(r"S\d{1,3}E\d{1,4}(?:-?E\d{1,4})?\s*-\s*(.+)$", stem, re.I)
+    if not m:
+        return None
+    title = m.group(1)
+    q = QUALITY.search(title)
+    if q:
+        title = title[:q.start()]
+    return title.strip(" -._") or None
+
+def norm_title(t):
+    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+
+def same_title(a, b):
+    a, b = norm_title(a), norm_title(b)
+    return bool(a and b) and (a == b or a in b or b in a)
 
 def file_coords(name):
     m = re.search(r"S(\d{1,3})E(\d{1,4})(?:-?E(\d{1,4}))?", name, re.I)
@@ -481,6 +495,14 @@ def main():
     extra = optional_json("tmdb_images.json")     # season posters, episode stills, logos, person ids
     blobs = os.path.join(I, "images")
 
+    def mtime_of(name):
+        p = os.path.join(I, name)
+        if not os.path.exists(p):
+            return None
+        return datetime.datetime.fromtimestamp(int(os.path.getmtime(p)), datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    PROBED_AT = mtime_of("probes.jsonl") or NOW          # when the originals were probed, not when this tool ran
+    FETCHED_AT = mtime_of("tmdb_images.json") or NOW
+
     def group(name, key="item_id"):
         g = collections.defaultdict(list)
         for r in cat.get(name) or []:
@@ -497,6 +519,8 @@ def main():
     segments = group("segments")
     subs = group("subtitles")
     steps = group("steps")
+    trailers = group("trailers")
+    packaged_rows = {r["item_id"]: r for r in cat.get("playback") or [] if r.get("kind") == "packaged"}
 
     lib = os.path.join(args.out, "library")
     plan = []           # hard links to create on the storage host
@@ -557,7 +581,39 @@ def main():
             return {"status": "manual", "decidedBy": "human", "decidedAt": NOW, "confidence": 1.0,
                     "evidence": [{"signal": "manual", "value": "inherited from the series match", "weight": 1.0}]}
         matched = bool(ids.get("tmdbMovie") or ids.get("tmdbTv"))
-        return {"status": "matched" if matched else "unmatched", "decidedBy": "legacy-catalog"}
+        if item["type"] == "episode" and matched:
+            disputed = episode_dispute(item, ids)
+            if disputed:
+                return disputed
+        if not matched:
+            report["unmatched-needs-review"].append(f"{item['type']}:{item['title']}")
+            return {"status": "unmatched", "decidedBy": "legacy-catalog",
+                    "review": "No reference id: find the item in the reference database and set externalIds, then re-sync its metadata."}
+        return {"status": "matched", "decidedBy": "legacy-catalog"}
+
+    def episode_dispute(item, ids):
+        """The catalog matched an episode whose title the original filename contradicts, while the reference database
+        lists the filename's title under another episode of the same season."""
+        name = os.path.basename(paths[item["id"]]["source"] or "")
+        claimed = file_title(name)
+        if not claimed or same_title(claimed, item["title"]):
+            return None
+        season = ((extra.get(item["parent_id"]) or {}).get("seasons") or {}).get(str(item["seasonnumber"])) or {}
+        hits = [(int(n), e) for n, e in (season.get("episodes") or {}).items() if same_title(claimed, e.get("name"))]
+        if len(hits) != 1:
+            return None
+        n, e = hits[0]
+        if e["tmdbEpisode"] == ids.get("tmdbEpisode"):
+            return None
+        review = (f"The original filename names '{claimed}', which the reference database lists as S{item['seasonnumber']:02d}E{n:02d} "
+                  f"(tmdbEpisode {e['tmdbEpisode']}), but the catalog matched S{item['seasonnumber']:02d}E{item['episodenumber']:02d} "
+                  f"'{item['title']}' (tmdbEpisode {ids.get('tmdbEpisode')}). Confirm, re-number and re-sync.")
+        report["episode-match-disputed"].append(f"{item['title']}: {review}")
+        return {"status": "disputed", "decidedBy": "inferred", "decidedAt": NOW, "confidence": 0.8,
+                "evidence": [{"signal": "filename", "value": name, "weight": 0.8},
+                             {"signal": "tmdb", "value": {"season": item["seasonnumber"], "episode": n, "tmdbEpisode": e["tmdbEpisode"], "name": e.get("name")}, "weight": 0.8},
+                             {"signal": "catalog", "value": {"season": item["seasonnumber"], "episode": item["episodenumber"], "tmdbEpisode": ids.get("tmdbEpisode"), "title": item["title"]}, "weight": 0.5}],
+                "review": review}
 
     def processing(item):
         out = {}
@@ -600,11 +656,11 @@ def main():
         fetched_at = {a["kind"]: ts(a.get("fetchedat")) for a in art_bytes.get(item["id"], [])}
         ctype = {a["kind"]: a.get("contenttype") or "image/jpeg" for a in art_bytes.get(item["id"], [])}
 
-        def add(kind, data, content_type, name, origin, source_url=None, fetched=None, season=None):
+        def add(kind, data, content_type, name, origin, source_url=None, fetched=None, season=None, language=None):
             w, h = image_size(data)
             write_bytes(f"{mdir}/{name}", data)
             entry = {"kind": kind, "file": name, "sha256": sha(data), "contentType": content_type, "sizeBytes": len(data),
-                     "width": w, "height": h, "sourceUrl": source_url, "fetchedAt": fetched, "origin": origin}
+                     "width": w, "height": h, "language": language, "sourceUrl": source_url, "fetchedAt": fetched, "origin": origin}
             if item["type"] == "series":
                 entry["season"] = season
             out.append(entry)
@@ -625,7 +681,7 @@ def main():
             if still_legacy:
                 add("still", still_legacy, ctype.get("poster", "image/jpeg"), "still.jpg", "legacy-catalog", legacy_url, fetched_at.get("poster"))
             elif t:
-                add("still", blob(t), t["contentType"], f"still.{EXT.get(t['contentType'], 'jpg')}", "tmdb", t["sourceUrl"], NOW)
+                add("still", blob(t), t["contentType"], f"still.{EXT.get(t['contentType'], 'jpg')}", "tmdb", t["sourceUrl"], FETCHED_AT)
             if legacy.get("backdrop") and legacy.get("poster") and legacy["poster"] != legacy["backdrop"]:
                 add("backdrop", legacy["backdrop"], ctype.get("backdrop", "image/jpeg"), "backdrop.jpg", "legacy-catalog",
                     (meta.get("backdrop") or {}).get("url"), fetched_at.get("backdrop"))
@@ -636,13 +692,12 @@ def main():
                         (meta.get(kind) or {}).get("url"), fetched_at.get(kind))
             if x.get("logo"):
                 l = x["logo"]
-                add("logo", blob(l), l["contentType"], f"logo.{EXT.get(l['contentType'], 'png')}", "tmdb", l["sourceUrl"], NOW)
+                add("logo", blob(l), l["contentType"], f"logo.{EXT.get(l['contentType'], 'png')}", "tmdb", l["sourceUrl"], FETCHED_AT,
+                    language=x.get("logoLanguage"))
             for n, s in sorted(((int(k), v) for k, v in (x.get("seasons") or {}).items())):
                 if s.get("poster"):
                     p = s["poster"]
-                    add("poster", blob(p), p["contentType"], f"season-{n:02d}-poster.{EXT.get(p['contentType'], 'jpg')}", "tmdb", p["sourceUrl"], NOW, season=n)
-        if out:
-            origins["images"] = "legacy-catalog" if all(i["origin"] == "legacy-catalog" for i in out) else "tmdb" if all(i["origin"] == "tmdb" for i in out) else "legacy-catalog"
+                    add("poster", blob(p), p["contentType"], f"season-{n:02d}-poster.{EXT.get(p['contentType'], 'jpg')}", "tmdb", p["sourceUrl"], FETCHED_AT, season=n)
         return out
 
     def metadata_doc(item, kind, mdir, qualifier=None):
@@ -671,7 +726,7 @@ def main():
                                  "tagline": item["tagline"], "overview": overview}},
         }
         if t.get("originalTitle"): origins["titles.original"] = "tmdb"
-        if qualifier: origins["titles.qualifier"] = "filename"
+        if qualifier: origins["titles.qualifier"] = "folder-name"
         if kind == "movie":
             doc["releaseDate"] = t.get("releaseDate")
             if t.get("releaseDate"): origins["releaseDate"] = "tmdb"
@@ -696,8 +751,8 @@ def main():
             doc["series"] = {
                 "status": t.get("status") or "unknown", "firstAirDate": t.get("firstAirDate"), "lastAirDate": t.get("lastAirDate"),
                 "network": t.get("network"),
-                "seasons": [{"number": int(n), "name": s.get("name"), "overview": s.get("overview"), "airDate": s.get("airDate"),
-                             "episodeCountReference": s.get("episodeCount")}
+                "seasons": [{"number": int(n), "tmdbSeason": s.get("tmdbSeason"), "name": s.get("name"), "overview": s.get("overview"),
+                             "airDate": s.get("airDate"), "episodeCountReference": s.get("episodeCount")}
                             for n, s in sorted((x.get("seasons") or {}).items(), key=lambda kv: int(kv[0]))],
             }
             if t: origins["series"] = "tmdb"
@@ -706,6 +761,12 @@ def main():
             doc["episode"] = {"airDate": et.get("airDate")}
             if et.get("airDate"): origins["episode.airDate"] = "tmdb"
         doc["images"] = images(item, mdir, origins)
+        vids = [{"site": v["site"], "key": v["externalid"], "url": v.get("url"), "name": v.get("title"), "kind": None, "language": None,
+                 "durationMs": v["durationsec"] * 1000 if v.get("durationsec") else None, "publishedAt": ts(v.get("publishedat")),
+                 "origin": "legacy-catalog"} for v in trailers.get(item["id"], []) if v.get("site") and v.get("externalid")]
+        if vids:
+            doc["videos"] = vids
+            origins["videos"] = "legacy-catalog"
         doc["curation"] = {"metadataLocked": False, "lockedFields": [], "notes": None}
         doc["fieldOrigins"] = origins
         for missing in (("releaseDate", "contentRating") if kind == "movie" else ()):
@@ -792,7 +853,14 @@ def main():
         samples = colour.get(item["id"]) or []
         peaks = [s["satMax"] for s in samples if s["satMax"] is not None]
         col = "unknown" if not peaks else "black-and-white" if max(peaks) <= 3 else "colour" if max(peaks) >= 10 else "unknown"
-        col_decision = {"decidedBy": "inferred", "confidence": 0.8 if col != "unknown" else 0.0,
+        col_review = None
+        if is_iso and not probe:
+            col_review = "Disc image: mount it and probe its main title to measure runtime, streams and colour."
+        elif col == "black-and-white":
+            col_review = (f"Black-and-white from {len(peaks)} sampled frames. Check the opening and closing minutes for colour "
+                          "sequences (partial-colour) before showing the label.")
+            report["colour-needs-review"].append(f"{item['title']}: black-and-white from {len(peaks)} samples")
+        col_decision = {"decidedBy": "inferred", "confidence": 0.8 if col != "unknown" else 0.0, "review": col_review,
                         "evidence": [{"signal": "content-analysis", "value": {"method": "signalstats SATMAX, peak over sampled frames", "samples": samples},
                                       "weight": 0.8, "note": "a few sampled frames cannot detect brief colour accents; partial-colour needs dense sampling or a person"}]}
         dr = (v0.get("hdr") or {}).get("format", "unknown") if v0 else "unknown"
@@ -832,7 +900,7 @@ def main():
             "file": {
                 "name": name, "kind": "disc-image" if is_iso else "stream-container",
                 "sizeBytes": stat.get("size") or 0,
-                "mtime": datetime.datetime.fromtimestamp(stat["mtime"], datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z") if stat.get("mtime") else NOW,
+                "mtime": datetime.datetime.fromtimestamp(stat["mtime"], datetime.timezone.utc).isoformat().replace("+00:00", "Z") if stat.get("mtime") else NOW,
                 "fixity": {"qh1": stat.get("qh1")},
                 "origin": {"libraryPath": src_path[len(args.library_root):].lstrip("/") if src_path.startswith(args.library_root) else src_path,
                            "folder": folder},
@@ -861,7 +929,7 @@ def main():
             "sidecars": side,
             "subtitleDecisions": {"defaultStreamIndex": None, "decidedBy": None},
             "covers": [],
-            "probe": {"tool": "ffprobe", "version": None, "at": NOW, "file": probe_rel if probe else None, "sha256": probe_sha,
+            "probe": {"tool": "ffprobe", "version": None, "at": PROBED_AT, "file": probe_rel if probe else None, "sha256": probe_sha,
                       "note": "disc image: streams were not demuxed; mount the image to inventory its playlists" if is_iso else None},
         }
         if not probe.get("chapters") and chapters.get(item["id"]):
@@ -931,8 +999,11 @@ def main():
                         "renditions": {"video": video, "audio": audio}, "subtitles": p_subs, "trickplay": man.get("trickplay")}
             if man.get("trailers"):
                 playback["trailers"] = man["trailers"]
+            prow = packaged_rows.get(item["id"]) or {}
             package = {
                 "id": pid, "state": "complete" if fe.get("packageComplete") else "failed", "role": "derived",
+                "sizeBytes": prow.get("sizebytes"),
+                "bitrateBps": prow["bitratekbps"] * 1000 if prow.get("bitratekbps") else None,
                 "recipe": {"video": "copy or re-encode (not recorded by the packager)",
                            "audio": "aac-lc 2ch 192k" if all((a.get("channels") == 2 and a.get("bitrateBps") == 192000) for a in ren.get("audio") or []) else None,
                            "subtitles": "text -> webvtt, image -> sidecar"},
@@ -952,7 +1023,8 @@ def main():
         version = {
             "id": vid, "path": ".", "label": version_label, "primary": True,
             "edition": {"kind": ed_kind, "label": None, "decidedBy": "inferred", "decidedAt": NOW,
-                        **({"confidence": conf} if conf is not None else {}), "evidence": ed_ev, "review": review},
+                        **({"confidence": conf} if conf is not None else {}), "evidence": ed_ev,
+                        "review": review or (col_review if is_iso and not probe else None)},
             "presentation": presentation,
             "runtime": {"measuredMs": measured, "referenceMs": reference, "deltaMs": delta},
             "completeness": completeness,
@@ -985,7 +1057,8 @@ def main():
                     doc[k] = playback[k]
         doc["versions"] = [version]
         doc["processing"] = processing(item)
-        doc["provenance"] = {"migratedFrom": "legacy-catalog", "migratedAt": NOW, "legacyItemId": item["id"]}
+        doc["provenance"] = {"migratedFrom": "legacy-catalog", "migratedAt": NOW, "legacyItemId": item["id"],
+                             "legacyCreatedBy": item.get("createdby"), "legacyModifiedBy": item.get("modifiedby")}
         return fp, col, dr, man
 
     browse = []
@@ -1051,7 +1124,8 @@ def main():
             "masters": [{"fingerprint": fp, "presentation": pres, "episodes": ids_} for (fp, pres), ids_ in masters.items()],
         }
         sdoc["processing"] = processing(item)
-        sdoc["provenance"] = {"migratedFrom": "legacy-catalog", "migratedAt": NOW, "legacyItemId": item["id"]}
+        sdoc["provenance"] = {"migratedFrom": "legacy-catalog", "migratedAt": NOW, "legacyItemId": item["id"],
+                             "legacyCreatedBy": item.get("createdby"), "legacyModifiedBy": item.get("modifiedby")}
         if len(masters) > 1:
             report["mixed-masters"].append(f"{item['title']}: {len(masters)} masters across {len(eps)} episodes")
         write_json(f"{sdir}/metadata/metadata.json", metadata_doc(item, "series", f"{sdir}/metadata", qualifier))
