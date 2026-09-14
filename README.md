@@ -87,8 +87,9 @@ Layout on storage:
 flowchart LR
   M["movies/&lt;aa&gt;/&lt;movieId&gt;/"] --> MM["manifest.json"]
   M --> MD["metadata/ — metadata.json, poster.jpg, backdrop.jpg, logo.png"]
+  M --> MO["Title (Year).mkv — the original, kept next to its package"]
   M --> MS["source/&lt;sourceId&gt;/ffprobe.json"]
-  M --> MP["hls/ · subs/ · trickplay/ · .complete"]
+  M --> MP["hls/ · subs/ · trickplay/ · .complete · checksums.sha256"]
   S["shows/&lt;aa&gt;/&lt;seriesId&gt;/"] --> SM["manifest.json — seasons and their episodes"]
   S --> SD["metadata/ — series images, season-NN-poster.jpg"]
   S --> E["episodes/&lt;episodeId&gt;/ — same shape as a movie"]
@@ -121,6 +122,11 @@ records a `review` for a person. `tools/make-library-examples.py` regenerates
 v1 is a draft until a platform service adopts it. Every change is listed here;
 rebuild a library with the current migrator after one.
 
+- **2026-09-14 (d)** — a version's folder is the one destination of its media:
+  the source record's `file.path` names the original file placed next to the
+  package (null while it is still only in the source library, and after
+  deletion). The validator checks its size and qh1 with `--check-media`, and the
+  migrator plans to link or move originals into their version folders.
 - **2026-09-14 (c)** — `chapters`, `chaptersFrom` and `segments` (intro, recap,
   credits) move from the source record to the version; the package loses
   `chapters` and the `chapters-dropped` loss, since the version keeps the marks;

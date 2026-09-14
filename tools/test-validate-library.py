@@ -140,12 +140,18 @@ CASES = [
                                                        open(os.path.join(movie(r), "hls", "v0", "seg-0001.m4s"), "wb").write(b"segment"),
                                                        subprocess.run([sys.executable, os.path.join(TOOLS, "package-checksums.py"), movie(r), series(r)], check=True, capture_output=True)),
      "OK", ["--check-checksums"]),
+    ("original file missing from its folder", False, lambda r: os.remove(os.path.join(movie(r), "Tears of Steel (2012).mkv")), "original file missing", ["--check-media"]),
+    ("original file changed", False, lambda r: open(os.path.join(movie(r), "Tears of Steel (2012).mkv"), "ab").write(b"x"), "bytes, the manifest says", ["--check-media"]),
+    ("deleted original that still names a file", False, lambda r: edit(man(movie(r)), lambda d: d["versions"][0]["sources"][0].update(state="deleted")), "path", []),
+    ("unnamed file next to the package", False, lambda r: open(os.path.join(movie(r), "Tears of Steel (2012) copy.mkv"), "w").write("x"), "unexpected entry in a movie folder", []),
+    ("original still only in the source library", True, lambda r: (os.remove(os.path.join(movie(r), "Tears of Steel (2012).mkv")),
+                                                                    edit(man(movie(r)), lambda d: d["versions"][0]["sources"][0]["file"].update(path=None))), "OK", ["--check-media"]),
     ("manifest that is not an object", False, lambda r: open(man(movie(r)), "w").write("[1, 2]"), "not a JSON object", []),
     ("movie with no package", True, lambda r: (edit(man(movie(r)), lambda d: [d["versions"][0].update(package=None, lostIfOriginalDeleted=["everything: no package exists"])] + [d.pop(k) for k in ("durationMs", "packagedAt", "packager", "renditions", "subtitles", "trickplay")]),
                                                 os.remove(os.path.join(movie(r), ".complete")), shutil.rmtree(os.path.join(movie(r), "hls"))), "OK", ["--check-media"]),
-    ("original deleted, canonical package", True, lambda r: edit(man(movie(r)), lambda d: [
+    ("original deleted, canonical package", True, lambda r: os.remove(os.path.join(movie(r), "Tears of Steel (2012).mkv")) or edit(man(movie(r)), lambda d: [
         d["versions"][0]["sources"][0].update(state="deleted"),
-        d["versions"][0]["sources"][0]["file"].update(deletedAt="2026-10-01T00:00:00Z", deletionReason="space"),
+        d["versions"][0]["sources"][0]["file"].update(path=None, deletedAt="2026-10-01T00:00:00Z", deletionReason="space"),
         d["versions"][0]["truth"].update(kind="package"),
         d["versions"][0]["package"].update(role="canonical")]), "OK", []),
 ]

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v1/manifest.schema.json",
   "title": "manifest.json — the entry point of a library item",
-  "description": "One manifest per item folder: a movie, a series or an episode. It says what the item is (title, reference ids), what is playable (the playback fields a streaming service reads, unchanged from the version 2 layout), and for every version what the original file contained and what the package carries and lost. Texts and images are not here: they live in metadata/metadata.json next to this file. Paths in the top-level playback fields, versions[].path, probe files and sidecars are relative to this file's folder; paths inside a package.playback block are relative to that version's folder; source origin.libraryPath is relative to the root of the source library.\n\nLayout:\n  movies/<aa>/<movieId>/manifest.json, metadata/, hls/, subs/, trickplay/, source/\n  shows/<aa>/<seriesId>/manifest.json, metadata/, episodes/<episodeId>/{manifest.json, metadata/, hls/, ...}",
+  "description": "One manifest per item folder: a movie, a series or an episode. It says what the item is (title, reference ids), what is playable (the playback fields a streaming service reads, unchanged from the version 2 layout), and for every version what the original file contained and what the package carries and lost. Texts and images are not here: they live in metadata/metadata.json next to this file. Paths in the top-level playback fields, versions[].path, probe files and sidecars are relative to this file's folder; paths inside a package.playback block are relative to that version's folder; source origin.libraryPath is relative to the root of the source library.\n\nLayout:\n  movies/<aa>/<movieId>/manifest.json, metadata/, <original file>, hls/, subs/, trickplay/, checksums.sha256, source/\n  shows/<aa>/<seriesId>/manifest.json, metadata/, episodes/<episodeId>/{manifest.json, metadata/, <original file>, hls/, ...}\n\nA version's folder is the single destination of its media: the original file, the package, or both.",
   "type": "object",
   "required": ["schema", "version", "itemId", "rev", "createdAt", "updatedAt", "type", "title", "externalIds", "match", "metadata"],
   "allOf": [
@@ -445,23 +445,29 @@
     "source": {
       "type": "object",
       "required": ["id", "state", "file", "container", "streams", "fidelity", "essence", "probe"],
+      "if": { "properties": { "state": { "const": "deleted" } } },
+      "then": { "properties": { "file": { "properties": { "path": { "type": "null" } } } } },
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "defs.schema.json#/$defs/uuid" },
         "state": { "enum": ["present", "deleted"] },
         "file": {
           "type": "object",
-          "required": ["name", "sizeBytes", "fixity", "origin"],
+          "required": ["name", "path", "sizeBytes", "fixity", "origin"],
           "additionalProperties": false,
           "properties": {
             "name": { "type": "string", "description": "Original filename, unchanged." },
+            "path": {
+              "oneOf": [{ "type": "string", "pattern": "^(?!\\.{1,2}$)[^/]+$" }, { "type": "null" }],
+              "description": "The original file in the version's own folder, next to its package: a plain file name, normally the original filename. Null while the original still lives only in the source library (origin.libraryPath), and after it is deleted."
+            },
             "kind": { "enum": ["stream-container", "disc-image", "transport-stream", "audio-file"] },
             "sizeBytes": { "type": "integer", "minimum": 0 },
             "mtime": { "$ref": "defs.schema.json#/$defs/timestamp" },
             "fixity": { "$ref": "defs.schema.json#/$defs/fixity" },
             "origin": {
               "type": "object",
-              "description": "Where the original lives (or lived) in the source library. The folder name is often the ONLY record of an edition ('Example Film - Unrated (2015)') or a series qualifier ('Example Show (US)').",
+              "description": "Where the original lived in the source library before it entered the library folder. The folder name is often the ONLY record of an edition ('Example Film - Unrated (2015)') or a series qualifier ('Example Show (US)').",
               "required": ["libraryPath"],
               "additionalProperties": false,
               "properties": {

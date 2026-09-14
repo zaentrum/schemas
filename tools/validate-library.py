@@ -22,7 +22,8 @@ metadata/metadata.json. Beyond JSON Schema, this checks what spans files or need
   timeline     chapters and detected ranges on each version are well formed, and chapter marks of the original
                are kept on the version
   checksums    a package's checksums file matches its recorded hash and file count
-  --check-media every playback path exists, a complete or stale package has a video rendition (and audio when
+  --check-media every original file a manifest places in a version folder exists with its size and qh1, every
+               playback path exists, a complete or stale package has a video rendition (and audio when
                its original has audio), a .complete marker sits exactly where such a package is, every trickplay
                sprite sheet the VTT names exists and the cues cover the duration, and the checksums file lists
                exactly the package's files with the recorded total size
@@ -151,6 +152,19 @@ def sha_file(p):
     return "sha256:" + h.hexdigest()
 
 
+def qh1(p):
+    """sha256(first 64 KiB || last 64 KiB || uint64be(size)): cheap proof a large file is the one recorded."""
+    size = os.path.getsize(p)
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        h.update(f.read(65536))
+        if size > 65536:
+            f.seek(max(size - 65536, 0))
+            h.update(f.read(65536))
+    h.update(size.to_bytes(8, "big"))
+    return "sha256:" + h.hexdigest()
+
+
 def sniff_image(p):
     """(content type, width, height) from the file header; None where unknown."""
     with open(p, "rb") as f:
@@ -267,7 +281,11 @@ class Checker:
             self.err(mp, f"type {t} where {expect_type} was expected")
         if t in self.counts:
             self.counts[t] += 1
-        allowed = SERIES_ENTRIES if expect_type == "series" else ITEM_ENTRIES
+        allowed = set(SERIES_ENTRIES if expect_type == "series" else ITEM_ENTRIES)
+        for v in man.get("versions") or [] if isinstance(man.get("versions"), list) else []:
+            for src in (v.get("sources") or []) if isinstance(v, dict) and v.get("path") == "." else []:
+                if isinstance(src, dict) and isinstance(src.get("file"), dict) and src["file"].get("path"):
+                    allowed.add(src["file"]["path"])
         for name in listdir(d):
             if name not in allowed:
                 self.err(os.path.join(d, name), f"unexpected entry in a {expect_type} folder")
@@ -478,6 +496,17 @@ class Checker:
                 self.err(vw, "every source is deleted and there is no package: nothing of this version remains")
             for s in sources:
                 referenced_sources.add(s["id"])
+                orig = s["file"].get("path")
+                if orig and s["state"] != "present":
+                    self.err(vw, f"source {s['id']} names a file but is not present")
+                if orig and self.check_media:
+                    f = os.path.join(vp, orig)
+                    if not os.path.isfile(f):
+                        self.err(f, "original file missing")
+                    elif os.path.getsize(f) != s["file"]["sizeBytes"]:
+                        self.err(f, f"original is {os.path.getsize(f)} bytes, the manifest says {s['file']['sizeBytes']}")
+                    elif qh1(f) != s["file"]["fixity"]["qh1"]:
+                        self.err(f, "original does not match its qh1 fixity")
                 if s["state"] == "deleted" and not s["file"].get("deletedAt"):
                     self.err(vw, f"source {s['id']} is deleted without file.deletedAt")
                 pf, psha = s["probe"].get("file"), s["probe"].get("sha256")

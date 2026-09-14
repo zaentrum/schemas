@@ -164,11 +164,12 @@
           "state": "present",
           "file": {
             "name": "Tears of Steel (2012).mkv",
+            "path": "Tears of Steel (2012).mkv",
             "kind": "stream-container",
-            "sizeBytes": 6300000000,
+            "sizeBytes": 63,
             "mtime": "2026-09-13T12:00:00Z",
             "fixity": {
-              "qh1": "sha256:1c801e380315cb4fdeb04260138edcbfb3f1db77739b59a1ee9254b86ff814a9"
+              "qh1": "sha256:ae7215738ad7949e5045c0d260a5eff486bcfdd7fbd56592996bccb05509b57a"
             },
             "origin": {
               "libraryPath": "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",

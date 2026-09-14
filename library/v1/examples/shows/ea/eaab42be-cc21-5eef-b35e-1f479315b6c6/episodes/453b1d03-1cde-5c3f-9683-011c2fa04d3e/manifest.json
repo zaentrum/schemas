@@ -202,11 +202,12 @@
           "state": "present",
           "file": {
             "name": "Example Show (US) - S01E01 - Pilot.mkv",
+            "path": "Example Show (US) - S01E01 - Pilot.mkv",
             "kind": "stream-container",
-            "sizeBytes": 6300000000,
+            "sizeBytes": 76,
             "mtime": "2026-09-13T12:00:00Z",
             "fixity": {
-              "qh1": "sha256:7dd0aa0d0d8fbc2de8c1cf8771c626d0b964551c4b2742c081c8ed72e85cc460"
+              "qh1": "sha256:216d9ba44f8a3db682a766d9a8cdbf1a3f40748a408bd2f438b0f9a214417490"
             },
             "origin": {
               "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot.mkv",
@@ -566,6 +567,7 @@
           "state": "present",
           "file": {
             "name": "Example Show (US) - S01E01 - Pilot (Black and White).mkv",
+            "path": null,
             "kind": "stream-container",
             "sizeBytes": 6300000000,
             "mtime": "2026-09-13T12:00:00Z",

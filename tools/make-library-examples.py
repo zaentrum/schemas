@@ -2,11 +2,12 @@
 """Regenerate library/v1/examples: one movie and one series with an episode in two versions.
 
 The fixtures are neutral (an open movie and a fictional show) and exercise the parts of the
-schema a reader most needs to see: a 5.1 original downmixed to stereo, a two-rung quality ladder,
-chapters the package does not carry, a series folder with an episode sub-item, season artwork,
-and a second version (black-and-white) stored in versions/<id>/ with its own playback block.
-Images are 1x1 placeholders and rendition folders are empty; hashes and sizes are computed,
-never typed. The tree passes validate-library.py --check-media.
+schema a reader most needs to see: a 5.1 original downmixed to stereo and kept next to its package
+in the item folder, a two-rung quality ladder, chapters and intro/credits ranges on the version, a
+series folder with an episode sub-item, forced, full and SDH subtitles, season artwork, and a
+second version (black-and-white) stored in versions/<id>/ whose original is still only in the
+source library. Originals and images are small placeholders and rendition folders are empty;
+hashes, sizes and checksums are computed, never typed. The tree passes --check-checksums.
 """
 import base64, hashlib, json, os, shutil, uuid
 
@@ -84,14 +85,25 @@ def probe_stream(st):
     return out
 
 
-def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms, quality="1080p", medium="disc"):
+def qh1(data):
+    return sha(data[:65536] + (data[-65536:] if len(data) > 65536 else b"") + len(data).to_bytes(8, "big"))
+
+
+def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms, quality="1080p", medium="disc", in_folder=None):
+    """in_folder: the version folder the original has been placed in (a placeholder file stands in for it), or None
+    while it still lives only in the source library."""
+    if in_folder:
+        original = write(os.path.join(in_folder, name), b"placeholder for the original file of " + name.encode() + b"\n")
+        size, fixity, path = len(original), {"qh1": qh1(original)}, name
+    else:
+        size, fixity, path = 6300000000, {"qh1": sha(name.encode())}, None
     probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)}, "streams": [probe_stream(x) for x in streams],
              "chapters": [{"start_time": str(c["startMs"] / 1000), "end_time": str(c["endMs"] / 1000), "tags": {"title": c["title"]}} for c in chapters]}
     probe_bytes = write(os.path.join(item_dir, "source", sid, "ffprobe.json"), probe)
     return {
         "id": sid, "state": "present",
-        "file": {"name": name, "kind": "stream-container", "sizeBytes": 6300000000, "mtime": AT,
-                 "fixity": {"qh1": sha(name.encode())}, "origin": {"libraryPath": library_path, "folder": os.path.dirname(library_path)},
+        "file": {"name": name, "path": path, "kind": "stream-container", "sizeBytes": size, "mtime": AT,
+                 "fixity": fixity, "origin": {"libraryPath": library_path, "folder": os.path.dirname(library_path)},
                  "part": None},
         "labels": {"quality": quality, "medium": medium, "resolution": quality, "edition": None, "folderEdition": None},
         "container": {"format": "matroska,webm", "durationMs": duration_ms, "bitrate": None, "title": None,
@@ -218,7 +230,7 @@ def main():
             "sources": [source(mdir, sid, "Tears of Steel (2012).mkv", "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
                                [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)"),
                                 subtitle(2, None)],
-                               chapters, src_es, 734000)],
+                               chapters, src_es, 734000, in_folder=mdir)],
             "package": {
                 "id": pid, "state": "complete", "role": "derived", "sizeBytes": 734000000, "peakBandwidthBps": 8192000,
                 "recipe": {"video": "hevc re-encode, 800p and 533p", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt"},
@@ -339,7 +351,7 @@ def main():
                                 [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1"),
                                  audio(2, "aac", 2, "stereo", title="Commentary", commentary=True),
                                  subtitle(3, "Forced", forced=True), subtitle(4, None), subtitle(5, "SDH", sdh=True)],
-                                [], {**hdr_es, **episode_tracks}, 2700000, "2160p", "web")],
+                                [], {**hdr_es, **episode_tracks}, 2700000, "2160p", "web", in_folder=edir)],
              "package": {"id": uid(eid, "package", "colour"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "peakBandwidthBps": 8192000,
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},

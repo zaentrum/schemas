@@ -1002,7 +1002,7 @@ def main():
         source = {
             "id": sid, "state": "present",
             "file": {
-                "name": name, "kind": "disc-image" if is_iso else "stream-container",
+                "name": name, "path": name, "kind": "disc-image" if is_iso else "stream-container",
                 "sizeBytes": stat.get("size") or 0,
                 "mtime": datetime.datetime.fromtimestamp(stat["mtime"], datetime.timezone.utc).isoformat().replace("+00:00", "Z") if stat.get("mtime") else NOW,
                 "fixity": {"qh1": stat.get("qh1")},
@@ -1054,6 +1054,8 @@ def main():
             source["covers"] = [x["id"] for x in siblings]
         if not source["file"]["fixity"]["qh1"]:
             raise SystemExit(f"no fixity for {src_path}")
+        # The original joins its version's folder: one destination for the version's media, package or not.
+        plan.append(("original", src_path, f"{idir}/{name}"))
 
         # --- the package in this folder: playback fields (verbatim + source mapping) and its account of losses
         playback, package, lost = None, None, []
