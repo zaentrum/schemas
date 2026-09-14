@@ -32,6 +32,7 @@ tools/
   test-validate-library.py         broken trees the validator must reject
   library-migrate.py               reference migrator from a legacy catalog
   make-library-examples.py         regenerate library/v1/examples
+  package-checksums.py             write or verify each package's checksums on storage
 ```
 
 The top-level `stube/` directory mirrors the Avro namespace and Kafka topic
@@ -120,6 +121,13 @@ records a `review` for a person. `tools/make-library-examples.py` regenerates
 v1 is a draft until a platform service adopts it. Every change is listed here;
 rebuild a library with the current migrator after one.
 
+- **2026-09-14 (c)** — `chapters`, `chaptersFrom` and `segments` (intro, recap,
+  credits) move from the source record to the version; the package loses
+  `chapters` and the `chapters-dropped` loss, since the version keeps the marks;
+  packages gain `checksums` (a `checksums.sha256` file per version folder,
+  computed on storage by `tools/package-checksums.py`). The validator checks
+  trickplay sprite sheets against the VTT and package files against their
+  checksums.
 - **2026-09-14 (b)** — behaviour is not library data: `package.decisions`
   (default audio and subtitle), audio `forcedSubtitle` and source
   `subtitleDecisions` are removed. Players and per-user settings derive them from

@@ -78,7 +78,15 @@
     ]
   },
   "subtitles": [],
-  "trickplay": null,
+  "trickplay": {
+    "vttPath": "trickplay/thumbnails.vtt",
+    "spritePattern": "trickplay/sprite-%04d.jpg",
+    "intervalSec": 10,
+    "thumbWidth": 320,
+    "thumbHeight": 180,
+    "gridCols": 10,
+    "gridRows": 10
+  },
   "versions": [
     {
       "id": "e72c75e1-dc49-519d-9a80-d1a1b47b95bf",
@@ -114,6 +122,29 @@
         "referenceMs": 720000,
         "deltaMs": 14000
       },
+      "chapters": [
+        {
+          "startMs": 0,
+          "endMs": 300000,
+          "title": "Chapter 1"
+        },
+        {
+          "startMs": 300000,
+          "endMs": 734000,
+          "title": "Chapter 2"
+        }
+      ],
+      "chaptersFrom": "original-file",
+      "segments": [
+        {
+          "kind": "credits",
+          "startMs": 690000,
+          "endMs": 734000,
+          "detector": "blackframe",
+          "confidence": 0.9,
+          "label": null
+        }
+      ],
       "completeness": {
         "status": "complete",
         "evidence": []
@@ -249,19 +280,6 @@
               "purposeFrom": "assumed"
             }
           ],
-          "chapters": [
-            {
-              "startMs": 0,
-              "endMs": 300000,
-              "title": "Chapter 1"
-            },
-            {
-              "startMs": 300000,
-              "endMs": 734000,
-              "title": "Chapter 2"
-            }
-          ],
-          "segments": [],
           "sidecars": [],
           "covers": [],
           "essence": {
@@ -298,7 +316,7 @@
             "version": null,
             "at": "2026-09-13T12:00:00Z",
             "file": "source/aaedd282-8697-55f0-8023-aa424e9f6b47/ffprobe.json",
-            "sha256": "sha256:11c9759fcf190d5de55cb6ad8bbf2ce2c23c78fe096677f7233213c2185f6b6a",
+            "sha256": "sha256:9b374dda724ce90a8a80a6e941f7f3fed9bfcb465ead26635607b48211c75ae7",
             "note": null
           }
         }
@@ -329,11 +347,6 @@
               "kind": "subtitle-dropped",
               "detail": "1 of 1 source subtitle track(s) not packaged",
               "sourceStreamIndex": 2
-            },
-            {
-              "kind": "chapters-dropped",
-              "detail": "chapters are not in the package",
-              "sourceStreamIndex": null
             }
           ]
         },
@@ -364,11 +377,17 @@
           "forcedSubtitleLanguages": [],
           "closedCaptions": false
         },
-        "chapters": []
+        "checksums": {
+          "file": "checksums.sha256",
+          "algorithm": "sha256",
+          "sha256": "sha256:a609cd0207585b52e6c71de82459374a4a02592143ba092ecd84989cbc4505ec",
+          "files": 6,
+          "bytes": 5152,
+          "at": "2026-09-13T12:00:00Z"
+        }
       },
       "lostIfOriginalDeleted": [
         "surround",
-        "chapters",
         "audioChannels 6->2",
         "subtitleLanguages en",
         "subtitleTracks 1->0"

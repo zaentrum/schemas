@@ -293,7 +293,8 @@
         "thumbHeight": { "type": "integer" },
         "gridCols": { "type": "integer" },
         "gridRows": { "type": "integer" }
-      }
+      },
+      "description": "Version 2 playback field. The VTT maps each interval to one cell of one sprite sheet; the validator checks every sheet it names exists and that it covers the whole duration."
     },
     "trailer": {
       "type": "object",
@@ -370,6 +371,29 @@
             "measuredMs": { "type": ["integer", "null"], "minimum": 0 },
             "referenceMs": { "type": ["integer", "null"] },
             "deltaMs": { "type": ["integer", "null"] }
+          }
+        },
+        "chapters": {
+          "type": "array",
+          "description": "Chapter marks on this version's timeline. Kept here, not in any file, so they survive the original's deletion and apply to every package of the version.",
+          "items": { "$ref": "#/$defs/chapter" }
+        },
+        "chaptersFrom": { "enum": ["original-file", "legacy-catalog", "human", null], "description": "Where the chapter marks came from; null when there are none." },
+        "segments": {
+          "type": "array",
+          "description": "Intro, recap and credits ranges on this version's timeline, each with the detector that found it.",
+          "items": {
+            "type": "object",
+            "required": ["kind", "startMs", "endMs"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "enum": ["intro", "recap", "credits", "preview", "commercial", "other"] },
+              "startMs": { "type": "integer" },
+              "endMs": { "type": "integer" },
+              "detector": { "type": ["string", "null"] },
+              "confidence": { "type": ["number", "null"] },
+              "label": { "type": ["string", "null"] }
+            }
           }
         },
         "completeness": {
@@ -498,24 +522,6 @@
             { "$ref": "#/$defs/attachmentStream" }, { "$ref": "#/$defs/dataStream" }
           ] }
         },
-        "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" } },
-        "segments": {
-          "type": "array",
-          "description": "Detected intro, recap and credits ranges.",
-          "items": {
-            "type": "object",
-            "required": ["kind", "startMs", "endMs"],
-            "additionalProperties": false,
-            "properties": {
-              "kind": { "enum": ["intro", "recap", "credits", "preview", "commercial", "other"] },
-              "startMs": { "type": "integer" },
-              "endMs": { "type": "integer" },
-              "detector": { "type": ["string", "null"] },
-              "confidence": { "type": ["number", "null"] },
-              "label": { "type": ["string", "null"] }
-            }
-          }
-        },
         "sidecars": {
           "type": "array",
           "description": "Small files that sat next to the original (external subtitles, NFO text). Copied into source/<sourceId>/ so they survive the original's deletion.",
@@ -594,7 +600,7 @@
                 "required": ["kind", "detail"],
                 "additionalProperties": false,
                 "properties": {
-                  "kind": { "enum": ["audio-downmix", "audio-codec", "audio-dropped", "video-resolution", "video-bitdepth", "dynamic-range", "dolby-vision", "stereo3d", "subtitle-dropped", "subtitle-styling", "closed-captions-dropped", "attachments-dropped", "chapters-dropped", "other"] },
+                  "kind": { "enum": ["audio-downmix", "audio-codec", "audio-dropped", "video-resolution", "video-bitdepth", "dynamic-range", "dolby-vision", "stereo3d", "subtitle-dropped", "subtitle-styling", "closed-captions-dropped", "attachments-dropped", "other"] },
                   "detail": { "type": "string" },
                   "sourceStreamIndex": { "type": ["integer", "null"] }
                 }
@@ -604,7 +610,22 @@
           }
         },
         "essence": { "$ref": "defs.schema.json#/$defs/essence" },
-        "chapters": { "type": "array", "description": "Chapter marks carried by the package. A canonical package must carry them.", "items": { "$ref": "#/$defs/chapter" } },
+        "checksums": {
+          "oneOf": [{ "type": "null" }, {
+            "type": "object",
+            "description": "A sha256sum-style file listing every file of the package, so a copy can be verified file by file. Once the original is deleted the package is the truth, and this is its fixity.",
+            "required": ["file", "algorithm", "sha256", "files", "bytes", "at"],
+            "additionalProperties": false,
+            "properties": {
+              "file": { "const": "checksums.sha256", "description": "In the version's folder: lines of '<hex digest>  <path>', paths relative to that folder." },
+              "algorithm": { "const": "sha256" },
+              "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "Hash of the checksums file itself." },
+              "files": { "type": "integer", "minimum": 0 },
+              "bytes": { "type": "integer", "minimum": 0 },
+              "at": { "$ref": "defs.schema.json#/$defs/timestamp" }
+            }
+          }]
+        },
         "playback": { "$ref": "#/$defs/playback" }
       }
     },

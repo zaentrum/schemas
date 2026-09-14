@@ -52,5 +52,20 @@
       }
     }
   ],
-  "chapters": []
+  "chapters": [
+    {
+      "start_time": "0.0",
+      "end_time": "300.0",
+      "tags": {
+        "title": "Chapter 1"
+      }
+    },
+    {
+      "start_time": "300.0",
+      "end_time": "734.0",
+      "tags": {
+        "title": "Chapter 2"
+      }
+    }
+  ]
 }

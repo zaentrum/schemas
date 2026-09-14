@@ -2,7 +2,7 @@
 """Validate a zaentrum library tree against the JSON Schemas and its own cross-file rules.
 
 Usage:
-  validate-library.py [--check-media] [--schemas URL-or-dir] ROOT [ROOT ...]
+  validate-library.py [--check-media | --check-checksums] [--schemas URL-or-dir] ROOT [ROOT ...]
 
 ROOT is a folder holding movies/ and/or shows/. Every item folder must contain manifest.json and
 metadata/metadata.json. Beyond JSON Schema, this checks what spans files or needs arithmetic:
@@ -19,8 +19,14 @@ metadata/metadata.json. Beyond JSON Schema, this checks what spans files or need
                rendition per playback set; every track says what it is for, and the version 2 default and forced
                hints do not contradict it (a forced track is never flagged default); lossless means no losses;
                truth, role and source state agree; probe files and sidecars match their hashes
+  timeline     chapters and detected ranges on each version are well formed, and chapter marks of the original
+               are kept on the version
+  checksums    a package's checksums file matches its recorded hash and file count
   --check-media every playback path exists, a complete or stale package has a video rendition (and audio when
-               its original has audio), and a .complete marker sits exactly where such a package is
+               its original has audio), a .complete marker sits exactly where such a package is, every trickplay
+               sprite sheet the VTT names exists and the cues cover the duration, and the checksums file lists
+               exactly the package's files with the recorded total size
+  --check-checksums  also hash every package file (implies --check-media)
 
 The schemas are loaded from the library/v1 folder next to this tool by default; pass
 --schemas https://zaentrum.github.io/schemas/library/v1 to use the published copies.
@@ -34,7 +40,36 @@ from referencing import Registry, Resource
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "library", "v1")
 NAMES = ["defs", "manifest", "metadata"]
 BASE = "https://zaentrum.github.io/schemas/library/v1/"
-ITEM_ENTRIES = {"manifest.json", "metadata", "source", "versions", "hls", "subs", "trickplay", "trailers", ".complete", ".failed", ".packaging"}
+ITEM_ENTRIES = {"manifest.json", "metadata", "source", "versions", "hls", "subs", "trickplay", "trailers", ".complete", ".failed", ".packaging", "checksums.sha256"}
+PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
+PACKAGE_MARKERS = (".complete",)
+VTT_CUE = re.compile(r"^(\d+):(\d\d):(\d\d)\.(\d{3}) --> (\d+):(\d\d):(\d\d)\.(\d{3})")
+
+
+def package_files(vp):
+    """Every file of the package stored in a version folder, relative to it: rendition, subtitle, trickplay and
+    trailer folders and the completion marker. Documents, metadata and other versions are not part of it."""
+    out = []
+    for d in PACKAGE_DIRS:
+        base = os.path.join(vp, d)
+        for root, dirs, files in os.walk(base):
+            dirs[:] = sorted(x for x in dirs if not OS_ARTEFACTS.match(x))
+            for f in sorted(files):
+                if not OS_ARTEFACTS.match(f):
+                    out.append(os.path.relpath(os.path.join(root, f), vp))
+    out += [m for m in PACKAGE_MARKERS if os.path.isfile(os.path.join(vp, m))]
+    return sorted(out)
+
+
+def read_checksums(path):
+    entries = {}
+    for line in open(path, encoding="utf-8"):
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        digest, _, rel = line.partition("  ")
+        entries[rel] = digest
+    return entries
 SERIES_ENTRIES = {"manifest.json", "metadata", "episodes"}
 ID_KEYS = {"schema", "itemId", "id", "seriesId", "personId", "path", "dir", "file", "vttPath", "manifestPath", "language", "type", "kind",
            "tmdbMovie", "tmdbTv", "tmdbSeason", "tmdbEpisode", "tmdbCollection", "imdb", "tvdb", "tmdbPerson", "sha256", "qh1"}
@@ -175,9 +210,10 @@ def walk_strings(o, key=None):
 
 # ---------------------------------------------------------------- checker
 class Checker:
-    def __init__(self, validators, check_media):
+    def __init__(self, validators, check_media, check_checksums=False):
         self.v = validators
-        self.check_media = check_media
+        self.check_media = check_media or check_checksums
+        self.check_checksums = check_checksums
         self.errors = []
         self.counts = {"movie": 0, "series": 0, "episode": 0, "images": 0, "probes": 0}
 
@@ -423,6 +459,16 @@ class Checker:
                 self.err(vw, f"folder {v['path']} does not exist")
             pkg = v["package"]
             sources = v["sources"]
+            for kind in ("chapters", "segments"):
+                marks = v.get(kind) or []
+                if any(m["endMs"] < m["startMs"] for m in marks):
+                    self.err(vw, f"a {kind[:-1]} ends before it starts")
+                if kind == "chapters" and any(marks[i]["startMs"] > marks[i + 1]["startMs"] for i in range(len(marks) - 1)):
+                    self.err(vw, "chapters are not in timeline order")
+            if bool(v.get("chapters")) != (v.get("chaptersFrom") is not None):
+                self.err(vw, "chaptersFrom must be set exactly when there are chapters")
+            if any(s["essence"].get("chapters") for s in sources) and not v.get("chapters"):
+                self.err(vw, "the original carries chapter marks but the version keeps none")
             all_deleted = all(s["state"] == "deleted" for s in sources)
             if (v["truth"]["kind"] == "package") != all_deleted:
                 self.err(vw, "truth.kind must be 'package' exactly when every source is deleted")
@@ -457,8 +503,15 @@ class Checker:
             if pkg is not None:
                 if pkg["fidelity"]["lossless"] != (not pkg["fidelity"]["losses"]):
                     self.err(vw, "fidelity.lossless must be true exactly when losses is empty")
-                if pkg["role"] == "canonical" and any(s.get("chapters") for s in sources) and not pkg.get("chapters"):
-                    self.err(vw, "a canonical package must carry the chapters its original had")
+                cs = pkg.get("checksums")
+                if cs:
+                    f = os.path.join(vp, cs["file"])
+                    if not os.path.isfile(f):
+                        self.err(vw, f"checksums file {cs['file']} missing")
+                    elif sha_file(f) != cs["sha256"]:
+                        self.err(vw, f"checksums file {cs['file']} does not match its recorded sha256")
+                    elif len(read_checksums(f)) != cs["files"]:
+                        self.err(vw, f"checksums file lists {len(read_checksums(f))} files, the manifest says {cs['files']}")
                 pb = man if v["path"] == "." else pkg.get("playback") or {}
                 self.playback_set(vw, pb)
             if self.check_media:
@@ -504,8 +557,48 @@ class Checker:
             if not os.path.isfile(os.path.join(vp, sub["path"])):
                 self.err(vw, f"subtitle {sub['path']} missing")
         tp = pb.get("trickplay")
-        if tp and not os.path.isfile(os.path.join(vp, tp["vttPath"])):
-            self.err(vw, f"trickplay {tp['vttPath']} missing")
+        if tp:
+            vtt = os.path.join(vp, tp["vttPath"])
+            if not os.path.isfile(vtt):
+                self.err(vw, f"trickplay {tp['vttPath']} missing")
+            else:
+                self.trickplay(vw, vp, tp, vtt, pb.get("durationMs") or 0)
+        cs = pkg.get("checksums")
+        if cs and os.path.isfile(os.path.join(vp, cs["file"])):
+            listed = read_checksums(os.path.join(vp, cs["file"]))
+            on_disk = package_files(vp)
+            for rel in sorted(set(on_disk) - set(listed)):
+                self.err(vw, f"package file {rel} is not in {cs['file']}")
+            for rel in sorted(set(listed) - set(on_disk)):
+                self.err(vw, f"{cs['file']} lists {rel}, which does not exist")
+            present = [rel for rel in listed if rel in set(on_disk)]
+            total = sum(os.path.getsize(os.path.join(vp, rel)) for rel in present)
+            if len(present) == len(listed) and total != cs["bytes"]:
+                self.err(vw, f"package files total {total} bytes, the manifest says {cs['bytes']}")
+            if self.check_checksums:
+                for rel in present:
+                    if sha_file(os.path.join(vp, rel)).split(":", 1)[1] != listed[rel]:
+                        self.err(vw, f"{rel} does not match its checksum")
+
+    def trickplay(self, vw, vp, tp, vtt, duration_ms):
+        """Every sprite sheet the VTT names exists, and the cues cover the whole duration."""
+        base = os.path.dirname(vtt)
+        cues, sheets, last_end = 0, set(), 0
+        for line in open(vtt, encoding="utf-8", errors="replace"):
+            line = line.strip()
+            m = VTT_CUE.match(line)
+            if m:
+                cues += 1
+                h, mi, se, ms = (int(x) for x in m.groups()[4:])
+                last_end = max(last_end, ((h * 60 + mi) * 60 + se) * 1000 + ms)
+            elif line and not line.startswith("WEBVTT") and "#xywh=" in line:
+                sheets.add(line.split("#", 1)[0])
+        for sheet in sorted(sheets):
+            if not os.path.isfile(os.path.join(base, sheet)):
+                self.err(vw, f"trickplay sprite sheet {sheet} named by the VTT is missing")
+        expected = duration_ms // (tp["intervalSec"] * 1000) if tp["intervalSec"] else 0
+        if cues < expected:
+            self.err(vw, f"trickplay covers {cues} of {expected} thumbnails")
 
     # ------------------------------------------------------------ roots
     def root(self, r):
@@ -539,8 +632,9 @@ def main():
     ap.add_argument("roots", nargs="+")
     ap.add_argument("--schemas", default=HERE)
     ap.add_argument("--check-media", action="store_true")
+    ap.add_argument("--check-checksums", action="store_true", help="also hash every package file against its checksums file (implies --check-media)")
     args = ap.parse_args()
-    c = Checker(load_schemas(args.schemas), args.check_media)
+    c = Checker(load_schemas(args.schemas), args.check_media, args.check_checksums)
     for r in args.roots:
         c.root(r)
     print("checked:", c.counts)

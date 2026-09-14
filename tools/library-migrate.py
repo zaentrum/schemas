@@ -420,12 +420,15 @@ def package_essence(man):
         **track_essence(auds, subs, False),
     }
 
-def essence_gap(src, pkg):
-    """What deleting the original would lose: every property the source has that the package lacks."""
+def essence_gap(src, pkg, chapters_kept=False):
+    """What deleting the original would lose: every property the source has that the package lacks. Chapter marks
+    are not lost when the version keeps them."""
     gap = []
-    for k in ("surround", "losslessAudio", "objectAudio", "hdr10Metadata", "dolbyVision", "stereo3d", "imageSubtitles", "styledSubtitles", "fonts", "chapters"):
+    for k in ("surround", "losslessAudio", "objectAudio", "hdr10Metadata", "dolbyVision", "stereo3d", "imageSubtitles", "styledSubtitles", "fonts"):
         if src.get(k) and not pkg.get(k):
             gap.append(k)
+    if src.get("chapters") and not chapters_kept:
+        gap.append("chapters")
     if (src.get("maxAudioChannels") or 0) > (pkg.get("maxAudioChannels") or 0):
         gap.append(f"audioChannels {src['maxAudioChannels']}->{pkg['maxAudioChannels']}")
     if (src.get("maxVideoHeight") or 0) > (pkg.get("maxVideoHeight") or 0):
@@ -1021,20 +1024,29 @@ def main():
             },
             "fidelity": {"class": fid_class, "evidence": fid_ev},
             "streams": streams,
-            "chapters": [{"startMs": int(float(c["start_time"]) * 1000), "endMs": int(float(c["end_time"]) * 1000),
-                          "title": (c.get("tags") or {}).get("title")} for c in probe.get("chapters") or []],
-            "segments": [{"kind": s["kind"] if s["kind"] in ("intro", "recap", "credits", "preview", "commercial") else "other",
-                          "startMs": s["startms"], "endMs": s["endms"], "detector": s["source"],
-                          "confidence": float(s["confidence"]) if s["confidence"] is not None else None, "label": s["label"]}
-                         for s in segments.get(item["id"], [])],
             "sidecars": side,
             "covers": [],
             "probe": {"tool": "ffprobe", "version": None, "at": PROBED_AT if probe else None, "file": probe_rel if probe else None, "sha256": probe_sha,
                       "note": "disc image: streams were not demuxed; mount the image to inventory its playlists" if is_iso else None},
         }
-        if not probe.get("chapters") and chapters.get(item["id"]):
-            source["chapters"] = [{"startMs": c["startms"], "endMs": c["endms"], "title": c["title"]} for c in chapters[item["id"]]]
-        source["essence"] = source_essence(streams, source["chapters"])
+        # Timeline marks belong to the version: the file's own chapters, else the catalog's; detected ranges from the catalog.
+        if probe.get("chapters"):
+            version_chapters = [{"startMs": int(float(c["start_time"]) * 1000), "endMs": int(float(c["end_time"]) * 1000),
+                                 "title": (c.get("tags") or {}).get("title")} for c in probe["chapters"]]
+            chapters_from = "original-file"
+        elif chapters.get(item["id"]):
+            version_chapters = [{"startMs": c["startms"], "endMs": c["endms"], "title": c["title"]} for c in chapters[item["id"]]]
+            chapters_from = "legacy-catalog"
+        else:
+            version_chapters, chapters_from = [], None
+        version_segments = [{"kind": g["kind"] if g["kind"] in ("intro", "recap", "credits", "preview", "commercial") else "other",
+                             "startMs": g["startms"], "endMs": g["endms"], "detector": g["source"],
+                             "confidence": float(g["confidence"]) if g["confidence"] is not None else None, "label": g["label"]}
+                            for g in segments.get(item["id"], [])]
+        if measured and any(g["endMs"] > measured for g in version_segments):
+            report["segments-beyond-runtime"].append(
+                f"{item['title']}: a detected range ends {round((max(g['endMs'] for g in version_segments) - measured) / 1000)} s after the measured runtime")
+        source["essence"] = source_essence(streams, probe.get("chapters"))
         fc = file_coords(name)
         if item["type"] == "episode" and fc and fc.get("episodeEnd"):
             siblings = sorted((x for x in items.values() if x["parent_id"] == item["parent_id"] and x["seasonnumber"] == fc["season"]
@@ -1137,8 +1149,6 @@ def main():
                 losses.append({"kind": "subtitle-styling", "detail": "ASS/SSA styling flattened to WebVTT", "sourceStreamIndex": None})
             if any(s["type"] == "attachment" for s in streams):
                 losses.append({"kind": "attachments-dropped", "detail": "embedded fonts/images are not carried into the package", "sourceStreamIndex": None})
-            if source["chapters"]:
-                losses.append({"kind": "chapters-dropped", "detail": "chapters are not in the package (kept in this manifest's source record)", "sourceStreamIndex": None})
             playback = {"durationMs": man.get("durationMs"), "packagedAt": man.get("packagedAt"), "packager": man.get("packager"),
                         "renditions": {"video": video, "audio": audio}, "subtitles": p_subs, "trickplay": man.get("trickplay")}
             if man.get("trailers"):
@@ -1153,9 +1163,10 @@ def main():
                            "subtitles": "text -> webvtt, image -> sidecar"},
                 "fidelity": {"lossless": not losses, "losses": losses, "droppedSourceStreams": dropped},
                 "essence": package_essence({"renditions": {"video": video, "audio": audio}, "subtitles": p_subs}),
-                "chapters": [],
+                "checksums": None,
             }
-            lost = essence_gap(source["essence"], package["essence"])
+            report["package-checksums-to-compute"].append(f"{item['title']}: run tools/package-checksums.py on storage")
+            lost = essence_gap(source["essence"], package["essence"], chapters_kept=bool(version_chapters))
             if lost:
                 report["lost-if-original-deleted"].append(f"{item['title']}: {'; '.join(lost)}")
             plan.append(("linkpkg", fe["packageDir"], idir))
@@ -1170,6 +1181,9 @@ def main():
                         "review": review or (col_review if is_iso and not probe else None)},
             "presentation": presentation,
             "runtime": {"measuredMs": measured, "referenceMs": reference, "deltaMs": delta},
+            "chapters": version_chapters,
+            "chaptersFrom": chapters_from,
+            "segments": version_segments,
             "completeness": completeness,
             "master": {"fingerprint": fp, "fidelity": fid_class},
             "truth": {"kind": "source", "since": NOW, "note": "the original still exists; the package becomes the truth once it is deleted"},

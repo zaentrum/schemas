@@ -142,7 +142,15 @@
       "variant": null
     }
   ],
-  "trickplay": null,
+  "trickplay": {
+    "vttPath": "trickplay/thumbnails.vtt",
+    "spritePattern": "trickplay/sprite-%04d.jpg",
+    "intervalSec": 10,
+    "thumbWidth": 320,
+    "thumbHeight": 180,
+    "gridCols": 10,
+    "gridRows": 10
+  },
   "versions": [
     {
       "id": "a4e38ff1-814a-5f3e-b49c-d5da107a6289",
@@ -167,6 +175,18 @@
         "referenceMs": null,
         "deltaMs": null
       },
+      "chapters": [],
+      "chaptersFrom": null,
+      "segments": [
+        {
+          "kind": "intro",
+          "startMs": 60000,
+          "endMs": 120000,
+          "detector": "chromaprint",
+          "confidence": 0.85,
+          "label": null
+        }
+      ],
       "master": {
         "fingerprint": "hevc/main10/10bit/hdr10/3840x2160",
         "fidelity": "original"
@@ -361,8 +381,6 @@
               "purposeFrom": "disposition"
             }
           ],
-          "chapters": [],
-          "segments": [],
           "sidecars": [],
           "covers": [],
           "essence": {
@@ -463,7 +481,14 @@
           ],
           "closedCaptions": false
         },
-        "chapters": []
+        "checksums": {
+          "file": "checksums.sha256",
+          "algorithm": "sha256",
+          "sha256": "sha256:abddba75dd8b9dd2acb5896fffe7c393ea6220e5cf6e913125863c09e072f0de",
+          "files": 11,
+          "bytes": 18956,
+          "at": "2026-09-13T12:00:00Z"
+        }
       },
       "lostIfOriginalDeleted": [
         "surround",
@@ -514,6 +539,18 @@
         "referenceMs": null,
         "deltaMs": null
       },
+      "chapters": [],
+      "chaptersFrom": null,
+      "segments": [
+        {
+          "kind": "intro",
+          "startMs": 60000,
+          "endMs": 120000,
+          "detector": "chromaprint",
+          "confidence": 0.85,
+          "label": null
+        }
+      ],
       "master": {
         "fingerprint": "hevc/main10/10bit/hdr10/3840x2160",
         "fidelity": "original"
@@ -626,8 +663,6 @@
               "variant": null
             }
           ],
-          "chapters": [],
-          "segments": [],
           "sidecars": [],
           "covers": [],
           "essence": {
@@ -711,7 +746,14 @@
           "forcedSubtitleLanguages": [],
           "closedCaptions": false
         },
-        "chapters": [],
+        "checksums": {
+          "file": "checksums.sha256",
+          "algorithm": "sha256",
+          "sha256": "sha256:db79f607265044df30dae4b4a0f2170cd7a5c1b8e73cd5cf7951613e4589dbe8",
+          "files": 7,
+          "bytes": 18935,
+          "at": "2026-09-13T12:00:00Z"
+        },
         "playback": {
           "durationMs": 2700000,
           "packagedAt": "2026-09-01T10:00:00+00:00",
@@ -755,7 +797,15 @@
             ]
           },
           "subtitles": [],
-          "trickplay": null
+          "trickplay": {
+            "vttPath": "trickplay/thumbnails.vtt",
+            "spritePattern": "trickplay/sprite-%04d.jpg",
+            "intervalSec": 10,
+            "thumbWidth": 320,
+            "thumbHeight": 180,
+            "gridCols": 10,
+            "gridRows": 10
+          }
         }
       },
       "lostIfOriginalDeleted": [

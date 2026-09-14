@@ -128,7 +128,7 @@
         "imageSubtitles": { "type": "boolean" },
         "styledSubtitles": { "type": "boolean" },
         "fonts": { "type": "boolean" },
-        "chapters": { "type": "boolean" },
+        "chapters": { "type": "boolean", "description": "The file itself carries chapter marks. A package never does; the version keeps the marks." },
         "commentaryTracks": { "type": "integer", "minimum": 0, "description": "Audio commentaries." },
         "commentarySubtitles": { "type": "integer", "minimum": 0 },
         "audioDescriptionTracks": { "type": "integer", "minimum": 0 },

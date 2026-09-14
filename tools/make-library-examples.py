@@ -85,7 +85,8 @@ def probe_stream(st):
 
 
 def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms, quality="1080p", medium="disc"):
-    probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)}, "streams": [probe_stream(x) for x in streams], "chapters": []}
+    probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)}, "streams": [probe_stream(x) for x in streams],
+             "chapters": [{"start_time": str(c["startMs"] / 1000), "end_time": str(c["endMs"] / 1000), "tags": {"title": c["title"]}} for c in chapters]}
     probe_bytes = write(os.path.join(item_dir, "source", sid, "ffprobe.json"), probe)
     return {
         "id": sid, "state": "present",
@@ -96,7 +97,7 @@ def source(item_dir, sid, name, library_path, streams, chapters, src_essence, du
         "container": {"format": "matroska,webm", "durationMs": duration_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
         "fidelity": {"class": "original", "evidence": []},
-        "streams": streams, "chapters": chapters, "segments": [], "sidecars": [],
+        "streams": streams, "sidecars": [],
         "covers": [],
         "essence": src_essence,
         "probe": {"tool": "ffprobe", "version": None, "at": AT, "file": f"source/{sid}/ffprobe.json", "sha256": sha(probe_bytes), "note": None},
@@ -130,6 +131,39 @@ def subtitle(index, title, forced=False, sdh=False, events=900):
             "purposeFrom": "disposition" if (forced or sdh) else "assumed"}
 
 
+TRICKPLAY = {"vttPath": "trickplay/thumbnails.vtt", "spritePattern": "trickplay/sprite-%04d.jpg", "intervalSec": 10,
+             "thumbWidth": 320, "thumbHeight": 180, "gridCols": 10, "gridRows": 10}
+
+
+def trickplay_files(folder, duration_ms):
+    """A VTT with one cue per 10 s, pointing into 10x10 sprite sheets, and the sheets it names (1x1 placeholders)."""
+    thumbs = duration_ms // 10000
+    lines = ["WEBVTT", ""]
+    for i in range(thumbs):
+        start, end = i * 10000, min((i + 1) * 10000, duration_ms)
+        stamp = lambda ms: f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d}.{ms % 1000:03d}"
+        lines += [f"{stamp(start)} --> {stamp(end)}", f"sprite-{i // 100:04d}.jpg#xywh={i % 100 % 10 * 320},{i % 100 // 10 * 180},320,180", ""]
+    write(os.path.join(folder, "trickplay", "thumbnails.vtt"), ("\n".join(lines)).encode())
+    for sheet in range((thumbs + 99) // 100):
+        write(os.path.join(folder, "trickplay", f"sprite-{sheet:04d}.jpg"), JPEG)
+
+
+def checksums(folder):
+    """checksums.sha256 over the package files of a version folder, and the manifest record for it."""
+    files = []
+    for d in ("hls", "subs", "trickplay", "trailers"):
+        for root, dirs, names in os.walk(os.path.join(folder, d)):
+            dirs.sort()
+            files += [os.path.relpath(os.path.join(root, n), folder) for n in sorted(names)]
+    if os.path.isfile(os.path.join(folder, ".complete")):
+        files.append(".complete")
+    files.sort()
+    lines = [f"{hashlib.sha256(open(os.path.join(folder, rel), 'rb').read()).hexdigest()}  {rel}" for rel in files]
+    data = write(os.path.join(folder, "checksums.sha256"), ("\n".join(lines) + "\n").encode())
+    return {"file": "checksums.sha256", "algorithm": "sha256", "sha256": sha(data), "files": len(files),
+            "bytes": sum(os.path.getsize(os.path.join(folder, rel)) for rel in files), "at": AT}
+
+
 def playback(duration_ms, width, height, hdr, audio_src, ladder=False):
     rungs = [(width, height, 8000000)] + ([(width * 2 // 3, height * 2 // 3, 3000000)] if ladder else [])
     return {
@@ -143,7 +177,7 @@ def playback(duration_ms, width, height, hdr, audio_src, ladder=False):
                        "sourceStreamIndex": 1, "sourceChannels": audio_src, "purpose": "main", "purposeFrom": "assumed",
                        "variant": None, "original": True}],
         },
-        "subtitles": [], "trickplay": None,
+        "subtitles": [], "trickplay": dict(TRICKPLAY),
     }
 
 
@@ -161,6 +195,7 @@ def main():
     write(os.path.join(mdir, ".complete"), b"packager example 2026-09-01\n")
     for r in pb["renditions"]["video"] + pb["renditions"]["audio"]:
         keep(os.path.join(mdir, r["dir"]))
+    trickplay_files(mdir, 734000)
     manifest = {
         "schema": "zaentrum.library.manifest/1", "version": 3, "itemId": mid, **audit(),
         "type": "movie", "title": "Tears of Steel", "year": 2012, "tmdbId": "133701",
@@ -175,6 +210,8 @@ def main():
                         "review": None},
             "presentation": {"colour": "colour", "dynamicRange": "sdr", "stereo3d": "none", "aspectRatio": "12:5"},
             "runtime": {"measuredMs": 734000, "referenceMs": 720000, "deltaMs": 14000},
+            "chapters": chapters, "chaptersFrom": "original-file",
+            "segments": [{"kind": "credits", "startMs": 690000, "endMs": 734000, "detector": "blackframe", "confidence": 0.9, "label": None}],
             "completeness": {"status": "complete", "evidence": []},
             "master": {"fingerprint": "h264/high/8bit/sdr/1920x800", "fidelity": "original"},
             "truth": {"kind": "source", "since": AT, "note": "the original still exists"},
@@ -187,11 +224,10 @@ def main():
                 "recipe": {"video": "hevc re-encode, 800p and 533p", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt"},
                 "fidelity": {"lossless": False, "droppedSourceStreams": [2], "losses": [
                     {"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
-                    {"kind": "subtitle-dropped", "detail": "1 of 1 source subtitle track(s) not packaged", "sourceStreamIndex": 2},
-                    {"kind": "chapters-dropped", "detail": "chapters are not in the package", "sourceStreamIndex": None}]},
-                "essence": essence(maxVideoHeight=800), "chapters": [],
+                    {"kind": "subtitle-dropped", "detail": "1 of 1 source subtitle track(s) not packaged", "sourceStreamIndex": 2}]},
+                "essence": essence(maxVideoHeight=800), "checksums": checksums(mdir),
             },
-            "lostIfOriginalDeleted": ["surround", "chapters", "audioChannels 6->2", "subtitleLanguages en", "subtitleTracks 1->0"],
+            "lostIfOriginalDeleted": ["surround", "audioChannels 6->2", "subtitleLanguages en", "subtitleTracks 1->0"],
         }],
         "processing": {"package": {"status": "done", "at": AT, "attempts": 1, "error": None}},
         "provenance": {"migratedFrom": "scan", "migratedAt": AT},
@@ -259,6 +295,8 @@ def main():
     keep(os.path.join(edir, "hls/a1"))
     for sub in ("0", "1", "2"):
         write(os.path.join(edir, "subs", f"{sub}.vtt"), b"WEBVTT\n")
+    trickplay_files(edir, 2700000)
+    trickplay_files(os.path.join(edir, "versions", v_bw), 2700000)
     hdr_es = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=True)
     episode_tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3, "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
     bw_es = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=True)
@@ -292,6 +330,8 @@ def main():
              "edition": {"kind": "unknown", "label": None, "decidedBy": "inferred", "evidence": [], "review": None},
              "presentation": {"colour": "colour", "dynamicRange": "hdr10", "stereo3d": "none", "aspectRatio": "16:9"},
              "runtime": {"measuredMs": 2700000, "referenceMs": None, "deltaMs": None},
+             "chapters": [], "chaptersFrom": None,
+             "segments": [{"kind": "intro", "startMs": 60000, "endMs": 120000, "detector": "chromaprint", "confidence": 0.85, "label": None}],
              "master": {"fingerprint": "hevc/main10/10bit/hdr10/3840x2160", "fidelity": "original"},
              "truth": {"kind": "source", "since": AT, "note": None},
              "sources": [source(edir, s_colour, "Example Show (US) - S01E01 - Pilot.mkv",
@@ -304,7 +344,8 @@ def main():
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                                                  {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}]},
-                         "essence": {**essence(maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=False), **episode_tracks}, "chapters": []},
+                         "essence": {**essence(maxVideoHeight=2160, videoBitDepth=10, hdr10Metadata=False), **episode_tracks},
+                         "checksums": checksums(edir)},
              "lostIfOriginalDeleted": ["surround", "hdr10Metadata", "audioChannels 6->2"]},
             {"id": v_bw, "path": f"versions/{v_bw}/", "label": "Black & White", "primary": False,
              "edition": {"kind": "other", "label": "Black & White", "decidedBy": "human", "decidedAt": AT, "evidence": [], "review": None},
@@ -313,6 +354,8 @@ def main():
                                                  "evidence": [{"signal": "content-analysis", "value": {"method": "signalstats SATMAX", "samples": [{"atSec": 600, "satMax": 1.0}]}, "weight": 0.8}]},
                               "dynamicRange": "hdr10", "stereo3d": "none", "aspectRatio": "16:9"},
              "runtime": {"measuredMs": 2700000, "referenceMs": None, "deltaMs": None},
+             "chapters": [], "chaptersFrom": None,
+             "segments": [{"kind": "intro", "startMs": 60000, "endMs": 120000, "detector": "chromaprint", "confidence": 0.85, "label": None}],
              "master": {"fingerprint": "hevc/main10/10bit/hdr10/3840x2160", "fidelity": "original"},
              "truth": {"kind": "source", "since": AT, "note": None},
              "sources": [source(edir, s_bw, "Example Show (US) - S01E01 - Pilot (Black and White).mkv",
@@ -321,7 +364,7 @@ def main():
              "package": {"id": uid(eid, "package", "black-and-white"), "state": "complete", "role": "derived", "sizeBytes": 2700000000, "peakBandwidthBps": 8192000,
                          "fidelity": {"lossless": False, "droppedSourceStreams": [],
                                       "losses": [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1}]},
-                         "essence": essence(maxVideoHeight=2160, videoBitDepth=10), "chapters": [],
+                         "essence": essence(maxVideoHeight=2160, videoBitDepth=10), "checksums": checksums(os.path.join(edir, "versions", v_bw)),
                                   "playback": bw_pb},
              "lostIfOriginalDeleted": ["surround", "hdr10Metadata", "audioChannels 6->2"]},
         ],
