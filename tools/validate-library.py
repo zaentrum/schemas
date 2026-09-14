@@ -4,7 +4,7 @@
 Usage:
   validate-library.py [--check-media | --check-checksums] [--schemas URL-or-dir] ROOT [ROOT ...]
 
-ROOT is a folder holding movies/ and/or shows/. Every item folder must contain manifest.json and
+ROOT is a folder holding movies/ and/or series/. Every item folder must contain manifest.json and
 metadata/metadata.json. Beyond JSON Schema, this checks what spans files or needs arithmetic:
 
   folders      itemId equals the folder name and the folder sits in shard <first two chars>; an item
@@ -639,7 +639,7 @@ class Checker:
     # ------------------------------------------------------------ roots
     def root(self, r):
         found = 0
-        for category, kind in (("movies", "movie"), ("shows", "series")):
+        for category, kind in (("movies", "movie"), ("series", "series")):
             base = os.path.join(r, category)
             if not os.path.isdir(base):
                 continue
@@ -660,7 +660,7 @@ class Checker:
                     self.item(p, kind)
                     found += 1
         if not found:
-            self.err(r, "no items found under movies/ or shows/")
+            self.err(r, "no items found under movies/ or series/")
 
 
 def main():

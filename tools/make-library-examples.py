@@ -267,7 +267,7 @@ def main():
 
     # ---------------------------------------------------------------- series: Example Show (US), one episode in two versions
     sid_series = uid("series", "example-show-us")
-    sdir = os.path.join(ROOT, "shows", sid_series[:2], sid_series)
+    sdir = os.path.join(ROOT, "series", sid_series[:2], sid_series)
     eid = uid(sid_series, "S01E01")
     edir = os.path.join(sdir, "episodes", eid)
     v_colour, v_bw = uid(eid, "version", "colour"), uid(eid, "version", "black-and-white")

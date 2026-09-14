@@ -23,11 +23,11 @@ def movie(root):
 
 
 def series(root):
-    return only("shows/*/*", root)
+    return only("series/*/*", root)
 
 
 def episode(root):
-    return only("shows/*/*/episodes/*", root)
+    return only("series/*/*/episodes/*", root)
 
 
 def edit(path, change):

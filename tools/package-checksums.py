@@ -5,7 +5,7 @@ Usage:
   package-checksums.py ITEM_FOLDER [ITEM_FOLDER ...]            write checksums.sha256 and record it in manifest.json
   package-checksums.py --verify ITEM_FOLDER [ITEM_FOLDER ...]   recompute and compare, change nothing
 
-An item folder is movies/<aa>/<id>/ or shows/<aa>/<id>/; a series folder is walked into its episodes. For every
+An item folder is movies/<aa>/<id>/ or series/<aa>/<id>/; a series folder is walked into its episodes. For every
 version with a package, the package files in the version's folder (hls/, subs/, trickplay/, trailers/ and the
 .complete marker) are hashed into checksums.sha256 in that folder — the format `sha256sum -c` reads — and the
 manifest's package.checksums records the file's own hash, the number of files and their total size.

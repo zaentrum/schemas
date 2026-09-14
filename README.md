@@ -90,7 +90,7 @@ flowchart LR
   M --> MO["Title (Year).mkv — the original, kept next to its package"]
   M --> MS["source/&lt;sourceId&gt;/ffprobe.json"]
   M --> MP["hls/ · subs/ · trickplay/ · .complete · checksums.sha256"]
-  S["shows/&lt;aa&gt;/&lt;seriesId&gt;/"] --> SM["manifest.json — seasons and their episodes"]
+  S["series/&lt;aa&gt;/&lt;seriesId&gt;/"] --> SM["manifest.json — seasons and their episodes"]
   S --> SD["metadata/ — series images, season-NN-poster.jpg"]
   S --> E["episodes/&lt;episodeId&gt;/ — same shape as a movie"]
 ```
@@ -106,7 +106,7 @@ match their hashes, a series lists exactly its episode folders):
 
 ```sh
 pip install "jsonschema[format-nongpl]>=4.23" referencing
-python tools/validate-library.py <root-with-movies-and-shows>
+python tools/validate-library.py <root-with-movies-and-series>
 python tools/validate-library.py --check-media <root>    # also require every playback path to exist
 python tools/test-validate-library.py                    # prove the validator rejects broken trees
 ```
@@ -122,6 +122,9 @@ records a `review` for a person. `tools/make-library-examples.py` regenerates
 v1 is a draft until a platform service adopts it. Every change is listed here;
 rebuild a library with the current migrator after one.
 
+- **2026-09-14 (e)** — the series category folder is `series/`, matching `type:
+  series` and `seriesId` (was `shows/`). No views and no links: the migrator's
+  plan moves files into place and `--check-media` rejects hard links.
 - **2026-09-14 (d)** — a version's folder is the one destination of its media:
   the source record's `file.path` names the original file placed next to the
   package (null while it is still only in the source library, and after

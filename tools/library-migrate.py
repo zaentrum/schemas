@@ -9,7 +9,7 @@ plus a plan of storage operations for the large files:
                                metadata/poster.jpg ...  the images themselves
                                source/<sourceId>/ffprobe.json   verbatim probe of the original
                                <original file>, hls/ subs/ trickplay/ .complete   (moved in by the plan)
-  library/shows/<aa>/<seriesId>/manifest.json, metadata/ (series poster, logo, season-NN-poster.jpg)
+  library/series/<aa>/<seriesId>/manifest.json, metadata/ (series poster, logo, season-NN-poster.jpg)
                                episodes/<episodeId>/manifest.json, metadata/, source/, hls/ ...
 
 The library is read by machines: nothing but <category>/<aa>/<id> item folders, no views, no links.
@@ -1240,7 +1240,7 @@ def main():
             continue
 
         # ---- series: a real folder, episodes as sub-items
-        sdir = f"shows/{shard(item['id'])}/{item['id']}"
+        sdir = f"series/{shard(item['id'])}/{item['id']}"
         ids = ext_ids(item)
         sdoc = manifest_doc(item, "series", ids)
         eps = sorted([items[i] for i in items if items[i]["parent_id"] == item["id"]],
