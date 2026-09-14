@@ -22,7 +22,8 @@ metadata/metadata.json. Beyond JSON Schema, this checks what spans files or need
   timeline     chapters and detected ranges on each version are well formed, and chapter marks of the original
                are kept on the version
   checksums    a package's checksums file matches its recorded hash and file count
-  --check-media every original file a manifest places in a version folder exists with its size and qh1, every
+  --check-media no package or original file is a hard link shared with another path; every original file a
+               manifest places in a version folder exists with its size and qh1; every
                playback path exists, a complete or stale package has a video rendition (and audio when
                its original has audio), a .complete marker sits exactly where such a package is, every trickplay
                sprite sheet the VTT names exists and the cues cover the duration, and the checksums file lists
@@ -563,6 +564,12 @@ class Checker:
                             self.err(os.path.join(sd, name), "not the probe or a sidecar of this source")
 
     def media(self, vw, vp, v, man):
+        # A library is portable only if its files are its own: a hard link ties a file to another path.
+        linked = [rel for rel in package_files(vp) if os.stat(os.path.join(vp, rel)).st_nlink > 1]
+        orig = [s["file"]["path"] for s in v["sources"] if s["file"].get("path")]
+        linked += [o for o in orig if os.path.isfile(os.path.join(vp, o)) and os.stat(os.path.join(vp, o)).st_nlink > 1]
+        if linked:
+            self.err(vw, f"{len(linked)} file(s) are hard links shared with another path, e.g. {linked[0]}; the library must hold independent files")
         pkg = v["package"]
         marker = os.path.isfile(os.path.join(vp, ".complete"))
         playable = pkg is not None and pkg["state"] in ("complete", "stale")

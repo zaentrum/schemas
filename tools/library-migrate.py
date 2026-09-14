@@ -8,10 +8,13 @@ plus a plan of storage operations for the large files:
                                metadata/metadata.json   every text, and the image list
                                metadata/poster.jpg ...  the images themselves
                                source/<sourceId>/ffprobe.json   verbatim probe of the original
-                               hls/ subs/ trickplay/ .complete  (hard-linked from the existing package)
+                               <original file>, hls/ subs/ trickplay/ .complete   (moved in by the plan)
   library/shows/<aa>/<seriesId>/manifest.json, metadata/ (series poster, logo, season-NN-poster.jpg)
                                episodes/<episodeId>/manifest.json, metadata/, source/, hls/ ...
-  library/browse/{movies,series}/<Title (Year)>  ->  ../../movies/<aa>/<id>      (derived view)
+
+The library is read by machines: nothing but <category>/<aa>/<id> item folders, no views, no links.
+The plan (links.tsv → plan.tsv) moves each file into place — a rename on the same filesystem, a copy
+otherwise — so every file in the library is an ordinary, independent file.
 
 A value the export does not hold stays empty rather than guessed. Where automation cannot decide
 (an unmatched item, an edition, a black-and-white call from few samples, a disputed episode match,
@@ -625,7 +628,7 @@ def main():
     packaged_rows = {r["item_id"]: r for r in cat.get("playback") or [] if r.get("kind") == "packaged"}
 
     lib = os.path.join(args.out, "library")
-    plan = []           # hard links to create on the storage host
+    plan = []           # files to move into the library: rename on one filesystem, copy otherwise
     report = collections.defaultdict(list)
     written = collections.Counter()
 
@@ -1176,7 +1179,7 @@ def main():
             lost = essence_gap(source["essence"], package["essence"], chapters_kept=bool(version_chapters))
             if lost:
                 report["lost-if-original-deleted"].append(f"{item['title']}: {'; '.join(lost)}")
-            plan.append(("linkpkg", fe["packageDir"], idir))
+            plan.append(("package", fe["packageDir"], idir))
         else:
             lost = ["everything: no package exists"]
             report["lost-if-original-deleted"].append(f"{item['title']}: EVERYTHING - no package exists")
@@ -1225,7 +1228,6 @@ def main():
                              "legacyCreatedBy": item.get("createdby"), "legacyModifiedBy": item.get("modifiedby")}
         return fp, col, dr, man
 
-    browse = []
     wanted = set(args.items.split(",")) if args.items else None
     for item in [items[i] for i in items if items[i]["type"] in ("movie", "series") and (wanted is None or i in wanted)]:
         if item["type"] == "movie":
@@ -1235,7 +1237,6 @@ def main():
             finish_playable(doc, item, idir)
             write_json(f"{idir}/metadata/metadata.json", metadata_doc(item, "movie", f"{idir}/metadata"))
             write_json(f"{idir}/manifest.json", doc)
-            browse.append(("movies", f"{item['title']} ({item['year']})" if item["year"] else item["title"], idir))
             continue
 
         # ---- series: a real folder, episodes as sub-items
@@ -1295,18 +1296,13 @@ def main():
             report["mixed-masters"].append(f"{item['title']}: {len(masters)} masters across {len(eps)} episodes")
         write_json(f"{sdir}/metadata/metadata.json", metadata_doc(item, "series", f"{sdir}/metadata", qualifier))
         write_json(f"{sdir}/manifest.json", sdoc)
-        browse.append(("series", item["title"] + (f" ({qualifier})" if qualifier else ""), sdir))
 
-    with open(os.path.join(args.out, "links.tsv"), "w") as f:
+    with open(os.path.join(args.out, "plan.tsv"), "w") as f:
         for op, src, dst in plan:
             f.write(f"{op}\t{src}\t{dst}\n")
-    with open(os.path.join(args.out, "browse.tsv"), "w") as f:
-        for kind, name, idir in browse:
-            f.write(f"{kind}\t{name}\t{idir}\n")
     json.dump({k: v for k, v in report.items()}, open(os.path.join(args.out, "report.json"), "w"), indent=2)
     print("files:", dict(written))
     print("storage operations planned:", dict(collections.Counter(p[0] for p in plan)))
-    print("browse entries:", len(browse))
     for k, v in report.items():
         print(f"report {k}: {len(v)}")
 

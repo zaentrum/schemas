@@ -146,6 +146,7 @@ CASES = [
     ("unnamed file next to the package", False, lambda r: open(os.path.join(movie(r), "Tears of Steel (2012) copy.mkv"), "w").write("x"), "unexpected entry in a movie folder", []),
     ("original still only in the source library", True, lambda r: (os.remove(os.path.join(movie(r), "Tears of Steel (2012).mkv")),
                                                                     edit(man(movie(r)), lambda d: d["versions"][0]["sources"][0]["file"].update(path=None))), "OK", ["--check-media"]),
+    ("hard-linked package file", False, lambda r: (os.link(os.path.join(movie(r), "hls", "v0", ".keep"), os.path.join(r, "..", "outside-link"))), "hard links shared with another path", ["--check-media"]),
     ("manifest that is not an object", False, lambda r: open(man(movie(r)), "w").write("[1, 2]"), "not a JSON object", []),
     ("movie with no package", True, lambda r: (edit(man(movie(r)), lambda d: [d["versions"][0].update(package=None, lostIfOriginalDeleted=["everything: no package exists"])] + [d.pop(k) for k in ("durationMs", "packagedAt", "packager", "renditions", "subtitles", "trickplay")]),
                                                 os.remove(os.path.join(movie(r), ".complete")), shutil.rmtree(os.path.join(movie(r), "hls"))), "OK", ["--check-media"]),
