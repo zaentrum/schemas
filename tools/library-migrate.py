@@ -563,6 +563,10 @@ def main():
     ap.add_argument("--out", required=True, help="staging directory; 'library/' is created inside")
     ap.add_argument("--library-root", required=True, help="container path prefix of the source library, e.g. /var/lib/katalog/media")
     ap.add_argument("--packages-root", required=True, help="container path prefix of packages, e.g. /var/lib/katalog/packages")
+    ap.add_argument("--items", help="comma-separated movie or series ids to build; default: every item")
+    ap.add_argument("--originals", choices=("place", "leave"), default="place",
+                    help="place: plan each original into its version folder; leave: keep originals in the source library "
+                         "(file.path null), so a version folder holds only its package")
     args = ap.parse_args()
     I = args.inputs
 
@@ -1002,7 +1006,7 @@ def main():
         source = {
             "id": sid, "state": "present",
             "file": {
-                "name": name, "path": name, "kind": "disc-image" if is_iso else "stream-container",
+                "name": name, "path": name if args.originals == "place" else None, "kind": "disc-image" if is_iso else "stream-container",
                 "sizeBytes": stat.get("size") or 0,
                 "mtime": datetime.datetime.fromtimestamp(stat["mtime"], datetime.timezone.utc).isoformat().replace("+00:00", "Z") if stat.get("mtime") else NOW,
                 "fixity": {"qh1": stat.get("qh1")},
@@ -1055,7 +1059,8 @@ def main():
         if not source["file"]["fixity"]["qh1"]:
             raise SystemExit(f"no fixity for {src_path}")
         # The original joins its version's folder: one destination for the version's media, package or not.
-        plan.append(("original", src_path, f"{idir}/{name}"))
+        if args.originals == "place":
+            plan.append(("original", src_path, f"{idir}/{name}"))
 
         # --- the package in this folder: playback fields (verbatim + source mapping) and its account of losses
         playback, package, lost = None, None, []
@@ -1221,7 +1226,8 @@ def main():
         return fp, col, dr, man
 
     browse = []
-    for item in [items[i] for i in items if items[i]["type"] in ("movie", "series")]:
+    wanted = set(args.items.split(",")) if args.items else None
+    for item in [items[i] for i in items if items[i]["type"] in ("movie", "series") and (wanted is None or i in wanted)]:
         if item["type"] == "movie":
             idir = f"movies/{shard(item['id'])}/{item['id']}"
             ids = ext_ids(item)
