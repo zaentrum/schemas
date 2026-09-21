@@ -4,7 +4,7 @@
   "title": "versions/<versionId>/version.json — what this version is",
   "description": "Written once by the analyzer, when a version is established, and never touched again. A version is one cut or presentation of a movie or episode — theatrical and director's cut, colour and black-and-white, HDR and SDR — and its folder is the one place its media lives: the original files, the package made from them, or both.\n\nEvery version is a folder. There is no version in the item folder itself, and a re-package is a new version folder, never an edit of this one.\n\nThe marks live here rather than in any file, so they survive the original's deletion and apply to every package of the version. What plays by default is not here, and neither is the label a viewer picks between: those are decisions the database holds, projected into metadata.json.\n\nPaths: originalFiles are plain names in THIS folder. sourceIds name records at the item level (sources/<sourceId>.json).",
   "type": "object",
-  "required": ["schema", "versionId", "createdAt", "edition", "presentation", "sourceIds", "originalFiles", "lostIfOriginalDeleted"],
+  "required": ["schema", "versionId", "createdAt", "edition", "presentation", "sourceIds", "originalFiles"],
   "additionalProperties": false,
   "properties": {
     "schema": { "const": "zaentrum.library.version/2" },
@@ -98,13 +98,9 @@
     "originalFiles": {
       "type": "array",
       "uniqueItems": true,
-      "description": "The originals placed in THIS folder next to the package, in order, each under its own name — one normally, several when the version is split into parts, and none when the version was made without keeping any. Every name is the file.name of one of this version's sources. Written once: when an original is deleted later, this keeps naming it and an events/…-original-deleted.json record says it is gone.",
+      "description": "The originals placed in THIS folder next to the package, in order, each under its own name — one normally, several when the version is split into parts, and none when the version was made without keeping any. Every name is the file.name of one of this version's sources. Written once: when an original is deleted later, this keeps naming it and an events/…-original-deleted.json record says it is gone.\n\nWhat deleting them would cost is not recorded anywhere: it is the sources' essence minus the package's, which a reader computes from the records beside this one, and which stays right however often the version is re-packaged.",
       "items": { "$ref": "defs.schema.json#/$defs/fileName" }
-    },
-    "lostIfOriginalDeleted": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Everything this version's originals carry that would not survive their deletion, as it stood when this record was written: each property of the sources' essence that nothing else in this folder holds. With a package in the folder that is the sources' essence minus the package's; with no package it is everything the originals carry, which is the answer a version that has never been packaged must still be able to give. Deleting an original is safe only when this is empty, and the original-deleted event records this list as what was accepted as lost."
     }
+
   }
 }
