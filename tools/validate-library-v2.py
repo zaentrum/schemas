@@ -26,15 +26,15 @@ them, never about a document being up to date.
                name versions that are really there
   series       an episode names its enclosing series, agrees with it on the reference id, numbers
                itself consistently, does not collide with another episode, and sits in a season the
-               series' metadata lists; the default ordering lists exactly the episode folders, every
-               ordering lists only episodes that exist, and each episode's own numbering agrees with
-               the series' ordering of the same name and with the aired numbers in its item.json
+               series' metadata lists; its own numbering does not contradict the numbers item.json
+               was created with, and no two episodes claim one place in one ordering
   events       the file name is the event's own moment and kind; every source, version and package
                it names exists (a version-removed event is the exception — its folder may be gone,
                and a folder it names is ignored altogether); a deletion names a version that had an
-               original, one of that version's own sources, and accepts exactly what the version
-               says deleting it costs; a package-superseded event names a successor that exists in
-               another version folder
+               original and one of that version's own sources, and accepts no more than the
+               deletion gate — the essence of the version's sources minus that of its package,
+               computed here because no record holds it; a package-superseded event names a
+               successor that exists in another version folder
   checksums    the checksums file matches its recorded hash and file count
   --check-media  no file under an item folder is a hard link shared with another path; every
                original a version names is there with its size and qh1, unless an original-deleted
@@ -75,6 +75,33 @@ ID_KEYS = {"schema", "itemId", "seriesId", "sourceId", "versionId", "packageId",
            "sha256", "qh1"}
 FREE_TEXT = {"overview", "tagline", "notes", "note", "detail", "reason"}
 INT64 = (-(1 << 63), (1 << 63) - 1)
+# What an original carries that a package can fail to carry, in the terms an original-deleted event
+# accepts. 'chapters' is not here (the version keeps the marks, not the file) and neither is
+# 'interlaced' (a deinterlaced picture is not a poorer one).
+LOSS_FLAGS = ("surround", "losslessAudio", "objectAudio", "hdr10Metadata", "dolbyVision", "stereo3d",
+              "imageSubtitles", "styledSubtitles", "fonts", "closedCaptions")
+LOSS_COUNTS = ("maxAudioChannels", "maxVideoHeight", "videoBitDepth", "subtitleTracks",
+               "commentaryTracks", "commentarySubtitles", "audioDescriptionTracks")
+LOSS_LANGUAGES = ("audioLanguages", "subtitleLanguages", "sdhSubtitleLanguages", "forcedSubtitleLanguages")
+
+
+def deletion_gate(sources, package):
+    """What deleting a version's originals would cost: the essence of its sources minus the essence
+    of its package. Nothing records this — it is computed here and by every reader, so it stays right
+    however often the version is re-packaged."""
+    lost = set()
+    for key in LOSS_FLAGS:
+        if any(s.get(key) for s in sources) and not package.get(key):
+            lost.add(key)
+    for key in LOSS_COUNTS:
+        had = [s[key] for s in sources if s.get(key) is not None]
+        kept = package.get(key)
+        if had and (kept is None or kept < max(had)):
+            lost.add(key)
+    for key in LOSS_LANGUAGES:
+        kept = set(package.get(key) or [])
+        lost |= {f"{key}:{lang}" for s in sources for lang in s.get(key) or [] if lang not in kept}
+    return lost
 
 
 def listdir(d):
@@ -547,13 +574,16 @@ class Checker:
         if pkg is not None:
             self.counts["packages"] += 1
             self.package(vp, v, pkg)
+        gate = deletion_gate([sources[s]["essence"] for s in v["sourceIds"] if s in sources],
+                             (pkg or {}).get("essence") or {})
         gone, whole = set(), False
         for e in [x for x in events if x["kind"] == "original-deleted" and x.get("versionId") == vid]:
             if not v["originalFiles"]:
                 self.err(e["where"], f"version {vid} never named an original, so none can have been deleted")
-            if e.get("accepted") is not None and e["accepted"] != v["lostIfOriginalDeleted"]:
-                self.err(e["where"], "accepted is not what the version says deleting its originals costs "
-                                     f"({v['lostIfOriginalDeleted']})")
+            over = sorted(set(e.get("accepted") or []) - gate)
+            if over:
+                self.err(e["where"], f"accepted names {', '.join(over)}, which the records do not say the "
+                                     f"package failed to carry; a person may accept less than the gate, never more")
             if e.get("sourceId"):
                 if e["sourceId"] not in v["sourceIds"]:
                     self.err(e["where"], f"names source {e['sourceId']}, which version {vid} was not made from")
@@ -705,9 +735,6 @@ class Checker:
 
     # ------------------------------------------------------------ series and episodes
     def series(self, d, item, meta):
-        lib = (meta or {}).get("library") or {}
-        orderings = lib.get("orderings") or {}
-        where = os.path.join(d, "metadata.json")
         ed = os.path.join(d, "episodes")
         folders = set()
         if os.path.isdir(ed):
@@ -716,21 +743,9 @@ class Checker:
                     folders.add(name)
                 else:
                     self.err(os.path.join(ed, name), "unexpected file among the episode folders")
-        default = lib.get("defaultOrdering")
-        if orderings and default and default not in orderings:
-            self.err(where, f"library.defaultOrdering is {default}, which library.orderings does not describe")
-        for name, entries in sorted(orderings.items()):
-            listed = [e["itemId"] for e in entries]
-            if len(listed) != len(set(listed)):
-                self.err(where, f"library.orderings.{name} lists an episode twice")
-            for missing in sorted(set(listed) - folders):
-                self.err(where, f"library.orderings.{name} lists {missing}, which is no episode folder of this series")
-            if name == default:
-                for absent in sorted(folders - set(listed)):
-                    self.err(where, f"library.orderings.{name} is the default ordering but leaves out episode {absent}")
         context = {"itemId": item["itemId"], "tmdbTv": (item.get("externalIds") or {}).get("tmdbTv"),
                    "seasons": {s["number"] for s in ((meta or {}).get("series") or {}).get("seasons") or []},
-                   "orderings": orderings, "listed": {}, "where": where}
+                   "listed": {}, "places": {}, "where": os.path.join(d, "metadata.json")}
         for name in sorted(folders):
             self.item(os.path.join(ed, name), "episode", series=context)
 
@@ -756,28 +771,20 @@ class Checker:
         self.numbering(os.path.join(os.path.dirname(where), "metadata.json"), item, meta, series)
 
     def numbering(self, where, item, meta, series):
-        """The episode's place in each ordering, against the series' projection of the same ordering
-        and against the aired numbering item.json was created with."""
+        """The episode's place in each ordering. Nothing on the series repeats it, so the only things
+        to check are that it does not contradict the numbers item.json was created with, and that no
+        two episodes of the series claim one place in one ordering."""
         mine = ((meta or {}).get("library") or {}).get("numbering") or {}
         aired = mine.get("aired")
         if aired and (aired.get("season"), aired["episode"]) != (item["seasonNumber"], item["episodeNumber"]):
             self.err(where, f"library.numbering.aired is S{aired.get('season')}E{aired['episode']}, but item.json was "
                             f"created with S{item['seasonNumber']}E{item['episodeNumber']}")
         for name, place in sorted(mine.items()):
-            entries = series["orderings"].get(name)
-            if entries is None:
-                if series["orderings"]:
-                    self.err(where, f"library.numbering.{name} is an ordering the series does not describe")
-                continue
-            theirs = next((e for e in entries if e["itemId"] == item["itemId"]), None)
-            if theirs is None:
-                self.err(where, f"library.numbering.{name} places this episode in an ordering that leaves it out")
-            elif (theirs.get("season"), theirs["episode"], theirs.get("episodeEnd")) != \
-                    (place.get("season"), place["episode"], place.get("episodeEnd")):
-                self.err(where, f"library.numbering.{name} disagrees with the series' ordering of the same name")
-        for name, entries in sorted(series["orderings"].items()):
-            if any(e["itemId"] == item["itemId"] for e in entries) and name not in mine:
-                self.err(where, f"the series' {name} ordering places this episode, but it records no numbering for it")
+            at = (name, place.get("season"), place["episode"])
+            other = series["places"].get(at)
+            if other:
+                self.err(where, f"library.numbering.{name} puts this episode where {other} already is")
+            series["places"][at] = item["itemId"]
 
     # ------------------------------------------------------------ roots
     def root(self, r):

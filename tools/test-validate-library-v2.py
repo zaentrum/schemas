@@ -103,6 +103,10 @@ def supersede(root):
     return only("series/*/*/episodes/*/events/*-package-superseded.json", root)
 
 
+def episode_source(root, number):
+    return sorted(glob.glob(os.path.join(episode(root, number), "sources", "*.json")))[0]
+
+
 def probe(root):
     return sorted(glob.glob(os.path.join(movie(root), "sources", "*", "ffprobe.json")))[0]
 
@@ -221,8 +225,8 @@ CASES = [
     ("lossless with losses", False, lambda r: edit(pkg(kept(r)), lambda d: d["fidelity"].update(lossless=True)), "lossless must be true exactly when", []),
     ("canonical while the version keeps its original", False, lambda r: edit(pkg(kept(r)), lambda d: d.update(role="canonical")), "role must be 'canonical' exactly when", []),
     ("derived while the version keeps no original", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d.update(role="derived")), "role must be 'canonical' exactly when", []),
-    ("a package claiming the deletion gate the version owns", False, lambda r: edit(pkg(kept(r)), lambda d: d.update(lostIfOriginalDeleted=[])), "'lostIfOriginalDeleted' was unexpected", []),
-    ("a version with no answer to the deletion gate", False, lambda r: edit(ver(kept(r)), lambda d: d.pop("lostIfOriginalDeleted")), "'lostIfOriginalDeleted' is a required property", []),
+    ("a package recording a gate nothing records", False, lambda r: edit(pkg(kept(r)), lambda d: d.update(lostIfOriginalDeleted=[])), "'lostIfOriginalDeleted' was unexpected", []),
+    ("a version recording a gate nothing records", False, lambda r: edit(ver(kept(r)), lambda d: d.update(lostIfOriginalDeleted=[])), "'lostIfOriginalDeleted' was unexpected", []),
     ("completeness the format does not measure", False, lambda r: edit(ver(gone(r)), lambda d: d["completeness"].update(status="unknown")), "'unknown' is not one of", []),
     ("two default audio renditions", False, lambda r: edit(pkg(version_of(episode(r, 1), True)), lambda d: d["renditions"]["audio"][1].update(default=True)), "exactly one audio rendition must be default", []),
     ("a forced track flagged default", False, lambda r: edit(pkg(version_of(episode(r, 1), True)), lambda d: d["subtitles"][0].update(default=True)), "is a forced track flagged default", []),
@@ -307,7 +311,9 @@ CASES = [
     ("a file among the episode folders", False, lambda r: open(os.path.join(series(r), "episodes", "notes.txt"), "w").write("x"), "unexpected file among the episode folders", []),
 
     # ---- the deletion gate and the event that answers it
-    ("a deletion accepting something else", False, lambda r: edit(deletion(r), lambda d: d.update(accepted=["surround"])), "accepted is not what the version says", []),
+    ("a deletion accepting more than was lost", False, lambda r: edit(deletion(r), lambda d: d["accepted"].append("dolbyVision")), "which the records do not say the package failed to carry", []),
+    ("a deletion accepting a language the package kept", False, lambda r: edit(deletion(r), lambda d: d["accepted"].append("audioLanguages:en")), "audioLanguages:en", []),
+    ("an accepted loss that is not an essence property", False, lambda r: edit(deletion(r), lambda d: d["accepted"].append("audio downmixed 6->2")), "does not match", []),
     ("a deletion naming a source the version was not made from", False, lambda r: edit(deletion(r), lambda d: d.update(sourceId=json.load(open(ver(kept(r))))["sourceIds"][0])), "was not made from", []),
 
     # ---- a version removed from the item, and a package replaced by another
@@ -323,18 +329,20 @@ CASES = [
     ("a label on a version that does not exist", False, lambda r: edit(meta(movie(r)), lambda d: d["library"]["versionLabels"].update({NOWHERE: "Extended"})), "library.versionLabels names", []),
     ("an unknown field among the decisions", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(extra=1)), "'extra' was unexpected", []),
     ("a match status the format does not know", False, lambda r: edit(meta(movie(r)), lambda d: d["library"]["match"].update(status="maybe")), "'maybe' is not one of", []),
-    ("an ordering on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(orderings={})), "must not have orderings", []),
+    ("an ordering decision on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(defaultOrdering="aired")), "must not have defaultOrdering", []),
+    ("a series listing its episodes' orderings", False, lambda r: edit(meta(series(r)), lambda d: d["library"].update(orderings={})), "'orderings' was unexpected", []),
     ("a place in an ordering on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(numbering={})), "must not have numbering", []),
 
-    # ---- the orderings of a series and the episodes' places in them
-    ("a default ordering nothing describes", False, lambda r: edit(meta(series(r)), lambda d: d["library"].update(defaultOrdering="production")), "library.orderings does not describe", []),
-    ("an ordering listing an episode twice", False, lambda r: edit(meta(series(r)), lambda d: d["library"]["orderings"]["aired"].append(dict(d["library"]["orderings"]["aired"][0]))), "lists an episode twice", []),
-    ("an ordering listing an episode that is not there", False, lambda r: edit(meta(series(r)), lambda d: d["library"]["orderings"]["dvd"].append({"itemId": NOWHERE, "season": 1, "episode": 9, "episodeEnd": None})), "is no episode folder of this series", []),
-    ("a default ordering leaving an episode out", False, lambda r: edit(meta(series(r)), lambda d: d["library"]["orderings"]["aired"].pop()), "leaves out episode", []),
+    # ---- where the episodes sit in each ordering
     ("a numbering against the item's own aired numbers", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"]["aired"].update(episode=5)), "but item.json was created with", []),
-    ("a numbering in an ordering the series does not describe", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"].update(production={"season": 1, "episode": 1, "episodeEnd": None})), "an ordering the series does not describe", []),
-    ("a numbering that disagrees with the series", False, lambda r: edit(meta(episode(r, 2)), lambda d: d["library"]["numbering"]["aired"].update(episodeEnd=None)), "disagrees with the series' ordering", []),
-    ("an episode with no place in an ordering that lists it", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"].pop("dvd")), "records no numbering for it", []),
+    ("a numbering in an ordering the format does not know", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"].update(broadcast={"season": 1, "episode": 1, "episodeEnd": None})), "$.library.numbering: 'broadcast' is not one of", []),
+    ("two episodes in one place in one ordering", False, lambda r: edit(meta(episode(r, 2)), lambda d: d["library"]["numbering"]["dvd"].update(episode=2)), "puts this episode where", []),
+
+    # ---- how the file itself was numbered, and where the item came from
+    ("a naming scheme the format does not know", False, lambda r: edit(episode_source(r, 2), lambda d: d["naming"].update(scheme="broadcast")), "'broadcast' is not one of", []),
+    ("a naming field the format does not model", False, lambda r: edit(episode_source(r, 2), lambda d: d["naming"].update(title="Crosswind")), "'title' was unexpected", []),
+    ("provenance the format does not model", False, lambda r: edit(item(movie(r)), lambda d: d["provenance"].update(legacyPath="/old/library")), "'legacyPath' was unexpected", []),
+    ("a legacy id that is not an id", False, lambda r: edit(item(movie(r)), lambda d: d["provenance"].update(legacyItemId="movie-12")), "does not match", []),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
@@ -348,6 +356,8 @@ CASES = [
     ("an event file named with its eventId", True, lambda r: shutil.move(deletion(r), os.path.join(
         os.path.dirname(deletion(r)), "20260920T081500Z-" + json.load(open(deletion(r)))["eventId"][:8] + "-original-deleted.json")), "OK", []),
     ("an original with no audio", True, silent, "OK", ["--check-checksums"]),
+    ("a deletion accepting less than the gate", True, lambda r: edit(deletion(r), lambda d: d.update(accepted=["surround"])), "OK", []),
+    ("a deletion that gave up nothing", True, lambda r: edit(deletion(r), lambda d: d.update(accepted=[])), "OK", []),
     ("a removed version whose folder is still on storage", True, resurrect, "OK", ["--check-checksums"]),
     ("an item whose database decided nothing about its storage", True, lambda r: edit(meta(movie(r)), lambda d: d.pop("library")), "OK", []),
 ]
