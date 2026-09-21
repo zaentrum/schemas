@@ -19,9 +19,9 @@
       "then": { "not": { "anyOf": [{ "required": ["series"] }, { "required": ["episode"] }] } }
     },
     {
-      "$comment": "An ordering is a property of a series; a place in one is a property of an episode.",
+      "$comment": "An ordering is a decision about a series; a place in one is a property of an episode.",
       "if": { "not": { "properties": { "type": { "const": "series" } }, "required": ["type"] } },
-      "then": { "properties": { "library": { "not": { "anyOf": [{ "required": ["defaultOrdering"] }, { "required": ["orderings"] }] } } } }
+      "then": { "properties": { "library": { "not": { "required": ["defaultOrdering"] } } } }
     },
     {
       "if": { "not": { "properties": { "type": { "const": "episode" } }, "required": ["type"] } },
@@ -221,30 +221,11 @@
         },
         "defaultOrdering": {
           "$ref": "#/$defs/ordering",
-          "description": "Series only: the ordering a viewer sees unless they choose another."
-        },
-        "orderings": {
-          "type": "object",
-          "description": "Series only: for each ordering the database knows, its episodes in that order. The default ordering lists exactly the episode folders on storage; another ordering may leave an episode out. It is a projection, so adding an episode re-projects this file rather than editing a record.",
-          "propertyNames": { "$ref": "#/$defs/ordering" },
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["itemId", "episode"],
-              "additionalProperties": false,
-              "properties": {
-                "itemId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "An episodes/<itemId>/ folder of this series." },
-                "season": { "type": ["integer", "null"], "minimum": 0, "description": "Null in an ordering that does not use seasons, such as absolute." },
-                "episode": { "type": "integer", "minimum": 0 },
-                "episodeEnd": { "type": ["integer", "null"], "minimum": 0, "description": "Set when one file covers several episodes (S07E23-24)." }
-              }
-            }
-          }
+          "description": "Series only: the ordering a viewer sees unless they choose another. The orderings themselves are not listed here — each episode records its own place in each of them, so adding an episode never rewrites the series."
         },
         "numbering": {
           "type": "object",
-          "description": "Episode only: where this episode sits under each ordering it appears in. It agrees with the series' orderings, and its aired entry agrees with the seasonNumber and episodeNumber item.json was created with.",
+          "description": "Episode only: where this episode sits under each ordering it appears in, which is the whole record of that ordering — nothing on the series repeats it. Its aired entry agrees with the seasonNumber and episodeNumber item.json was created with, and no two episodes of a series may share a place in one ordering.",
           "propertyNames": { "$ref": "#/$defs/ordering" },
           "additionalProperties": {
             "type": "object",
