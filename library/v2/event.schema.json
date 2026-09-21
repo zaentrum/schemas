@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v2/event.schema.json",
   "title": "events/<timestamp>-<kind>.json — a fact that arose after the records were written",
-  "description": "Written once by whoever acts, and never touched again. The other records describe things that cannot change, so the few facts that appear afterwards get their own file rather than a rewrite: an original was deleted, a package was replaced, a source no longer belongs to this item.\n\nA reader applies the events over the records: a version whose original-deleted event has fired keeps naming its original in version.json, but the file is gone and its package is from then on the only copy of the version.\n\nFile name: events/<YYYYMMDDTHHMMSSZ>-<kind>.json, from this record's own at and kind — for example events/20261001T093000Z-original-deleted.json. When two events of one kind land in the same second, the writer appends the first eight characters of the eventId (…-original-deleted-1f2e3d4c.json), so no record can overwrite another.\n\nThe ids a subject names are records in this item folder: sources/<sourceId>.json, versions/<versionId>/ and the packageId of a versions/<id>/package.json.",
+  "description": "Written once by whoever acts, and never touched again. The other records describe things that cannot change, so the few facts that appear afterwards get their own file rather than a rewrite.\n\nApplying events — the contract every reader and every rebuild follows. Read the item's records first, then apply its events in order of 'at', earliest first; an event with no effect listed here changes nothing:\n  original-deleted   The originals this names are gone from the version folder: the source it names, or every original of the version when it names none. Once no original of the version is left, that version's package is the only copy of it — canonical, whatever role its record was written with — and every loss the version's lostIfOriginalDeleted lists is permanent.\n  version-removed    The version this names is no longer part of the item. Ignore its folder even when it is still on storage, and everything in it: its package is not playable, its records are not a version, and nothing may point at it.\n  package-superseded The package this names is no longer the one to use. The package supersededBy names is authoritative for its version from this moment; the superseded folder stays exactly as it was.\n  note               Nothing. It is something a person recorded that no other record holds.\n\nFile name: events/<YYYYMMDDTHHMMSSZ>-<kind>.json, from this record's own at and kind — for example events/20261001T093000Z-original-deleted.json. When two events of one kind land in the same second, the writer appends the first eight characters of the eventId (…-original-deleted-1f2e3d4c.json), so no record can overwrite another.\n\nThe ids a subject names are records in this item folder: sources/<sourceId>.json, versions/<versionId>/ and the packageId of a versions/<id>/package.json. A version-removed event is the one exception: its folder may already be gone.",
   "type": "object",
   "required": ["schema", "eventId", "at", "kind"],
   "additionalProperties": false,
@@ -13,7 +13,11 @@
     },
     {
       "if": { "properties": { "kind": { "const": "package-superseded" } }, "required": ["kind"] },
-      "then": { "required": ["versionId", "packageId"] }
+      "then": { "required": ["versionId", "packageId", "supersededBy"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "version-removed" } }, "required": ["kind"] },
+      "then": { "required": ["versionId"] }
     },
     {
       "if": { "properties": { "kind": { "const": "source-removed" } }, "required": ["kind"] },
@@ -22,27 +26,41 @@
     {
       "if": { "not": { "properties": { "kind": { "const": "original-deleted" } }, "required": ["kind"] } },
       "then": { "not": { "required": ["accepted"] } }
+    },
+    {
+      "if": { "not": { "properties": { "kind": { "const": "package-superseded" } }, "required": ["kind"] } },
+      "then": { "not": { "required": ["supersededBy"] } }
     }
   ],
   "properties": {
     "schema": { "const": "zaentrum.library.event/2" },
     "eventId": { "$ref": "defs.schema.json#/$defs/uuid" },
-    "at": { "$ref": "defs.schema.json#/$defs/timestamp", "description": "When it happened. The file name carries the same moment, so the folder sorts in order." },
+    "at": { "$ref": "defs.schema.json#/$defs/timestamp", "description": "When it happened. The file name carries the same moment, so the folder sorts in the order a reader must apply them." },
     "by": { "type": "string", "description": "The service or person that acted." },
     "kind": {
-      "enum": ["original-deleted", "package-superseded", "source-removed", "note"],
-      "description": "'original-deleted': the original file was removed from a version folder, and its package is from then on the only copy of that version. 'package-superseded': a package was replaced by one in a newer version folder; the old folder stays as it was. 'source-removed': an original that had been taken in does not belong to this item after all; its record stays, and nothing counts it any more. 'note': something a person recorded about this item that no other record holds."
+      "enum": ["original-deleted", "version-removed", "package-superseded", "source-removed", "note"],
+      "description": "'original-deleted': an original file was removed from a version folder. 'version-removed': a version is no longer part of the item, whether or not its folder has been swept yet — without this the folder would simply vanish and nothing would say it ever existed. 'package-superseded': a package was replaced by one in a newer version folder; the old folder stays as it was. 'source-removed': an original that had been taken in does not belong to this item after all; its record stays, and nothing counts it any more. 'note': something a person recorded about this item that no other record holds."
     },
 
-    "sourceId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "The source record this is about: sources/<sourceId>.json." },
+    "sourceId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "The source record this is about: sources/<sourceId>.json. On original-deleted it narrows the deletion to that one original, which is how one part of a version split across files is deleted; without it the whole version's originals are gone." },
     "versionId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "The version folder this is about: versions/<versionId>/." },
     "packageId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "The package this is about, by the packageId its package.json carries." },
+    "supersededBy": {
+      "type": "object",
+      "description": "Only on package-superseded: the package that takes over, so a reader never has to guess the successor from timestamps. It is in another version folder of this same item, because a re-package is a new folder.",
+      "required": ["versionId", "packageId"],
+      "additionalProperties": false,
+      "properties": {
+        "versionId": { "$ref": "defs.schema.json#/$defs/uuid" },
+        "packageId": { "$ref": "defs.schema.json#/$defs/uuid" }
+      }
+    },
 
     "reason": { "type": ["string", "null"], "description": "Why it happened, in a person's words: 'space', 'replaced by a 4K master', 'wrong file'." },
     "accepted": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Only on original-deleted: what was accepted as lost, taken from the package's lostIfOriginalDeleted at the moment of deletion. Empty means the package carried everything the original had, and nothing was given up. It is recorded here rather than computed later, because after the deletion the original cannot be measured again."
+      "description": "Only on original-deleted: what was accepted as lost — the version's lostIfOriginalDeleted at the moment of deletion. Empty means nothing was given up. It is recorded here rather than computed later, because after the deletion the original cannot be measured again."
     }
   }
 }
