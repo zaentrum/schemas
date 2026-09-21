@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/v2/source.schema.json",
+  "title": "sources/<sourceId>.json — one original as it was found",
+  "description": "Written once by the analyzer, when an original is taken into the item, and never touched again. It is the account of a file that cannot change: its name and size as found, where it came from, its container, every stream it contained, whether it was itself already a re-encode, and the essence a package may fail to carry — the input to the deletion gate.\n\nBecause it is written once, it says nothing about what happened to the file later. Whether the original is still on storage is the version's business (versions/<id>/version.json names it), and its deletion is an event (events/…-original-deleted.json). A source record is never rewritten to say 'deleted'.\n\nPaths: probe.file and sidecars[].file are relative to the ITEM folder, and both live in sources/<sourceId>/ so they survive the original's deletion. origin.libraryPath is relative to the root of the library the file came from.",
+  "type": "object",
+  "required": ["schema", "sourceId", "takenAt", "file", "container", "streams", "fidelity", "essence", "probe"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "zaentrum.library.source/2" },
+    "sourceId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Equals the file name of this record (sources/<sourceId>.json) and the folder beside it that holds its probe and sidecars." },
+    "takenAt": { "$ref": "defs.schema.json#/$defs/timestamp", "description": "When the original was taken in and this record written." },
+    "takenBy": { "type": "string", "description": "The service or person that took it in." },
+
+    "file": {
+      "type": "object",
+      "description": "The file as found. There is no path here: where the bytes live is the version's business, and after a deletion they live nowhere.",
+      "required": ["name", "sizeBytes", "fixity"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "defs.schema.json#/$defs/fileName", "description": "Original filename, unchanged. The version that keeps the original names the same file." },
+        "kind": { "enum": ["stream-container", "disc-image", "transport-stream", "audio-file"] },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "mtime": { "$ref": "defs.schema.json#/$defs/timestamp" },
+        "fixity": { "$ref": "defs.schema.json#/$defs/fixity" },
+        "ownership": { "$ref": "defs.schema.json#/$defs/ownership" },
+        "part": {
+          "type": ["object", "null"],
+          "description": "Set when one version is split across several files.",
+          "additionalProperties": false,
+          "properties": { "index": { "type": "integer", "minimum": 1 }, "of": { "type": "integer", "minimum": 1 } }
+        }
+      }
+    },
+    "origin": {
+      "type": "object",
+      "description": "Where the original lived before it entered this folder. The folder name is often the ONLY record of an edition ('Example Film - Unrated (2015)') or of a series qualifier ('Example Show (US)'), so it is kept verbatim.",
+      "required": ["libraryPath"],
+      "additionalProperties": false,
+      "properties": {
+        "libraryPath": { "type": "string", "description": "Relative to the root of the library it came from." },
+        "folder": { "type": "string", "description": "The folder name it sat in." },
+        "takenBy": { "enum": ["move", "copy", "import", "unknown"], "description": "How it got here." }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "description": "What the filename and folder CLAIM. Unreliable — a name can claim a disc copy that is a re-encode — but the only claim on record, and it disappears with the file.",
+      "additionalProperties": false,
+      "properties": {
+        "quality": { "type": ["string", "null"], "description": "The quality token exactly as it appears in the filename, e.g. '1080p'." },
+        "medium": { "enum": ["disc", "web", "broadcast", "unknown", null], "description": "The physical source the name claims." },
+        "resolution": { "type": ["string", "null"] },
+        "edition": { "type": ["string", "null"] },
+        "folderEdition": { "type": ["string", "null"] }
+      }
+    },
+    "container": {
+      "type": "object",
+      "required": ["format"],
+      "additionalProperties": false,
+      "properties": {
+        "format": { "type": "string" },
+        "durationMs": { "type": ["integer", "null"] },
+        "bitrate": { "type": ["integer", "null"] },
+        "title": { "type": ["string", "null"], "description": "Container title tag: often the richest record of what the file was before any re-encode." },
+        "muxingApp": { "type": ["string", "null"] },
+        "writingApp": { "type": ["string", "null"] },
+        "creationTime": { "type": ["string", "null"] },
+        "tags": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "fidelity": {
+      "type": "object",
+      "description": "Whether this original was untouched or already a re-encode, with what says so.",
+      "required": ["class"],
+      "additionalProperties": false,
+      "properties": {
+        "class": { "enum": ["original", "derivative", "unknown"] },
+        "fingerprint": { "type": ["string", "null"], "description": "Short technical fingerprint of the file, e.g. 'hevc/main10/10bit/hdr10/3840x2160'. Two episodes with different fingerprints come from different masters." },
+        "evidence": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/evidence" } }
+      }
+    },
+    "streams": {
+      "type": "array",
+      "description": "Every stream the file contained, as the probe reported it.",
+      "items": { "oneOf": [
+        { "$ref": "#/$defs/videoStream" }, { "$ref": "#/$defs/audioStream" }, { "$ref": "#/$defs/subtitleStream" },
+        { "$ref": "#/$defs/attachmentStream" }, { "$ref": "#/$defs/dataStream" }
+      ] }
+    },
+    "sidecars": {
+      "type": "array",
+      "description": "Small files that sat next to the original (external subtitles, NFO text). Copied into sources/<sourceId>/ so they survive the original's deletion.",
+      "items": {
+        "type": "object",
+        "required": ["file", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "file": { "$ref": "defs.schema.json#/$defs/relPath", "description": "sources/<sourceId>/<name>, relative to the item folder." },
+          "originalName": { "type": "string" },
+          "kind": { "enum": ["subtitle", "nfo", "image", "other"] },
+          "format": { "type": ["string", "null"] },
+          "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
+          "forced": { "type": "boolean" },
+          "hearingImpaired": { "type": "boolean" },
+          "purpose": { "$ref": "defs.schema.json#/$defs/subtitlePurpose" },
+          "sizeBytes": { "type": "integer", "minimum": 0 },
+          "sha256": { "$ref": "defs.schema.json#/$defs/sha256" }
+        }
+      }
+    },
+    "covers": {
+      "type": "array",
+      "description": "Episode item ids this one file contains, in order, when a single file holds several episodes.",
+      "items": { "$ref": "defs.schema.json#/$defs/uuid" }
+    },
+    "essence": { "$ref": "defs.schema.json#/$defs/essence", "description": "What this original carries that a package can fail to carry. The deletion gate compares it with the package's." },
+    "probe": {
+      "type": "object",
+      "description": "The verbatim tool output, kept in a file so any attribute the normalised fields do not model is still recoverable after the original is gone.",
+      "required": ["tool", "at", "file"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "const": "ffprobe" },
+        "version": { "type": ["string", "null"] },
+        "at": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }], "description": "When the probe ran; null when the original was never probed." },
+        "file": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/relPath" }, { "type": "null" }], "description": "sources/<sourceId>/ffprobe.json, relative to the item folder." },
+        "sha256": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/sha256" }, { "type": "null" }] },
+        "note": { "type": ["string", "null"] }
+      }
+    }
+  },
+
+  "$defs": {
+    "dispositions": {
+      "type": "object",
+      "description": "Only the file's own flags. Anything inferred lives in purpose.",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "type": "boolean" }, "forced": { "type": "boolean" }, "original": { "type": "boolean" },
+        "dub": { "type": "boolean" }, "commentary": { "type": "boolean" }, "hearingImpaired": { "type": "boolean" },
+        "visualImpaired": { "type": "boolean", "description": "Audio description track." },
+        "attachedPic": { "type": "boolean" },
+        "lyrics": { "type": "boolean" },
+        "captions": { "type": "boolean", "description": "Captions for deaf and hard-of-hearing viewers." },
+        "descriptions": { "type": "boolean", "description": "Text or audio descriptions of the picture." }
+      }
+    },
+    "streamBase": {
+      "type": "object",
+      "required": ["index", "type"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "type": true,
+        "codec": { "type": ["string", "null"] },
+        "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
+        "languageRaw": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "dispositions": { "$ref": "#/$defs/dispositions" }
+      }
+    },
+    "videoStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "video" },
+        "profile": { "type": ["string", "null"] },
+        "level": { "type": ["number", "null"] },
+        "bitDepth": { "type": ["integer", "null"] },
+        "pixelFormat": { "type": ["string", "null"] },
+        "width": { "type": ["integer", "null"] },
+        "height": { "type": ["integer", "null"] },
+        "sampleAspectRatio": { "type": ["string", "null"] },
+        "displayAspectRatio": { "type": ["string", "null"] },
+        "frameRate": { "type": ["string", "null"] },
+        "fieldOrder": { "type": ["string", "null"] },
+        "bitrate": { "type": ["integer", "null"] },
+        "colour": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primaries": { "type": ["string", "null"] }, "transfer": { "type": ["string", "null"] },
+            "matrix": { "type": ["string", "null"] }, "range": { "type": ["string", "null"] }
+          }
+        },
+        "hdr": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "format": { "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolby-vision"] },
+            "masteringDisplay": { "type": ["object", "null"] },
+            "contentLightLevel": { "type": ["object", "null"] },
+            "dolbyVision": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {
+                "profile": { "type": "integer" }, "level": { "type": "integer" }, "rpuPresent": { "type": "boolean" },
+                "elPresent": { "type": "boolean" }, "blPresent": { "type": "boolean" }, "blCompatibilityId": { "type": "integer" }
+              }
+            }
+          }
+        },
+        "stereo3d": { "type": ["string", "null"] },
+        "closedCaptions": { "type": "boolean", "description": "The video carries embedded closed captions (CEA-608/708), which a re-encode usually drops." },
+        "encoder": { "type": ["string", "null"], "description": "Encoder tag, e.g. 'Lavc hevc_nvenc': the plainest evidence of a re-encode." }
+      }
+    },
+    "audioStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "required": ["channels"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "audio" },
+        "profile": { "type": ["string", "null"], "description": "Distinguishes DTS-HD MA from its core, and 'Dolby Digital Plus + Dolby Atmos'." },
+        "channels": { "type": "integer", "minimum": 1 },
+        "channelLayout": { "type": ["string", "null"], "description": "'stereo', '5.1', '5.1(side)', '7.1'. Absent in some files even when channels = 6." },
+        "sampleRate": { "type": ["integer", "null"] },
+        "bitDepth": { "type": ["integer", "null"] },
+        "bitrate": { "type": ["integer", "null"] },
+        "lossless": { "type": ["boolean", "null"] },
+        "objectAudio": { "enum": ["atmos", "dts-x", "none", "unknown"] },
+        "titleClaim": {
+          "type": ["object", "null"],
+          "description": "What the track title claims. When it disagrees with the actual codec or channel count, the file was re-encoded and the title is the only record of the original.",
+          "additionalProperties": false,
+          "properties": {
+            "codec": { "type": ["string", "null"] },
+            "channels": { "type": ["string", "null"] },
+            "contradictsActual": { "type": "boolean" }
+          }
+        },
+        "encoder": { "type": ["string", "null"] },
+        "purpose": { "$ref": "defs.schema.json#/$defs/audioPurpose" },
+        "purposeFrom": { "$ref": "defs.schema.json#/$defs/purposeFrom" },
+        "variant": { "type": ["string", "null"], "description": "Region or dialect, e.g. 'Castilian', 'Latin American'." }
+      }
+    },
+    "subtitleStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "subtitle" },
+        "form": { "enum": ["text", "image"], "description": "Image subtitles (PGS, VobSub) cannot become text without OCR." },
+        "styled": { "type": "boolean", "description": "ASS/SSA positioning and typesetting that plain WebVTT loses." },
+        "variant": { "type": ["string", "null"], "description": "Region or script, e.g. 'Latin American', 'Simplified', found anywhere in the title." },
+        "events": { "type": ["integer", "null"], "minimum": 0, "description": "Number of subtitle events the container records (NUMBER_OF_FRAMES). A track with a small fraction of the events of the full track in its language is a forced track." },
+        "purpose": { "$ref": "defs.schema.json#/$defs/subtitlePurpose" },
+        "purposeFrom": { "$ref": "defs.schema.json#/$defs/purposeFrom" }
+      }
+    },
+    "attachmentStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "type": { "const": "attachment" },
+        "filename": { "type": ["string", "null"] },
+        "mimetype": { "type": ["string", "null"] },
+        "role": { "enum": ["font", "cover", "other"], "description": "Fonts are required to render styled subtitles." }
+      }
+    },
+    "dataStream": {
+      "allOf": [{ "$ref": "#/$defs/streamBase" }],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": { "type": { "const": "data" } }
+    }
+  }
+}

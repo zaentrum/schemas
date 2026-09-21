@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/v2/package.schema.json",
+  "title": "versions/<versionId>/package.json — what the packager produced",
+  "description": "Written once by the packager, when the package completes, and never touched again. It sits next to the bytes it describes, so it can never end up describing a different package, and it is the record a rebuild reads to restore the playback rows: everything the v1 manifest's playback section carried is here, under the same names.\n\nBecause it is written only on completion, there is no 'building' or 'failed' state to record — an unfinished package has no package.json and no .complete marker, and neither the database nor a rebuild will use it. A package that falls out of date later is not rewritten either: a new version folder holds the new package, and an events/…-package-superseded.json record says this one was replaced.\n\nPaths: renditions[].dir, subtitles[].path, trickplay.vttPath, trailers[].manifestPath and checksums.file are relative to THIS version folder.",
+  "type": "object",
+  "required": ["schema", "packageId", "createdAt", "packagedBy", "state", "role", "durationMs", "renditions", "fidelity", "essence", "checksums", "lostIfOriginalDeleted"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "zaentrum.library.package/2" },
+    "packageId": { "$ref": "defs.schema.json#/$defs/uuid" },
+    "createdAt": { "$ref": "defs.schema.json#/$defs/timestamp", "description": "When the package completed. This is the v1 playback field packagedAt under the name every v2 record uses." },
+    "packagedBy": { "type": "string", "description": "The v1 playback field packager." },
+    "state": {
+      "enum": ["complete", "stale"],
+      "description": "'complete': finished and playable, and the version folder carries its .complete marker. 'stale' exists only for a record migrated from a v1 manifest that already said the package was outdated; nothing writes it now, because a package that goes out of date gets a package-superseded event instead of a new state here."
+    },
+    "role": {
+      "enum": ["derived", "canonical"],
+      "description": "What this package was when it was written: 'derived' when an original was kept beside it in the version folder, 'canonical' when the package is the only copy. It is not rewritten when the original is deleted later — a reader that sees an original-deleted event for this version treats the package as canonical from then on, and every loss below becomes permanent."
+    },
+
+    "durationMs": { "type": "integer", "minimum": 0, "description": "v1 playback field: duration of this package." },
+    "recipe": {
+      "type": "object",
+      "description": "How video, audio and subtitles were produced, so the same package can be made again.",
+      "additionalProperties": false,
+      "properties": {
+        "video": { "type": ["string", "null"] },
+        "audio": { "type": ["string", "null"] },
+        "subtitles": { "type": ["string", "null"] }
+      }
+    },
+
+    "renditions": {
+      "type": "object",
+      "description": "v1 playback field. More than one video entry is a quality ladder.",
+      "required": ["video", "audio"],
+      "additionalProperties": false,
+      "properties": {
+        "video": { "type": "array", "items": { "$ref": "#/$defs/videoRendition" } },
+        "audio": { "type": "array", "items": { "$ref": "#/$defs/audioRendition" } }
+      }
+    },
+    "subtitles": { "type": "array", "items": { "$ref": "#/$defs/subtitleRendition" }, "description": "v1 playback field." },
+    "trickplay": { "oneOf": [{ "$ref": "#/$defs/trickplay" }, { "type": "null" }], "description": "v1 playback field." },
+    "trailers": { "type": "array", "items": { "$ref": "#/$defs/trailer" }, "description": "v1 playback field: trailers packaged into this folder. Trailers published elsewhere are listed by reference in metadata.json." },
+
+    "sizeBytes": { "type": ["integer", "null"], "minimum": 0, "description": "Total size of the package's files." },
+    "peakBandwidthBps": { "type": ["integer", "null"], "minimum": 0, "description": "The highest BANDWIDTH in the package's master playlist, audio included: a peak, not an average. The rendition field bitrateBps is often 0." },
+
+    "fidelity": {
+      "type": "object",
+      "required": ["lossless", "losses"],
+      "additionalProperties": false,
+      "properties": {
+        "lossless": { "type": "boolean" },
+        "losses": {
+          "type": "array",
+          "description": "Every way the package is poorer than the original. Empty only when lossless.",
+          "items": {
+            "type": "object",
+            "required": ["kind", "detail"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "enum": ["audio-downmix", "audio-codec", "audio-dropped", "video-resolution", "video-bitdepth", "dynamic-range", "dolby-vision", "stereo3d", "subtitle-dropped", "subtitle-styling", "closed-captions-dropped", "attachments-dropped", "other"] },
+              "detail": { "type": "string" },
+              "sourceStreamIndex": { "type": ["integer", "null"] }
+            }
+          }
+        },
+        "droppedSourceStreams": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "essence": { "$ref": "defs.schema.json#/$defs/essence", "description": "What this package carries, in the same reduced terms as the source's, so the two can be compared." },
+    "lostIfOriginalDeleted": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Everything the original had that this package lacks, computed from the two essences when the package was written. Deleting the original is safe only when it is empty; deleting it anyway is a deliberate act, and the original-deleted event records this list as what was accepted as lost."
+    },
+
+    "checksums": {
+      "type": "object",
+      "description": "A sha256sum-style file listing every file of the package, so a copy can be verified file by file. It is written with the package, not later: once the original is gone the package is the truth, and this is its fixity.",
+      "required": ["file", "algorithm", "sha256", "files", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "const": "checksums.sha256", "description": "In this version folder: lines of '<hex digest>  <path>', paths relative to this folder." },
+        "algorithm": { "const": "sha256" },
+        "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "Hash of the checksums file itself." },
+        "files": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+
+  "$defs": {
+    "videoRendition": {
+      "type": "object",
+      "required": ["id", "dir", "codec", "width", "height", "bitrateBps", "hdr", "frameRate", "segments", "targetDuration"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "dir": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "codec": { "type": "string" },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "bitrateBps": { "type": "integer" },
+        "hdr": { "type": "boolean" },
+        "frameRate": { "type": "string" },
+        "segments": { "type": "integer" },
+        "targetDuration": { "type": "integer" },
+        "dynamicRange": { "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolby-vision", "unknown"] },
+        "sourceStreamIndex": { "type": ["integer", "null"], "description": "The original's stream this was made from." }
+      }
+    },
+    "audioRendition": {
+      "type": "object",
+      "required": ["id", "dir", "codec", "language", "default", "channels", "bitrateBps", "segments", "purpose", "purposeFrom"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "dir": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "codec": { "type": "string" },
+        "language": { "$ref": "defs.schema.json#/$defs/language" },
+        "title": { "type": "string" },
+        "default": { "type": "boolean", "description": "What the packager wrote into the playlist, so a reader sees the package as it is. Which track a viewer actually gets is behaviour and comes from the database." },
+        "channels": { "type": "integer" },
+        "bitrateBps": { "type": "integer" },
+        "segments": { "type": "integer" },
+        "visible": { "type": "boolean", "description": "As written into the playlist; see default." },
+        "sourceStreamIndex": { "type": ["integer", "null"] },
+        "sourceChannels": { "type": ["integer", "null"], "description": "Channels of the original track, e.g. 6 when a 5.1 track was downmixed to stereo." },
+        "purpose": { "$ref": "defs.schema.json#/$defs/audioPurpose" },
+        "purposeFrom": { "$ref": "defs.schema.json#/$defs/purposeFrom" },
+        "variant": { "type": ["string", "null"], "description": "Region or dialect, e.g. 'Castilian', 'Latin American'." },
+        "original": { "type": ["boolean", "null"], "description": "True when the file flagged the track as the work's original language; null when unknown." }
+      }
+    },
+    "subtitleRendition": {
+      "type": "object",
+      "required": ["id", "path", "language", "format", "purpose", "purposeFrom"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "language": { "$ref": "defs.schema.json#/$defs/language" },
+        "title": { "type": "string" },
+        "default": { "type": "boolean", "description": "As written into the playlist; see the audio rendition's default." },
+        "forced": { "type": "boolean", "description": "As written into the playlist. The content fact is purpose 'forced'." },
+        "format": { "type": "string" },
+        "visible": { "type": "boolean", "description": "As written into the playlist." },
+        "sourceStreamIndex": { "type": ["integer", "null"] },
+        "purpose": { "$ref": "defs.schema.json#/$defs/subtitlePurpose" },
+        "purposeFrom": { "$ref": "defs.schema.json#/$defs/purposeFrom" },
+        "variant": { "type": ["string", "null"], "description": "Region or script, e.g. 'Latin American', 'Simplified'." }
+      }
+    },
+    "trickplay": {
+      "type": "object",
+      "required": ["vttPath", "spritePattern", "intervalSec", "thumbWidth", "thumbHeight", "gridCols", "gridRows"],
+      "additionalProperties": false,
+      "properties": {
+        "vttPath": { "$ref": "defs.schema.json#/$defs/relPath" },
+        "spritePattern": { "type": "string" },
+        "intervalSec": { "type": "integer", "minimum": 1 },
+        "thumbWidth": { "type": "integer" },
+        "thumbHeight": { "type": "integer" },
+        "gridCols": { "type": "integer" },
+        "gridRows": { "type": "integer" }
+      },
+      "description": "The VTT maps each interval to one cell of one sprite sheet."
+    },
+    "trailer": {
+      "type": "object",
+      "required": ["id", "source", "durationMs", "manifestPath"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "manifestPath": { "$ref": "defs.schema.json#/$defs/relPath" }
+      }
+    }
+  }
+}
