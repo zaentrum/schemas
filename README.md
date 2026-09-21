@@ -42,6 +42,11 @@ tools/
   validate-library-v2.py           validate a v2 library tree
   test-validate-library-v2.py      broken v2 trees the validator must reject
   make-library-v2-examples.py      regenerate library/v2/examples
+  library-v2-from-catalog.py       write v2 records for a catalog's items
+  library-v2-from-v1.py            convert v1 item folders into v2 records
+  library-v2-rebuild.py            the catalog contents a v2 tree implies
+  library-v2-media-check.py        check a v2 tree against the bytes, without jsonschema
+  test-library-v2-tools.py         prove the four tools above do what they say
 ```
 
 The top-level `stube/` directory mirrors the Avro namespace and Kafka topic
@@ -268,6 +273,35 @@ python tools/validate-library-v2.py --check-checksums <root>  # also hash every 
 python tools/test-validate-library-v2.py                      # prove it rejects broken trees
 python tools/make-library-v2-examples.py                      # regenerate library/v2/examples
 ```
+
+### Writing and reading a tree
+
+Four tools put the record on storage and read it back. They are plain standard-library Python 3.11
+and need no network, so they run where the share is mounted — piped into a pod if that is the only
+place it is reachable (`oc exec -i deploy/packager -- python3 - <args> < tool.py`). The database
+export they read is produced on the client side, so nothing needs a driver or a credential.
+
+```sh
+# a catalog's rows, its package store and its originals become item folders
+python tools/library-v2-from-catalog.py --export catalog.json --packages /…/packages \
+       --media /…/media --out /…/library [--items id,id] [--media-mode copy|move|none] [--dry-run]
+
+# v1 item folders (manifest.json + metadata/) become v2 records, in place or into a new tree
+python tools/library-v2-from-v1.py --in /…/library --in-place [--dry-run]
+
+# the catalog contents a tree implies, with its events applied, and both directions against a export
+python tools/library-v2-rebuild.py /…/library --out rows.json [--compare catalog.json]
+
+# the checks that must run where the files are: they need no jsonschema
+python tools/library-v2-media-check.py /…/library [--checksums]
+
+python tools/test-library-v2-tools.py   # prove all four do what they say
+```
+
+A rebuilt catalog is only as complete as the record: the tree holds no per-user state and no row
+modification times, the paths it hands back are the version folders the bytes moved into, and what
+a source record could not be told (an original that is already gone, a file nothing probed) stays
+empty rather than guessed.
 
 ### Library v2 changelog
 

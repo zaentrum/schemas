@@ -61,6 +61,11 @@ jobs:
       - run: python tools/validate-library-v2.py --check-checksums library/v2/examples
       - name: the validator rejects broken libraries
         run: python tools/test-validate-library-v2.py
-      - run: python -m py_compile tools/make-library-v2-examples.py tools/test-validate-library-v2.py
+      - run: |
+          python -m py_compile tools/make-library-v2-examples.py tools/test-validate-library-v2.py \
+            tools/library-v2-from-catalog.py tools/library-v2-from-v1.py tools/library-v2-rebuild.py \
+            tools/library-v2-media-check.py tools/test-library-v2-tools.py
+      - name: the tools write a tree, read it back and catch a broken one
+        run: python tools/test-library-v2-tools.py
       - name: examples are up to date with their generator
         run: python tools/make-library-v2-examples.py && git diff --exit-code -- library/v2/examples
