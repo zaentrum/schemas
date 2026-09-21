@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v2/version.schema.json",
   "title": "versions/<versionId>/version.json — what this version is",
-  "description": "Written once by the analyzer, when a version is established, and never touched again. A version is one cut or presentation of a movie or episode — theatrical and director's cut, colour and black-and-white, HDR and SDR — and its folder is the one place its media lives: the original file, the package made from it, or both.\n\nEvery version is a folder. There is no version in the item folder itself, and a re-package is a new version folder, never an edit of this one.\n\nThe marks live here rather than in any file, so they survive the original's deletion and apply to every package of the version. What plays by default is not here: that is behaviour, and the database owns it.\n\nPaths: originalFile is a plain name in THIS folder. sourceIds name records at the item level (sources/<sourceId>.json).",
+  "description": "Written once by the analyzer, when a version is established, and never touched again. A version is one cut or presentation of a movie or episode — theatrical and director's cut, colour and black-and-white, HDR and SDR — and its folder is the one place its media lives: the original files, the package made from them, or both.\n\nEvery version is a folder. There is no version in the item folder itself, and a re-package is a new version folder, never an edit of this one.\n\nThe marks live here rather than in any file, so they survive the original's deletion and apply to every package of the version. What plays by default is not here, and neither is the label a viewer picks between: those are decisions the database holds, projected into metadata.json.\n\nPaths: originalFiles are plain names in THIS folder. sourceIds name records at the item level (sources/<sourceId>.json).",
   "type": "object",
-  "required": ["schema", "versionId", "createdAt", "edition", "presentation", "sourceIds", "originalFile"],
+  "required": ["schema", "versionId", "createdAt", "edition", "presentation", "sourceIds", "originalFiles", "lostIfOriginalDeleted"],
   "additionalProperties": false,
   "properties": {
     "schema": { "const": "zaentrum.library.version/2" },
@@ -20,7 +20,7 @@
       "properties": {
         "kind": { "enum": ["theatrical", "directors-cut", "extended", "unrated", "special-edition", "remastered", "restored", "imax", "final-cut", "tv-cut", "other", "unknown"] },
         "label": { "type": ["string", "null"], "description": "Edition wording as published, e.g. 'Roadshow Director's Cut'." },
-        "decidedBy": { "$ref": "#/$defs/decidedBy" },
+        "decidedBy": { "$ref": "defs.schema.json#/$defs/decidedBy" },
         "decidedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "evidence": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/evidence" } }
@@ -32,7 +32,7 @@
       "additionalProperties": false,
       "properties": {
         "colour": { "enum": ["colour", "black-and-white", "partial-colour", "unknown"], "description": "Measured from the picture, not from a label." },
-        "colourDecision": { "$ref": "#/$defs/decision" },
+        "colourDecision": { "allOf": [{ "$ref": "defs.schema.json#/$defs/decision" }], "type": "object", "unevaluatedProperties": false },
         "dynamicRange": { "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolby-vision", "unknown"] },
         "stereo3d": { "enum": ["none", "side-by-side", "top-and-bottom", "mvc", "unknown"] },
         "aspectRatio": { "type": ["string", "null"] }
@@ -77,6 +77,17 @@
       }
     },
 
+    "completeness": {
+      "type": "object",
+      "description": "Whether the version holds the whole work, measured — normally the runtime against the reference runtime, so a file that stops early is not mistaken for a shorter cut. A version nobody measured leaves this out; there is no 'unknown' value, because an absent measurement and a measurement that found nothing are not the same thing.",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["complete", "truncated", "suspect"] },
+        "evidence": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/evidence" } }
+      }
+    },
+
     "sourceIds": {
       "type": "array",
       "minItems": 1,
@@ -84,25 +95,16 @@
       "description": "The originals this version was made from — several when it is split into parts. Each names sources/<sourceId>.json at the item level, which stays after the file itself is gone.",
       "items": { "$ref": "defs.schema.json#/$defs/uuid" }
     },
-    "originalFile": {
-      "oneOf": [{ "$ref": "defs.schema.json#/$defs/fileName" }, { "type": "null" }],
-      "description": "The original placed in THIS folder next to its package, under its own name — or null when the version was made without keeping it here. Written once: when the original is deleted later, this keeps naming it and an events/…-original-deleted.json record says it is gone."
-    }
-  },
-
-  "$defs": {
-    "decidedBy": { "enum": ["inferred", "human", "legacy-catalog", "tmdb"] },
-    "decision": {
-      "type": "object",
-      "description": "A conclusion with its confidence and who reached it. There is no review field: a record written once cannot carry a task, and what a person still has to look at belongs in the database.",
-      "required": ["decidedBy"],
-      "additionalProperties": false,
-      "properties": {
-        "decidedBy": { "$ref": "#/$defs/decidedBy" },
-        "decidedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "evidence": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/evidence" } }
-      }
+    "originalFiles": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "The originals placed in THIS folder next to the package, in order, each under its own name — one normally, several when the version is split into parts, and none when the version was made without keeping any. Every name is the file.name of one of this version's sources. Written once: when an original is deleted later, this keeps naming it and an events/…-original-deleted.json record says it is gone.",
+      "items": { "$ref": "defs.schema.json#/$defs/fileName" }
+    },
+    "lostIfOriginalDeleted": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Everything this version's originals carry that would not survive their deletion, as it stood when this record was written: each property of the sources' essence that nothing else in this folder holds. With a package in the folder that is the sources' essence minus the package's; with no package it is everything the originals carry, which is the answer a version that has never been packaged must still be able to give. Deleting an original is safe only when this is empty, and the original-deleted event records this list as what was accepted as lost."
     }
   }
 }

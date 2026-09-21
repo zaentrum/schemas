@@ -4,7 +4,7 @@
   "title": "versions/<versionId>/package.json — what the packager produced",
   "description": "Written once by the packager, when the package completes, and never touched again. It sits next to the bytes it describes, so it can never end up describing a different package, and it is the record a rebuild reads to restore the playback rows: everything the v1 manifest's playback section carried is here, under the same names.\n\nBecause it is written only on completion, there is no 'building' or 'failed' state to record — an unfinished package has no package.json and no .complete marker, and neither the database nor a rebuild will use it. A package that falls out of date later is not rewritten either: a new version folder holds the new package, and an events/…-package-superseded.json record says this one was replaced.\n\nPaths: renditions[].dir, subtitles[].path, trickplay.vttPath, trailers[].manifestPath and checksums.file are relative to THIS version folder.",
   "type": "object",
-  "required": ["schema", "packageId", "createdAt", "packagedBy", "state", "role", "durationMs", "renditions", "fidelity", "essence", "checksums", "lostIfOriginalDeleted"],
+  "required": ["schema", "packageId", "createdAt", "packagedBy", "state", "role", "durationMs", "renditions", "fidelity", "essence", "checksums"],
   "additionalProperties": false,
   "properties": {
     "schema": { "const": "zaentrum.library.package/2" },
@@ -72,12 +72,7 @@
         "droppedSourceStreams": { "type": "array", "items": { "type": "integer" } }
       }
     },
-    "essence": { "$ref": "defs.schema.json#/$defs/essence", "description": "What this package carries, in the same reduced terms as the source's, so the two can be compared." },
-    "lostIfOriginalDeleted": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Everything the original had that this package lacks, computed from the two essences when the package was written. Deleting the original is safe only when it is empty; deleting it anyway is a deliberate act, and the original-deleted event records this list as what was accepted as lost."
-    },
+    "essence": { "$ref": "defs.schema.json#/$defs/essence", "description": "What this package carries, in the same reduced terms as the source's, so the two can be compared. What the originals would cost to delete is not here but on the version, which can answer it whether or not anything has been packaged." },
 
     "checksums": {
       "type": "object",
