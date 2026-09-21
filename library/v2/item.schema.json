@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/v2/item.schema.json",
+  "title": "item.json — the identity of a library item",
+  "description": "Written once, when the item is created, and never touched again: everything here is either true forever or the item is a different item. It is the only file that has to exist in an item folder.\n\nLayout:\n  movies/<aa>/<itemId>/item.json\n  series/<aa>/<seriesId>/item.json, episodes/<episodeId>/item.json\n\n<aa> is the first two characters of the id. There is no title change here, no revision and no updatedAt: a renamed title is a database change that reaches storage through metadata.json, and everything that happens to the item after creation is a version, a package or an event.",
+  "type": "object",
+  "required": ["schema", "itemId", "type", "title", "createdAt"],
+  "unevaluatedProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "episode" } }, "required": ["type"] },
+      "then": { "required": ["seriesId", "seasonNumber", "episodeNumber"] },
+      "else": {
+        "not": { "anyOf": [
+          { "required": ["seriesId"] }, { "required": ["seasonNumber"] },
+          { "required": ["episodeNumber"] }, { "required": ["episodeCode"] }
+        ] }
+      }
+    }
+  ],
+  "properties": {
+    "schema": { "const": "zaentrum.library.item/2" },
+    "itemId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Equals the name of the folder this file sits in, and its first two characters are the shard folder." },
+    "type": { "enum": ["movie", "series", "episode"] },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The title as it was at creation, for human orientation in a folder listing. It is not the display title: that is projected into metadata.json and may differ."
+    },
+    "externalIds": { "$ref": "defs.schema.json#/$defs/externalIds", "description": "The reference ids the item was created with. Enough to fetch its texts and images again." },
+    "createdAt": {
+      "$ref": "defs.schema.json#/$defs/timestamp",
+      "description": "When the item entered the library. It orders 'recently added', so it must survive every migration unchanged."
+    },
+    "createdBy": { "type": "string", "description": "The service or person that created the item." },
+
+    "seriesId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Episode only: the series folder two levels up." },
+    "seasonNumber": { "type": "integer", "minimum": 0, "description": "Episode only, aired order. 0 = specials." },
+    "episodeNumber": { "type": "integer", "minimum": 0, "description": "Episode only, aired order." },
+    "episodeCode": { "type": "string", "pattern": "^S[0-9]{2,}E[0-9]{2,}$", "description": "Episode only, e.g. 'S01E03'. Agrees with seasonNumber and episodeNumber." }
+  }
+}

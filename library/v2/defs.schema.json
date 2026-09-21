@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaentrum.github.io/schemas/library/v2/defs.schema.json",
+  "title": "zaentrum library v2 — shared definitions",
+  "description": "Types shared by the v2 records. The database is the working copy; the tree is the record that can rebuild it. Every record here is either written once and never touched again, or replaced whole by the one service that owns it, so nothing in this file models a document that is edited in place: v1's rev, audit and review are gone.",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Lower-case RFC 4122 UUID. Identity never changes, so nothing keyed by it is ever renamed."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$",
+      "description": "RFC 3339 with an upper-case T and Z."
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$",
+      "description": "Full date, or year-month, or year when that is all that is known."
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^([a-z]{2,3}(-[A-Za-z0-9]{2,8})*|und|zxx|mul)$",
+      "description": "BCP 47, or the ISO 639-2 code a media file carried (a package rendition keeps the file's code, e.g. 'eng')."
+    },
+    "relPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$",
+      "description": "A relative path, never absolute and never escaping upward. Which folder it is relative to is stated by the field that uses it."
+    },
+    "fileName": {
+      "type": "string",
+      "pattern": "^(?!\\.{1,2}$)[^/]+$",
+      "description": "A plain name in the folder the field names. No subfolders, no traversal."
+    },
+    "evidence": {
+      "type": "object",
+      "description": "One observation supporting a derived conclusion, kept so the conclusion can be re-examined without reading the file again.",
+      "required": ["signal", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "signal": {
+          "enum": ["runtime", "container-title", "stream-title", "folder-name", "filename", "commentary-track", "content-analysis", "encoder-tag", "codec-vs-title", "tmdb", "catalog", "manual"]
+        },
+        "value": { "type": ["string", "number", "boolean", "object", "array", "null"] },
+        "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+        "note": { "type": "string" }
+      }
+    },
+    "subtitlePurpose": {
+      "enum": ["dialogue", "sdh", "forced", "signs-songs", "commentary", "lyrics", "unknown"],
+      "description": "'dialogue': all spoken dialogue (a full track normally includes the forced lines too). 'sdh': dialogue plus sound cues and speaker names, for deaf and hard-of-hearing viewers. 'forced': only what a viewer of this language would not otherwise understand — foreign or invented languages, signs, letters. 'signs-songs': on-screen text and song lyrics only, the usual companion of a dubbed audio track. 'commentary': the text of a commentary. 'lyrics': song lyrics only. 'unknown': the track could not be traced to the original's stream. Shared by an original's subtitle streams, its sidecars and a package's subtitle renditions, which describe the same thing."
+    },
+    "audioPurpose": {
+      "enum": ["main", "commentary", "description", "unknown"],
+      "description": "'main' is the work's soundtrack in one language; 'description' is audio description for blind and partially sighted viewers."
+    },
+    "purposeFrom": {
+      "enum": ["disposition", "title", "content", "human", "assumed", null],
+      "description": "What a purpose rests on: the file's stream flags, the track title, the track's content (a subtitle with a small fraction of the events of the full track in its language is forced), a person, or nothing (assumed: only dialogue or main may be assumed). Null only with purpose unknown."
+    },
+    "externalIds": {
+      "type": "object",
+      "description": "Explicit, unambiguous keys into reference databases. Enough to fetch every text and image again.",
+      "additionalProperties": false,
+      "properties": {
+        "tmdbMovie": { "type": "string", "pattern": "^[0-9]+$" },
+        "tmdbTv": { "type": "string", "pattern": "^[0-9]+$", "description": "On a series its own TV id; on an episode the parent series' TV id." },
+        "tmdbSeason": { "type": "string", "pattern": "^[0-9]+$" },
+        "tmdbEpisode": { "type": "string", "pattern": "^[0-9]+$" },
+        "tmdbCollection": { "type": "string", "pattern": "^[0-9]+$" },
+        "imdb": { "type": "string", "pattern": "^tt[0-9]+$" },
+        "tvdb": { "type": "string", "pattern": "^[0-9]+$" }
+      }
+    },
+    "fixity": {
+      "type": "object",
+      "description": "Proves a file is the same bytes after a move. qh1 is cheap and always present; sha256 of the whole file is filled in by a background job.",
+      "required": ["qh1"],
+      "additionalProperties": false,
+      "properties": {
+        "qh1": { "$ref": "#/$defs/sha256", "description": "sha256(first 64 KiB || last 64 KiB || uint64be(size)). Not a content hash." },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sha256At": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "essence": {
+      "type": "object",
+      "description": "What a file or package carries, reduced to the properties that cannot be recovered once lost. Comparing a package's essence with its original's is the check before the original is deleted.",
+      "additionalProperties": false,
+      "properties": {
+        "maxAudioChannels": { "type": "integer", "minimum": 0 },
+        "surround": { "type": "boolean", "description": "Any audio track with more than two channels." },
+        "losslessAudio": { "type": "boolean" },
+        "objectAudio": { "type": "boolean", "description": "Atmos or DTS:X." },
+        "maxVideoHeight": { "type": ["integer", "null"] },
+        "videoBitDepth": { "type": ["integer", "null"] },
+        "hdr10Metadata": { "type": "boolean" },
+        "dolbyVision": { "type": "boolean" },
+        "stereo3d": { "type": "boolean" },
+        "interlaced": { "type": "boolean" },
+        "audioLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true },
+        "subtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true },
+        "subtitleTracks": { "type": "integer", "minimum": 0 },
+        "imageSubtitles": { "type": "boolean" },
+        "styledSubtitles": { "type": "boolean" },
+        "fonts": { "type": "boolean" },
+        "chapters": { "type": "boolean", "description": "The file itself carries chapter marks. A package never does; the version keeps the marks." },
+        "commentaryTracks": { "type": "integer", "minimum": 0, "description": "Audio commentaries." },
+        "commentarySubtitles": { "type": "integer", "minimum": 0 },
+        "audioDescriptionTracks": { "type": "integer", "minimum": 0 },
+        "sdhSubtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true },
+        "forcedSubtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true, "description": "Includes signs-and-songs tracks." },
+        "closedCaptions": { "type": "boolean" }
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "description": "Filesystem ownership and permissions as found. The owning uid also records how a file arrived, so it is provenance as much as access control.",
+      "additionalProperties": false,
+      "properties": {
+        "uid": { "type": "integer" },
+        "gid": { "type": "integer" },
+        "mode": { "type": "string", "pattern": "^0?[0-7]{3,4}$" },
+        "acl": { "type": ["string", "null"] },
+        "selinux": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
