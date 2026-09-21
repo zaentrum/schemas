@@ -41,17 +41,17 @@ def version_dirs(d):
 
 
 def version_of(d, keeps_original):
-    """The version folder that does (or does not) hold its original on disk."""
+    """The version folder that does (or does not) hold its originals on disk."""
     for vp in version_dirs(d):
         v = json.load(open(os.path.join(vp, "version.json")))
-        here = v["originalFile"] is not None and os.path.isfile(os.path.join(vp, v["originalFile"]))
+        here = bool(v["originalFiles"]) and all(os.path.isfile(os.path.join(vp, n)) for n in v["originalFiles"])
         if here == keeps_original:
             return vp
     raise AssertionError(f"no version with keeps_original={keeps_original} in {d}")
 
 
 def kept(root):
-    """The movie version that still has its original."""
+    """The movie version that still has its originals — the director's cut, split across two files."""
     return version_of(movie(root), True)
 
 
@@ -60,9 +60,19 @@ def gone(root):
     return version_of(movie(root), False)
 
 
-def canonical(root):
-    """The episode version that was packaged without keeping an original."""
-    return version_of(episode(root, 2), False)
+def primary(d):
+    """The version the projection says plays when the viewer does not choose."""
+    return os.path.join(d, "versions", json.load(open(meta(d)))["library"]["primaryVersionId"])
+
+
+def superseded(root):
+    """The episode version whose package was replaced by one in a newer folder."""
+    ev = json.load(open(supersede(root)))
+    return os.path.join(episode(root, 2), "versions", ev["versionId"])
+
+
+def originals(vp):
+    return json.load(open(ver(vp)))["originalFiles"]
 
 
 def item(d):
@@ -83,6 +93,14 @@ def pkg(vp):
 
 def deletion(root):
     return only("movies/*/*/events/*-original-deleted.json", root)
+
+
+def removal(root):
+    return only("movies/*/*/events/*-version-removed.json", root)
+
+
+def supersede(root):
+    return only("series/*/*/episodes/*/events/*-package-superseded.json", root)
 
 
 def probe(root):
@@ -122,7 +140,7 @@ def rechecksum(vp):
         bytes=sum(os.path.getsize(os.path.join(vp, r)) for r in files)))
 
 
-def note(root, at="2026-09-20T09:00:00Z", **fields):
+def note(root, at="2026-09-20T09:45:00Z", **fields):
     """Add a note event to the movie."""
     stamp = at.replace("-", "").replace(":", "")
     write_json(os.path.join(movie(root), "events", f"{stamp}-note.json"),
@@ -130,22 +148,13 @@ def note(root, at="2026-09-20T09:00:00Z", **fields):
                 "kind": "note", "reason": "a fact no other record holds", **fields})
 
 
-def repackage(root):
-    """The re-package path: a new version folder beside the old one, and an event saying the old
-    package was superseded. The old folder is not touched."""
-    old = canonical(root)
-    ep, new_id = episode(root, 2), "11111111-1111-4111-8111-111111111111"
-    new = os.path.join(ep, "versions", new_id)
-    shutil.copytree(old, new)
-    edit(ver(new), lambda d: d.update(versionId=new_id))
-    edit(pkg(new), lambda d: d.update(packageId="22222222-2222-4222-8222-222222222222"))
-    stamp = "20260920T100000Z"
-    write_json(os.path.join(ep, "events", f"{stamp}-package-superseded.json"),
-               {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": "2026-09-20T10:00:00Z",
-                "by": "packager example", "kind": "package-superseded",
-                "versionId": os.path.basename(old),
-                "packageId": json.load(open(pkg(old)))["packageId"],
-                "reason": "re-packaged with a higher rung"})
+def resurrect(root):
+    """Put the removed version's folder back, full of junk: a version-removed event says to ignore
+    the folder even when it is still on storage."""
+    vp = os.path.join(movie(root), "versions", json.load(open(removal(root)))["versionId"])
+    os.makedirs(vp)
+    with open(os.path.join(vp, "version.json"), "w") as f:
+        f.write("this is not even JSON")
 
 
 def rename_image(root):
@@ -161,7 +170,7 @@ def rename_image(root):
 
 def silent(root):
     """An original with no audio: the package has video only."""
-    vp = canonical(root)
+    vp = primary(episode(root, 2))
     edit(pkg(vp), lambda d: d["renditions"].update(audio=[]))
     shutil.rmtree(os.path.join(vp, "hls", "a0"))
     rechecksum(vp)
@@ -201,7 +210,7 @@ CASES = [
     ("a version that is a file", False, lambda r: open(os.path.join(movie(r), "versions", "loose.json"), "w").write("{}"), "every version is a folder under versions/", []),
     ("a version folder not named by its id", False, lambda r: shutil.move(kept(r), os.path.join(movie(r), "versions", "directors-cut")), "named by its versionId", []),
     ("a version stored under another version's id", False, lambda r: edit(ver(kept(r)), lambda d: d.update(versionId=NOWHERE)), "does not match folder", []),
-    ("a stray entry in a version folder", False, lambda r: open(os.path.join(kept(r), "notes.txt"), "w").write("x"), "not a record, the package or the original", []),
+    ("a stray entry in a version folder", False, lambda r: open(os.path.join(kept(r), "notes.txt"), "w").write("x"), "not a record, the package or an original", []),
     ("a version naming a source with no record", False, lambda r: edit(ver(kept(r)), lambda d: d.update(sourceIds=[NOWHERE])), "has no record under sources/", []),
 
     # ---- a package.json exists exactly when .complete does
@@ -211,7 +220,10 @@ CASES = [
     # ---- what the package says about itself
     ("lossless with losses", False, lambda r: edit(pkg(kept(r)), lambda d: d["fidelity"].update(lossless=True)), "lossless must be true exactly when", []),
     ("canonical while the version keeps its original", False, lambda r: edit(pkg(kept(r)), lambda d: d.update(role="canonical")), "role must be 'canonical' exactly when", []),
-    ("derived while the version keeps no original", False, lambda r: edit(pkg(canonical(r)), lambda d: d.update(role="derived")), "role must be 'canonical' exactly when", []),
+    ("derived while the version keeps no original", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d.update(role="derived")), "role must be 'canonical' exactly when", []),
+    ("a package claiming the deletion gate the version owns", False, lambda r: edit(pkg(kept(r)), lambda d: d.update(lostIfOriginalDeleted=[])), "'lostIfOriginalDeleted' was unexpected", []),
+    ("a version with no answer to the deletion gate", False, lambda r: edit(ver(kept(r)), lambda d: d.pop("lostIfOriginalDeleted")), "'lostIfOriginalDeleted' is a required property", []),
+    ("completeness the format does not measure", False, lambda r: edit(ver(gone(r)), lambda d: d["completeness"].update(status="unknown")), "'unknown' is not one of", []),
     ("two default audio renditions", False, lambda r: edit(pkg(version_of(episode(r, 1), True)), lambda d: d["renditions"]["audio"][1].update(default=True)), "exactly one audio rendition must be default", []),
     ("a forced track flagged default", False, lambda r: edit(pkg(version_of(episode(r, 1), True)), lambda d: d["subtitles"][0].update(default=True)), "is a forced track flagged default", []),
     ("a forced flag on a dialogue track", False, lambda r: edit(pkg(version_of(episode(r, 1), True)), lambda d: d["subtitles"][1].update(forced=True)), "flagged forced but its purpose is dialogue", []),
@@ -241,10 +253,10 @@ CASES = [
     ("a hard-linked file", False, lambda r: os.link(os.path.join(kept(r), "hls", "v0", ".keep"), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media"]),
 
     # ---- the original, and the event that says it is gone
-    ("an original missing with no event to explain it", False, lambda r: os.remove(os.path.join(kept(r), json.load(open(ver(kept(r))))["originalFile"])), "no original-deleted event says it was removed", ["--check-media"]),
-    ("an original changed", False, lambda r: open(os.path.join(kept(r), json.load(open(ver(kept(r))))["originalFile"]), "ab").write(b"x"), "its source record says", ["--check-media"]),
-    ("an original still there after its deletion", False, lambda r: open(os.path.join(gone(r), json.load(open(ver(gone(r))))["originalFile"]), "w").write("x"), "the original is still here", ["--check-media"]),
-    ("an original that belongs to no source of this version", False, lambda r: edit(ver(kept(r)), lambda d: d.update(originalFile="something else.mkv")), "is not the file name of any source", ["--check-media"]),
+    ("one part of a split original missing", False, lambda r: os.remove(os.path.join(kept(r), originals(kept(r))[1])), "no original-deleted event says it was removed", ["--check-media"]),
+    ("an original changed", False, lambda r: open(os.path.join(kept(r), originals(kept(r))[0]), "ab").write(b"x"), "its source record says", ["--check-media"]),
+    ("an original still there after its deletion", False, lambda r: open(os.path.join(gone(r), originals(gone(r))[0]), "w").write("x"), "but it is still here", ["--check-media"]),
+    ("an original that belongs to no source of this version", False, lambda r: edit(ver(kept(r)), lambda d: d.update(originalFiles=["something else.mkv"])), "is not the file name of any source", []),
 
     # ---- events
     ("a deletion without what it cost", False, lambda r: edit(deletion(r), lambda d: d.pop("accepted")), "'accepted' is a required property", []),
@@ -258,7 +270,8 @@ CASES = [
     ("a deletion of a version that never had an original", False, lambda r: write_json(
         os.path.join(episode(r, 2), "events", "20260920T110000Z-original-deleted.json"),
         {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": "2026-09-20T11:00:00Z", "by": "test",
-         "kind": "original-deleted", "versionId": os.path.basename(canonical(r)), "reason": "space", "accepted": []}),
+         "kind": "original-deleted", "versionId": os.path.basename(primary(episode(r, 2))), "reason": "space",
+         "accepted": []}),
      "never named an original", []),
 
     # ---- the metadata projection and its images
@@ -269,7 +282,8 @@ CASES = [
     ("an image not named by its hash", False, rename_image, "file name is not the hash of its own content", []),
     ("an image of another type", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(contentType="image/png")), "recorded as image/png", []),
     ("an image of other dimensions", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(width=3840)), "width is 1", []),
-    ("an image of another size", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(bytes=99)), "!= recorded 99", []),
+    ("an image of another size", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(sizeBytes=99)), "!= recorded 99", []),
+    ("an image sized in v1's words", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(bytes=d["images"][0].pop("sizeBytes"))), "'bytes' was unexpected", []),
     ("an image listed twice", False, lambda r: edit(meta(movie(r)), lambda d: d["images"].append(dict(d["images"][0]))), "listed twice", []),
     ("an unlisted file in metadata/", False, lambda r: open(os.path.join(movie(r), "metadata", "extra.jpg"), "wb").write(b"x"), "not listed in metadata.json", []),
     ("a season image on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(season=1)), "season-specific image on a non-series item", []),
@@ -292,17 +306,50 @@ CASES = [
     ("an episode carrying another series' reference id", False, lambda r: (edit(item(series(r)), lambda d: d.update(externalIds={"tmdbTv": "1"})), edit(item(episode(r, 1)), lambda d: d.update(externalIds={"tmdbTv": "2"}))), "differs from the series'", []),
     ("a file among the episode folders", False, lambda r: open(os.path.join(series(r), "episodes", "notes.txt"), "w").write("x"), "unexpected file among the episode folders", []),
 
+    # ---- the deletion gate and the event that answers it
+    ("a deletion accepting something else", False, lambda r: edit(deletion(r), lambda d: d.update(accepted=["surround"])), "accepted is not what the version says", []),
+    ("a deletion naming a source the version was not made from", False, lambda r: edit(deletion(r), lambda d: d.update(sourceId=json.load(open(ver(kept(r))))["sourceIds"][0])), "was not made from", []),
+
+    # ---- a version removed from the item, and a package replaced by another
+    ("a removal naming a version that is still counted", False, lambda r: edit(removal(r), lambda d: d.update(kind="note", reason="x")), "file name says version-removed but the record's kind", []),
+    ("a re-package with no successor", False, lambda r: edit(supersede(r), lambda d: d.pop("supersededBy")), "'supersededBy' is a required property", []),
+    ("a successor that does not exist", False, lambda r: edit(supersede(r), lambda d: d["supersededBy"].update(packageId=NOWHERE)), "supersededBy.packageId", []),
+    ("a package superseded by its own version", False, lambda r: edit(supersede(r), lambda d: d["supersededBy"].update(versionId=d["versionId"])), "supersededBy names the version it supersedes", []),
+    ("a note claiming a successor", False, lambda r: note(r, supersededBy={"versionId": NOWHERE, "packageId": NOWHERE}), "must not have supersededBy", []),
+    ("the projection pointing at a removed version", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(primaryVersionId=json.load(open(removal(r)))["versionId"])), "names a version that was removed", []),
+
+    # ---- what the database decided about this item's storage
+    ("a primary version that does not exist", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(primaryVersionId=NOWHERE)), "primaryVersionId", []),
+    ("a label on a version that does not exist", False, lambda r: edit(meta(movie(r)), lambda d: d["library"]["versionLabels"].update({NOWHERE: "Extended"})), "library.versionLabels names", []),
+    ("an unknown field among the decisions", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(extra=1)), "'extra' was unexpected", []),
+    ("a match status the format does not know", False, lambda r: edit(meta(movie(r)), lambda d: d["library"]["match"].update(status="maybe")), "'maybe' is not one of", []),
+    ("an ordering on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(orderings={})), "must not have orderings", []),
+    ("a place in an ordering on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(numbering={})), "must not have numbering", []),
+
+    # ---- the orderings of a series and the episodes' places in them
+    ("a default ordering nothing describes", False, lambda r: edit(meta(series(r)), lambda d: d["library"].update(defaultOrdering="production")), "library.orderings does not describe", []),
+    ("an ordering listing an episode twice", False, lambda r: edit(meta(series(r)), lambda d: d["library"]["orderings"]["aired"].append(dict(d["library"]["orderings"]["aired"][0]))), "lists an episode twice", []),
+    ("an ordering listing an episode that is not there", False, lambda r: edit(meta(series(r)), lambda d: d["library"]["orderings"]["dvd"].append({"itemId": NOWHERE, "season": 1, "episode": 9, "episodeEnd": None})), "is no episode folder of this series", []),
+    ("a default ordering leaving an episode out", False, lambda r: edit(meta(series(r)), lambda d: d["library"]["orderings"]["aired"].pop()), "leaves out episode", []),
+    ("a numbering against the item's own aired numbers", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"]["aired"].update(episode=5)), "but item.json was created with", []),
+    ("a numbering in an ordering the series does not describe", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"].update(production={"season": 1, "episode": 1, "episodeEnd": None})), "an ordering the series does not describe", []),
+    ("a numbering that disagrees with the series", False, lambda r: edit(meta(episode(r, 2)), lambda d: d["library"]["numbering"]["aired"].update(episodeEnd=None)), "disagrees with the series' ordering", []),
+    ("an episode with no place in an ordering that lists it", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"].pop("dvd")), "records no numbering for it", []),
+
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
                                                                   (movie(r), os.path.join(movie(r), "metadata"), os.path.join(r, "movies"), kept(r), os.path.join(series(r), "episodes"))], "OK", ["--check-media"]),
-    ("an item that has not been packaged yet", True, lambda r: (shutil.rmtree(os.path.join(movie(r), "versions")), shutil.rmtree(os.path.join(movie(r), "events"))), "OK", ["--check-media"]),
+    ("an item that has not been packaged yet", True, lambda r: (
+        shutil.rmtree(os.path.join(movie(r), "versions")), shutil.rmtree(os.path.join(movie(r), "events")),
+        edit(meta(movie(r)), lambda d: d["library"].update(primaryVersionId=None, versionLabels={}))), "OK", ["--check-media"]),
     ("a season listed with no episodes on storage", True, lambda r: edit(meta(series(r)), lambda d: d["series"]["seasons"].append(
         {"number": 2, "tmdbSeason": None, "name": "Season 2", "overview": None, "airDate": None, "episodeCountReference": 8})), "OK", []),
     ("a note with no subject", True, note, "OK", []),
     ("an event file named with its eventId", True, lambda r: shutil.move(deletion(r), os.path.join(
         os.path.dirname(deletion(r)), "20260920T081500Z-" + json.load(open(deletion(r)))["eventId"][:8] + "-original-deleted.json")), "OK", []),
-    ("a re-package as a new version folder", True, repackage, "OK", ["--check-checksums"]),
     ("an original with no audio", True, silent, "OK", ["--check-checksums"]),
+    ("a removed version whose folder is still on storage", True, resurrect, "OK", ["--check-checksums"]),
+    ("an item whose database decided nothing about its storage", True, lambda r: edit(meta(movie(r)), lambda d: d.pop("library")), "OK", []),
 ]
 
 
