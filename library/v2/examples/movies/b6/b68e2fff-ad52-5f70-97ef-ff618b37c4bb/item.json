@@ -1,0 +1,12 @@
+{
+  "schema": "zaentrum.library.item/2",
+  "itemId": "b68e2fff-ad52-5f70-97ef-ff618b37c4bb",
+  "type": "movie",
+  "title": "Tears of Steel",
+  "externalIds": {
+    "tmdbMovie": "133701",
+    "imdb": "tt2285752"
+  },
+  "createdAt": "2026-09-18T09:00:00Z",
+  "createdBy": "ingest example"
+}

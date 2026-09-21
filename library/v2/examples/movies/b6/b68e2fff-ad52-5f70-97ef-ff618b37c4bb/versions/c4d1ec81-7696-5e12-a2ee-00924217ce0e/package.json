@@ -1,0 +1,137 @@
+{
+  "schema": "zaentrum.library.package/2",
+  "packageId": "55b9f6e7-5e52-5ffd-a732-271df876f9db",
+  "createdAt": "2026-09-18T11:30:00Z",
+  "packagedBy": "packager example",
+  "state": "complete",
+  "role": "derived",
+  "durationMs": 734000,
+  "recipe": {
+    "video": "hevc re-encode, 800p and 533p",
+    "audio": "aac-lc 2ch 192k",
+    "subtitles": null
+  },
+  "renditions": {
+    "video": [
+      {
+        "id": "v0",
+        "dir": "hls/v0",
+        "codec": "hev1.1.6.L120.B0",
+        "width": 1920,
+        "height": 800,
+        "bitrateBps": 8000000,
+        "hdr": false,
+        "frameRate": "24/1",
+        "segments": 10,
+        "targetDuration": 6,
+        "dynamicRange": "sdr",
+        "sourceStreamIndex": 0
+      },
+      {
+        "id": "v1",
+        "dir": "hls/v1",
+        "codec": "hev1.1.6.L93.B0",
+        "width": 1280,
+        "height": 533,
+        "bitrateBps": 3000000,
+        "hdr": false,
+        "frameRate": "24/1",
+        "segments": 10,
+        "targetDuration": 6,
+        "dynamicRange": "sdr",
+        "sourceStreamIndex": 0
+      }
+    ],
+    "audio": [
+      {
+        "id": "a0",
+        "dir": "hls/a0",
+        "codec": "mp4a.40.2",
+        "language": "eng",
+        "title": "",
+        "default": true,
+        "channels": 2,
+        "bitrateBps": 192000,
+        "segments": 15,
+        "visible": true,
+        "sourceStreamIndex": 1,
+        "sourceChannels": 6,
+        "purpose": "main",
+        "purposeFrom": "assumed",
+        "variant": null,
+        "original": true
+      }
+    ]
+  },
+  "subtitles": [],
+  "trickplay": {
+    "vttPath": "trickplay/thumbnails.vtt",
+    "spritePattern": "trickplay/sprite-%04d.jpg",
+    "intervalSec": 10,
+    "thumbWidth": 320,
+    "thumbHeight": 180,
+    "gridCols": 10,
+    "gridRows": 10
+  },
+  "trailers": [],
+  "sizeBytes": 734000000,
+  "peakBandwidthBps": 8192000,
+  "fidelity": {
+    "lossless": false,
+    "losses": [
+      {
+        "kind": "audio-downmix",
+        "detail": "6ch -> 2ch (a0)",
+        "sourceStreamIndex": 1
+      },
+      {
+        "kind": "subtitle-dropped",
+        "detail": "1 of 1 source subtitle track(s) not packaged",
+        "sourceStreamIndex": 2
+      }
+    ],
+    "droppedSourceStreams": [
+      2
+    ]
+  },
+  "essence": {
+    "maxAudioChannels": 2,
+    "surround": false,
+    "losslessAudio": false,
+    "objectAudio": false,
+    "maxVideoHeight": 800,
+    "videoBitDepth": 8,
+    "hdr10Metadata": false,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [],
+    "subtitleTracks": 0,
+    "imageSubtitles": false,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": false,
+    "commentaryTracks": 0,
+    "commentarySubtitles": 0,
+    "audioDescriptionTracks": 0,
+    "sdhSubtitleLanguages": [],
+    "forcedSubtitleLanguages": [],
+    "closedCaptions": false
+  },
+  "lostIfOriginalDeleted": [
+    "surround",
+    "audioChannels 6->2",
+    "subtitleLanguages en",
+    "subtitleTracks 1->0"
+  ],
+  "checksums": {
+    "file": "checksums.sha256",
+    "algorithm": "sha256",
+    "sha256": "sha256:8e7d5c57e98fc568ef5564f1fe5f0866e3cb35e79649b06a1416637e44161100",
+    "files": 6,
+    "bytes": 5152
+  }
+}

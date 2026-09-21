@@ -1,0 +1,165 @@
+{
+  "schema": "zaentrum.library.source/2",
+  "sourceId": "6b58492a-ea00-5e51-ae33-0b310919b757",
+  "takenAt": "2026-09-18T09:05:00Z",
+  "takenBy": "analyzer example",
+  "file": {
+    "name": "Tears of Steel (2012).mkv",
+    "kind": "stream-container",
+    "sizeBytes": 6300000000,
+    "mtime": "2026-09-18T09:00:00Z",
+    "fixity": {
+      "qh1": "sha256:1c801e380315cb4fdeb04260138edcbfb3f1db77739b59a1ee9254b86ff814a9"
+    },
+    "part": null
+  },
+  "origin": {
+    "libraryPath": "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
+    "folder": "movies/Tears of Steel (2012)",
+    "takenBy": "move"
+  },
+  "labels": {
+    "quality": "1080p",
+    "medium": "disc",
+    "resolution": "1080p",
+    "edition": null,
+    "folderEdition": null
+  },
+  "container": {
+    "format": "matroska,webm",
+    "durationMs": 734000,
+    "bitrate": null,
+    "title": null,
+    "muxingApp": null,
+    "writingApp": null,
+    "creationTime": null,
+    "tags": {}
+  },
+  "fidelity": {
+    "class": "original",
+    "fingerprint": "h264/high/8bit/sdr/1920x800",
+    "evidence": []
+  },
+  "streams": [
+    {
+      "index": 0,
+      "type": "video",
+      "codec": "h264",
+      "language": null,
+      "languageRaw": null,
+      "title": null,
+      "dispositions": {
+        "default": true
+      },
+      "profile": "Main",
+      "level": null,
+      "bitDepth": 8,
+      "pixelFormat": "yuv420p",
+      "width": 1920,
+      "height": 800,
+      "sampleAspectRatio": "1:1",
+      "displayAspectRatio": null,
+      "frameRate": "24/1",
+      "fieldOrder": "progressive",
+      "bitrate": null,
+      "colour": {
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": null,
+        "range": "tv"
+      },
+      "hdr": {
+        "format": "sdr",
+        "masteringDisplay": null,
+        "contentLightLevel": null,
+        "dolbyVision": null
+      },
+      "stereo3d": null,
+      "closedCaptions": false,
+      "encoder": null
+    },
+    {
+      "index": 1,
+      "type": "audio",
+      "codec": "ac3",
+      "language": "en",
+      "languageRaw": "eng",
+      "title": null,
+      "dispositions": {
+        "default": true,
+        "commentary": false
+      },
+      "profile": null,
+      "channels": 6,
+      "channelLayout": "5.1(side)",
+      "sampleRate": 48000,
+      "bitDepth": null,
+      "bitrate": null,
+      "lossless": false,
+      "objectAudio": "none",
+      "titleClaim": null,
+      "encoder": null,
+      "purpose": "main",
+      "purposeFrom": "assumed",
+      "variant": null
+    },
+    {
+      "index": 2,
+      "type": "subtitle",
+      "codec": "subrip",
+      "language": "en",
+      "languageRaw": "eng",
+      "title": null,
+      "dispositions": {
+        "default": false,
+        "forced": false,
+        "hearingImpaired": false
+      },
+      "form": "text",
+      "styled": false,
+      "variant": null,
+      "events": 900,
+      "purpose": "dialogue",
+      "purposeFrom": "assumed"
+    }
+  ],
+  "sidecars": [],
+  "covers": [],
+  "essence": {
+    "maxAudioChannels": 6,
+    "surround": true,
+    "losslessAudio": false,
+    "objectAudio": false,
+    "maxVideoHeight": 1080,
+    "videoBitDepth": 8,
+    "hdr10Metadata": false,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [
+      "en"
+    ],
+    "subtitleTracks": 1,
+    "imageSubtitles": false,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": true,
+    "commentaryTracks": 0,
+    "commentarySubtitles": 0,
+    "audioDescriptionTracks": 0,
+    "sdhSubtitleLanguages": [],
+    "forcedSubtitleLanguages": [],
+    "closedCaptions": false
+  },
+  "probe": {
+    "tool": "ffprobe",
+    "version": null,
+    "at": "2026-09-18T09:05:00Z",
+    "file": "sources/6b58492a-ea00-5e51-ae33-0b310919b757/ffprobe.json",
+    "sha256": "sha256:9b374dda724ce90a8a80a6e941f7f3fed9bfcb465ead26635607b48211c75ae7",
+    "note": null
+  }
+}

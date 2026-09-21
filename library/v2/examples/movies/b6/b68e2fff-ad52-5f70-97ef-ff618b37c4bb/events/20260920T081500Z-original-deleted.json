@@ -1,0 +1,17 @@
+{
+  "schema": "zaentrum.library.event/2",
+  "eventId": "f2c3e669-5152-5b39-aa31-808de93dc3a1",
+  "at": "2026-09-20T08:15:00Z",
+  "by": "librarian example",
+  "kind": "original-deleted",
+  "sourceId": "6b58492a-ea00-5e51-ae33-0b310919b757",
+  "versionId": "c4d1ec81-7696-5e12-a2ee-00924217ce0e",
+  "packageId": "55b9f6e7-5e52-5ffd-a732-271df876f9db",
+  "reason": "space on the archive volume",
+  "accepted": [
+    "surround",
+    "audioChannels 6->2",
+    "subtitleLanguages en",
+    "subtitleTracks 1->0"
+  ]
+}

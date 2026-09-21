@@ -1,0 +1,85 @@
+{
+  "schema": "zaentrum.library.metadata/2",
+  "itemId": "8dae7353-070a-5ff5-8ee3-a2d54615f984",
+  "type": "series",
+  "asOf": "2026-09-20T12:00:00Z",
+  "projectedBy": "catalog example",
+  "titles": {
+    "primary": "Example Show",
+    "original": null,
+    "sort": "example show",
+    "qualifier": "US",
+    "localized": {
+      "en": {
+        "title": "Example Show",
+        "sortTitle": "example show",
+        "tagline": null,
+        "overview": "A fictional series used to illustrate the library layout."
+      }
+    }
+  },
+  "genres": [
+    "Drama"
+  ],
+  "tags": [],
+  "rating": null,
+  "contentRating": null,
+  "credits": [],
+  "series": {
+    "status": "returning",
+    "firstAirDate": "2024-01-10",
+    "lastAirDate": "2024-03-06",
+    "network": null,
+    "seasons": [
+      {
+        "number": 1,
+        "tmdbSeason": null,
+        "name": "Season 1",
+        "overview": "The first season.",
+        "airDate": "2024-01-10",
+        "episodeCountReference": 8
+      }
+    ]
+  },
+  "images": [
+    {
+      "kind": "poster",
+      "file": "47bfa9f38417346388389c24309057b6252f6326e742ba5d9eca8ff59f0fefe7.jpg",
+      "sha256": "sha256:47bfa9f38417346388389c24309057b6252f6326e742ba5d9eca8ff59f0fefe7",
+      "contentType": "image/jpeg",
+      "bytes": 151,
+      "width": 1,
+      "height": 1,
+      "language": null,
+      "sourceUrl": null,
+      "fetchedAt": "2026-09-20T12:00:00Z",
+      "origin": "manual",
+      "season": null
+    },
+    {
+      "kind": "poster",
+      "file": "5467670ed712a099d14cde1cdd7b82d167b27d42279384f33f8e1be089fe79c1.jpg",
+      "sha256": "sha256:5467670ed712a099d14cde1cdd7b82d167b27d42279384f33f8e1be089fe79c1",
+      "contentType": "image/jpeg",
+      "bytes": 153,
+      "width": 1,
+      "height": 1,
+      "language": null,
+      "sourceUrl": null,
+      "fetchedAt": "2026-09-20T12:00:00Z",
+      "origin": "manual",
+      "season": 1
+    }
+  ],
+  "curation": {
+    "metadataLocked": false,
+    "lockedFields": [],
+    "notes": null
+  },
+  "fieldOrigins": {
+    "titles.primary": "manual",
+    "titles.qualifier": "filename",
+    "series": "manual",
+    "images": "manual"
+  }
+}

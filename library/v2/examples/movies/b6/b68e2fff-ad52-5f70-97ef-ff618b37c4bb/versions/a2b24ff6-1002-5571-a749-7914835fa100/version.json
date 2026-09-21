@@ -1,0 +1,32 @@
+{
+  "schema": "zaentrum.library.version/2",
+  "versionId": "a2b24ff6-1002-5571-a749-7914835fa100",
+  "createdAt": "2026-09-18T09:20:00Z",
+  "createdBy": "analyzer example",
+  "edition": {
+    "kind": "directors-cut",
+    "label": "Director's Cut",
+    "decidedBy": "human",
+    "decidedAt": "2026-09-18T09:20:00Z",
+    "evidence": [
+      {
+        "signal": "folder-name",
+        "value": "Tears of Steel (2012) - Director's Cut"
+      }
+    ]
+  },
+  "presentation": {
+    "colour": "colour",
+    "dynamicRange": "sdr",
+    "stereo3d": "none",
+    "aspectRatio": "12:5"
+  },
+  "runtimeMs": 812000,
+  "chapters": [],
+  "chaptersFrom": null,
+  "segments": [],
+  "sourceIds": [
+    "98bcd818-6dd4-5521-ae1d-55da066fbd9a"
+  ],
+  "originalFile": "Tears of Steel (2012) - Director's Cut.mkv"
+}

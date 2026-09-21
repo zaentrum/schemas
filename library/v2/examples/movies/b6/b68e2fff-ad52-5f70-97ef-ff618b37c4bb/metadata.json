@@ -1,0 +1,105 @@
+{
+  "schema": "zaentrum.library.metadata/2",
+  "itemId": "b68e2fff-ad52-5f70-97ef-ff618b37c4bb",
+  "type": "movie",
+  "asOf": "2026-09-20T12:00:00Z",
+  "projectedBy": "catalog example",
+  "titles": {
+    "primary": "Tears of Steel",
+    "original": "Tears of Steel",
+    "sort": "tears of steel",
+    "qualifier": null,
+    "localized": {
+      "en": {
+        "title": "Tears of Steel",
+        "sortTitle": "tears of steel",
+        "tagline": null,
+        "overview": "A group of warriors and scientists gather at the Oude Kerk in Amsterdam to stage a crucial event from the past."
+      }
+    }
+  },
+  "releaseDate": "2012-09-26",
+  "genres": [
+    "Science Fiction"
+  ],
+  "tags": [],
+  "rating": null,
+  "contentRating": null,
+  "credits": [
+    {
+      "personId": "a1a35dd5-9e10-567a-a4fd-a894c8d826e0",
+      "name": "Ian Hubert",
+      "role": "director",
+      "character": null,
+      "order": 0,
+      "tmdbPerson": null
+    }
+  ],
+  "collection": null,
+  "images": [
+    {
+      "kind": "poster",
+      "file": "85ac133235bb2fe1e0013f23d250b52199a9ea2e57dedff8faef2dc55a8a28d8.jpg",
+      "sha256": "sha256:85ac133235bb2fe1e0013f23d250b52199a9ea2e57dedff8faef2dc55a8a28d8",
+      "contentType": "image/jpeg",
+      "bytes": 144,
+      "width": 1,
+      "height": 1,
+      "language": null,
+      "sourceUrl": null,
+      "fetchedAt": "2026-09-20T12:00:00Z",
+      "origin": "manual"
+    },
+    {
+      "kind": "backdrop",
+      "file": "b24acf3ea7d250dc3ec763ad9700c40371ea0d3e9e83091aba77ff3ad4a4b1c0.jpg",
+      "sha256": "sha256:b24acf3ea7d250dc3ec763ad9700c40371ea0d3e9e83091aba77ff3ad4a4b1c0",
+      "contentType": "image/jpeg",
+      "bytes": 146,
+      "width": 1,
+      "height": 1,
+      "language": null,
+      "sourceUrl": null,
+      "fetchedAt": "2026-09-20T12:00:00Z",
+      "origin": "manual"
+    },
+    {
+      "kind": "logo",
+      "file": "43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6.png",
+      "sha256": "sha256:43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6",
+      "contentType": "image/png",
+      "bytes": 68,
+      "width": 1,
+      "height": 1,
+      "language": "en",
+      "sourceUrl": null,
+      "fetchedAt": "2026-09-20T12:00:00Z",
+      "origin": "manual"
+    }
+  ],
+  "videos": [
+    {
+      "site": "example.org",
+      "key": "tears-of-steel-trailer",
+      "url": null,
+      "name": "Trailer",
+      "kind": "trailer",
+      "language": "en",
+      "durationMs": 60000,
+      "publishedAt": "2012-09-26T00:00:00Z",
+      "origin": "manual"
+    }
+  ],
+  "curation": {
+    "metadataLocked": false,
+    "lockedFields": [],
+    "notes": null
+  },
+  "fieldOrigins": {
+    "titles.primary": "tmdb",
+    "releaseDate": "tmdb",
+    "genres": "tmdb",
+    "credits": "tmdb",
+    "images": "manual"
+  }
+}

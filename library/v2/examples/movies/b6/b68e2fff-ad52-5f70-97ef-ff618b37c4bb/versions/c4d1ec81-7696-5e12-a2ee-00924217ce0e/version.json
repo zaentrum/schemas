@@ -1,0 +1,57 @@
+{
+  "schema": "zaentrum.library.version/2",
+  "versionId": "c4d1ec81-7696-5e12-a2ee-00924217ce0e",
+  "createdAt": "2026-09-18T09:20:00Z",
+  "createdBy": "analyzer example",
+  "edition": {
+    "kind": "theatrical",
+    "label": null,
+    "decidedBy": "inferred",
+    "decidedAt": "2026-09-18T09:20:00Z",
+    "confidence": 0.6,
+    "evidence": [
+      {
+        "signal": "runtime",
+        "value": {
+          "measuredMs": 734000,
+          "referenceMs": 720000
+        },
+        "weight": 0.6
+      }
+    ]
+  },
+  "presentation": {
+    "colour": "colour",
+    "dynamicRange": "sdr",
+    "stereo3d": "none",
+    "aspectRatio": "12:5"
+  },
+  "runtimeMs": 734000,
+  "chapters": [
+    {
+      "startMs": 0,
+      "endMs": 300000,
+      "title": "Chapter 1"
+    },
+    {
+      "startMs": 300000,
+      "endMs": 734000,
+      "title": "Chapter 2"
+    }
+  ],
+  "chaptersFrom": "original-file",
+  "segments": [
+    {
+      "kind": "credits",
+      "startMs": 690000,
+      "endMs": 734000,
+      "detector": "blackframe",
+      "confidence": 0.9,
+      "label": null
+    }
+  ],
+  "sourceIds": [
+    "6b58492a-ea00-5e51-ae33-0b310919b757"
+  ],
+  "originalFile": "Tears of Steel (2012).mkv"
+}

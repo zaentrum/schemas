@@ -1,0 +1,53 @@
+{
+  "schema": "zaentrum.library.metadata/2",
+  "itemId": "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
+  "type": "episode",
+  "asOf": "2026-09-20T12:00:00Z",
+  "projectedBy": "catalog example",
+  "titles": {
+    "primary": "Crosswind",
+    "original": null,
+    "sort": "crosswind",
+    "qualifier": null,
+    "localized": {
+      "en": {
+        "title": "Crosswind",
+        "sortTitle": "crosswind",
+        "tagline": null,
+        "overview": "The second episode."
+      }
+    }
+  },
+  "genres": [],
+  "tags": [],
+  "rating": null,
+  "credits": [],
+  "episode": {
+    "airDate": "2024-01-23"
+  },
+  "images": [
+    {
+      "kind": "still",
+      "file": "6ebaba11efc8175ab34a98827873e81462e9c9865006d6ee6acbd16699181330.jpg",
+      "sha256": "sha256:6ebaba11efc8175ab34a98827873e81462e9c9865006d6ee6acbd16699181330",
+      "contentType": "image/jpeg",
+      "bytes": 150,
+      "width": 1,
+      "height": 1,
+      "language": null,
+      "sourceUrl": null,
+      "fetchedAt": "2026-09-20T12:00:00Z",
+      "origin": "manual"
+    }
+  ],
+  "curation": {
+    "metadataLocked": false,
+    "lockedFields": [],
+    "notes": null
+  },
+  "fieldOrigins": {
+    "titles.primary": "manual",
+    "episode.airDate": "manual",
+    "images": "manual"
+  }
+}
