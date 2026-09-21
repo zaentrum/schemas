@@ -34,6 +34,18 @@
     },
     "createdBy": { "type": "string", "description": "The service or person that created the item." },
 
+    "provenance": {
+      "type": "object",
+      "description": "How the item came to exist, when it came from somewhere else. It is part of the item's creation, so it is written once with the rest of this file and never revised. A tree built by migrating an old catalog keeps the old ids here, so what was already known about the item can still be found after the catalog it came from is gone.",
+      "additionalProperties": false,
+      "properties": {
+        "migratedFrom": { "enum": ["legacy-catalog", "scan", "manual"] },
+        "legacyItemId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "The id the item had in the catalog it came from." },
+        "migratedAt": { "$ref": "defs.schema.json#/$defs/timestamp" },
+        "legacyCreatedBy": { "type": ["string", "null"] }
+      }
+    },
+
     "seriesId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Episode only: the series folder two levels up." },
     "seasonNumber": { "type": "integer", "minimum": 0, "description": "Episode only, aired order. 0 = specials." },
     "episodeNumber": { "type": "integer", "minimum": 0, "description": "Episode only, aired order." },

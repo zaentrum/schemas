@@ -43,6 +43,18 @@
         "takenBy": { "enum": ["move", "copy", "import", "unknown"], "description": "How it got here." }
       }
     },
+    "naming": {
+      "type": "object",
+      "description": "How the file's own name numbered what it holds, as the name expressed it — 'S02E05', '2x05', 'E107', 'S07E23-24'. It is a fact about the file, not a decision about the item, so it lives here and not in the metadata projection: the item's numbering is what the database decided, this is what the release claimed, and the two often disagree. When the original is deleted this is the only record of how that release was numbered. Every field is optional, because most names say some of it and none say all of it.",
+      "additionalProperties": false,
+      "properties": {
+        "scheme": { "enum": ["aired", "dvd", "absolute", "production", "unknown"], "description": "The ordering the name appears to use. 'unknown' when nothing in the name says, which is the usual case." },
+        "seasonNumber": { "type": ["integer", "null"], "minimum": 0, "description": "Absent from a name that numbers episodes absolutely." },
+        "episodeNumber": { "type": ["integer", "null"], "minimum": 0 },
+        "episodeEnd": { "type": ["integer", "null"], "minimum": 0, "description": "Set when the name covers a range, e.g. 'S07E23-24'." },
+        "raw": { "type": ["string", "null"], "description": "The token the numbers were read from, verbatim." }
+      }
+    },
     "labels": {
       "type": "object",
       "description": "What the filename and folder CLAIM. Unreliable — a name can claim a disc copy that is a re-encode — but the only claim on record, and it disappears with the file.",
