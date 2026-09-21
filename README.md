@@ -4,9 +4,11 @@ Published contracts for the zaentrum platform, in two families:
 
 - **Event payloads** — Avro schemas for Kafka events, the single source of
   truth for event shapes, published to a shared Apicurio schema registry.
-- **Library storage** — JSON Schemas for the on-storage library (item
-  `manifest.json` and `metadata/metadata.json`), served at
-  <https://zaentrum.github.io/schemas/>. See [Library storage schemas](#library-storage-schemas).
+- **Library storage** — JSON Schemas for the on-storage library, served at
+  <https://zaentrum.github.io/schemas/>, in two versions: [v1](#library-storage-schemas), where
+  storage is the source of truth and every item is a `manifest.json` plus a
+  `metadata/metadata.json`, and [v2](#library-storage-schemas--v2), where the database is the
+  working copy and the tree is a written-once record that can rebuild it.
 
 ## Status
 
@@ -26,13 +28,20 @@ stube/
 library/v1/
   manifest.schema.json, metadata.schema.json, defs.schema.json
   examples/                a movie and a series in the storage layout
+library/v2/
+  item.schema.json, metadata.schema.json, source.schema.json,
+  version.schema.json, package.schema.json, event.schema.json, defs.schema.json
+  examples/                a movie, a series and a deletion in the record layout
 tools/
   publish-to-apicurio.sh           publish Avro schemas to a registry
-  validate-library.py              validate a library tree
-  test-validate-library.py         broken trees the validator must reject
+  validate-library.py              validate a v1 library tree
+  test-validate-library.py         broken v1 trees the validator must reject
   library-migrate.py               reference migrator from a legacy catalog
   make-library-examples.py         regenerate library/v1/examples
   package-checksums.py             write or verify each package's checksums on storage
+  validate-library-v2.py           validate a v2 library tree
+  test-validate-library-v2.py      broken v2 trees the validator must reject
+  make-library-v2-examples.py      regenerate library/v2/examples
 ```
 
 The top-level `stube/` directory mirrors the Avro namespace and Kafka topic
@@ -173,6 +182,89 @@ rebuild a library with the current migrator after one.
 
 The format is documented in the
 [zaentrum wiki](https://github.com/zaentrum/zaentrum/wiki/library).
+
+## Library storage schemas — v2
+
+v2 turns v1 around. The **database is the working copy**: services read and write it at runtime,
+and nothing walks the tree to answer a request. **Storage is the record**: every item folder holds
+the facts about itself as they were when they were made — its identity, each original that entered
+it, each version and package produced from it, and the texts and images the database held — which
+is enough to rebuild the database and nothing more. There is no crawler; the tree is read on two
+occasions only, a deliberate rebuild and a deliberate verification.
+
+That makes every file single-writer and one-directional, which is why there is no `manifest.json`
+any more and no `rev`, `updatedAt` or `review` anywhere. A file is either a record of something
+that cannot change — `item.json`, `sources/<id>.json`, `versions/<id>/version.json`,
+`versions/<id>/package.json` — written once when the thing it describes is made and never touched
+again, or the projection of the database (`metadata.json`), replaced whole by the service that owns
+the item. Nothing is merged, so there is no conflict to resolve. The few facts that arise later get
+their own file under `events/` instead of a rewrite: an original deleted, a package superseded. Every
+version is a folder, so a re-package is a new folder rather than an edit, and a record always sits
+next to the bytes it describes.
+
+```
+movies/<aa>/<itemId>/
+  item.json                        identity, written once
+  metadata.json                    the database's texts, projected
+  metadata/<sha256>.jpg            images named by their own content hash
+  sources/<sourceId>.json          one original as it was found, written once
+  sources/<sourceId>/ffprobe.json  the verbatim probe and copied sidecars
+  versions/<versionId>/
+    version.json                   edition, presentation, marks, sources — written once
+    package.json                   renditions, losses, checksums — written once
+    <original file>                the original, when this version keeps it
+    hls/  subs/  trickplay/        the package
+    checksums.sha256               every package file, sha256sum -c format
+    .complete                      the package is finished
+  events/<timestamp>-<kind>.json   facts that arise later, written once
+series/<aa>/<seriesId>/            item.json, metadata.json, metadata/, episodes/<episodeId>/
+```
+
+| Schema | Document | `schema` field |
+|---|---|---|
+| [`item.schema.json`](https://zaentrum.github.io/schemas/library/v2/item.schema.json) | `item.json` | `zaentrum.library.item/2` |
+| [`metadata.schema.json`](https://zaentrum.github.io/schemas/library/v2/metadata.schema.json) | `metadata.json` | `zaentrum.library.metadata/2` |
+| [`source.schema.json`](https://zaentrum.github.io/schemas/library/v2/source.schema.json) | `sources/<sourceId>.json` | `zaentrum.library.source/2` |
+| [`version.schema.json`](https://zaentrum.github.io/schemas/library/v2/version.schema.json) | `versions/<versionId>/version.json` | `zaentrum.library.version/2` |
+| [`package.schema.json`](https://zaentrum.github.io/schemas/library/v2/package.schema.json) | `versions/<versionId>/package.json` | `zaentrum.library.package/2` |
+| [`event.schema.json`](https://zaentrum.github.io/schemas/library/v2/event.schema.json) | `events/<timestamp>-<kind>.json` | `zaentrum.library.event/2` |
+| [`defs.schema.json`](https://zaentrum.github.io/schemas/library/v2/defs.schema.json) | shared definitions | — |
+
+Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
+outside a version folder, `package.json` exists exactly when `.complete` does, images are named by
+their own hash, events reference records that exist, episodes agree with their series):
+
+```sh
+pip install "jsonschema[format-nongpl]>=4.23" referencing
+python tools/validate-library-v2.py <root-with-movies-and-series>
+python tools/validate-library-v2.py --check-media <root>      # also the bytes the records name
+python tools/validate-library-v2.py --check-checksums <root>  # also hash every package file
+python tools/test-validate-library-v2.py                      # prove it rejects broken trees
+python tools/make-library-v2-examples.py                      # regenerate library/v2/examples
+```
+
+### Library v2 changelog
+
+v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
+migrates automatically. Every change is listed here; regenerate the examples after one.
+
+- **2026-09-21 (a)** — first publication of the record layout, against
+  [Database first, storage as the record](https://github.com/zaentrum/zaentrum/blob/main/docs/library/record.md).
+  Against v1: `manifest.json` is split into `item.json`, `sources/<id>.json`,
+  `versions/<id>/version.json` and `versions/<id>/package.json`; `metadata/metadata.json` moves up
+  to `metadata.json` and its images are named by their content hash rather than by kind, so an
+  image is written once and a replacement is a new file; `events/` is new. Every version is a
+  folder, so `versions[].path` and the top-level playback fields are gone. `rev`, `audit`,
+  `updatedAt`, `decision.review` and `match` are gone with the living documents they belonged to;
+  the source's `state`/`deletedAt` and the package's `building`/`failed` states are gone with
+  them — an unfinished package writes nothing, and a deletion is an event. `package.checksums` is
+  required rather than nullable, because a record written on completion has nothing to fill in
+  later. `defs` keeps v1's `uuid`, `sha256`, `timestamp`, `date`, `language`, `relPath`,
+  `externalIds`, `fixity`, `essence`, `ownership` and `evidence`, and gains `fileName`,
+  `subtitlePurpose`, `audioPurpose` and `purposeFrom`, which v1 kept inside `manifest.schema.json`
+  and both the source and the package now share. Every playback field of the v1 manifest survives
+  in `package.json` under its own name, except `packagedAt` and `packager`, which are `createdAt`
+  and `packagedBy` like every other v2 record.
 
 ## License
 

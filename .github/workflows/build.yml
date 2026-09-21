@@ -47,3 +47,20 @@ jobs:
       - run: python -m py_compile tools/library-migrate.py tools/make-library-examples.py tools/test-validate-library.py tools/package-checksums.py
       - name: examples are up to date with their generator
         run: python tools/make-library-examples.py && git diff --exit-code -- library/v1/examples
+
+  library-v2:
+    # The record layout: item / metadata / source / version / package / event.
+    # Same checks as v1, against library/v2.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --quiet "jsonschema[format-nongpl]>=4.23" referencing
+      - run: python tools/validate-library-v2.py --check-checksums library/v2/examples
+      - name: the validator rejects broken libraries
+        run: python tools/test-validate-library-v2.py
+      - run: python -m py_compile tools/make-library-v2-examples.py tools/test-validate-library-v2.py
+      - name: examples are up to date with their generator
+        run: python tools/make-library-v2-examples.py && git diff --exit-code -- library/v2/examples
