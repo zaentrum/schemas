@@ -53,6 +53,18 @@
         "note": { "type": "string" }
       }
     },
+    "decidedBy": { "enum": ["inferred", "human", "legacy-catalog", "tmdb"] },
+    "decision": {
+      "type": "object",
+      "description": "A conclusion with its confidence and who reached it. There is no review field: a record written once cannot carry a task, and what a person still has to look at belongs in the database. A human decision outranks an inferred one and is never overwritten by automation. It is left open so a use can add its own field (a status, a kind) and close the object itself with unevaluatedProperties.",
+      "required": ["decidedBy"],
+      "properties": {
+        "decidedBy": { "$ref": "#/$defs/decidedBy" },
+        "decidedAt": { "$ref": "#/$defs/timestamp" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+      }
+    },
     "subtitlePurpose": {
       "enum": ["dialogue", "sdh", "forced", "signs-songs", "commentary", "lyrics", "unknown"],
       "description": "'dialogue': all spoken dialogue (a full track normally includes the forced lines too). 'sdh': dialogue plus sound cues and speaker names, for deaf and hard-of-hearing viewers. 'forced': only what a viewer of this language would not otherwise understand — foreign or invented languages, signs, letters. 'signs-songs': on-screen text and song lyrics only, the usual companion of a dubbed audio track. 'commentary': the text of a commentary. 'lyrics': song lyrics only. 'unknown': the track could not be traced to the original's stream. Shared by an original's subtitle streams, its sidecars and a package's subtitle renditions, which describe the same thing."

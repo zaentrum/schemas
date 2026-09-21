@@ -17,6 +17,15 @@
     {
       "if": { "properties": { "type": { "const": "movie" } }, "required": ["type"] },
       "then": { "not": { "anyOf": [{ "required": ["series"] }, { "required": ["episode"] }] } }
+    },
+    {
+      "$comment": "An ordering is a property of a series; a place in one is a property of an episode.",
+      "if": { "not": { "properties": { "type": { "const": "series" } }, "required": ["type"] } },
+      "then": { "properties": { "library": { "not": { "anyOf": [{ "required": ["defaultOrdering"] }, { "required": ["orderings"] }] } } } }
+    },
+    {
+      "if": { "not": { "properties": { "type": { "const": "episode" } }, "required": ["type"] } },
+      "then": { "properties": { "library": { "not": { "required": ["numbering"] } } } }
     }
   ],
   "unevaluatedProperties": false,
@@ -131,7 +140,7 @@
       "description": "Every image file in metadata/. Each is named by the hash of its own content, so an image is written once and never replaced in place: a new image is a new file, and the projection that stops naming an old one lets it be collected. A missing kind falls back to the parent at read time (an episode without a still shows its season poster, then the series poster); nothing is copied.",
       "items": {
         "type": "object",
-        "required": ["kind", "file", "sha256", "contentType", "bytes"],
+        "required": ["kind", "file", "sha256", "contentType", "sizeBytes"],
         "additionalProperties": false,
         "properties": {
           "kind": { "enum": ["poster", "backdrop", "logo", "still", "banner", "thumb"] },
@@ -144,7 +153,7 @@
           "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }], "description": "For posters and logos with text, the language of that text. The file name carries no language, so this is the only record of it." },
           "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "The same digest the file name carries, in the form the rest of the format uses. Caches key on it." },
           "contentType": { "enum": ["image/jpeg", "image/png", "image/webp"] },
-          "bytes": { "type": "integer", "minimum": 0 },
+          "sizeBytes": { "type": "integer", "minimum": 0 },
           "width": { "type": ["integer", "null"] },
           "height": { "type": ["integer", "null"] },
           "sourceUrl": { "type": ["string", "null"], "description": "Where the image came from, so the exact chosen image can be fetched again." },
@@ -175,6 +184,82 @@
       }
     },
 
+    "library": {
+      "type": "object",
+      "description": "The decisions the database holds about this item's storage. Nothing here is a fact about the bytes — those are in the version, source and package records, which are written once and measured. These are choices a person or the catalog made that no measurement could recover, so they are projected with the texts and a rebuild restores them.",
+      "additionalProperties": false,
+      "properties": {
+        "primaryVersionId": {
+          "oneOf": [{ "$ref": "defs.schema.json#/$defs/uuid" }, { "type": "null" }],
+          "description": "The version that plays when the viewer does not choose. Null when the database never decided, and a reader then picks for itself. It is a decision, not a place: it never moves a file."
+        },
+        "versionLabels": {
+          "type": "object",
+          "description": "versionId -> what a viewer picks between, e.g. 'Director's Cut', 'Black & White'. Listed only where a person set one; every other version is labelled at read time from its edition and presentation, so an unlisted version is not an omission.",
+          "propertyNames": { "$ref": "defs.schema.json#/$defs/uuid" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "match": {
+          "description": "Whether and how this item is identified against the reference database. item.json carries the reference ids; this says how far to trust them, so a re-sync can skip what is unmatched or disputed and never overwrite what a person decided.",
+          "allOf": [{ "$ref": "defs.schema.json#/$defs/decision" }],
+          "type": "object",
+          "required": ["status", "decidedBy"],
+          "properties": {
+            "status": { "enum": ["matched", "unmatched", "manual", "disputed"] },
+            "decidedBy": true, "decidedAt": true, "confidence": true, "evidence": true
+          },
+          "unevaluatedProperties": false
+        },
+        "reference": {
+          "type": "object",
+          "description": "Facts as published. Deliberately separate from the version's MEASURED runtime: a reference database lists one runtime for every cut.",
+          "additionalProperties": false,
+          "properties": {
+            "runtimeMs": { "type": ["integer", "null"], "minimum": 0 },
+            "runtimeSource": { "enum": ["tmdb", "legacy-catalog", "manual", null] }
+          }
+        },
+        "defaultOrdering": {
+          "$ref": "#/$defs/ordering",
+          "description": "Series only: the ordering a viewer sees unless they choose another."
+        },
+        "orderings": {
+          "type": "object",
+          "description": "Series only: for each ordering the database knows, its episodes in that order. The default ordering lists exactly the episode folders on storage; another ordering may leave an episode out. It is a projection, so adding an episode re-projects this file rather than editing a record.",
+          "propertyNames": { "$ref": "#/$defs/ordering" },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["itemId", "episode"],
+              "additionalProperties": false,
+              "properties": {
+                "itemId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "An episodes/<itemId>/ folder of this series." },
+                "season": { "type": ["integer", "null"], "minimum": 0, "description": "Null in an ordering that does not use seasons, such as absolute." },
+                "episode": { "type": "integer", "minimum": 0 },
+                "episodeEnd": { "type": ["integer", "null"], "minimum": 0, "description": "Set when one file covers several episodes (S07E23-24)." }
+              }
+            }
+          }
+        },
+        "numbering": {
+          "type": "object",
+          "description": "Episode only: where this episode sits under each ordering it appears in. It agrees with the series' orderings, and its aired entry agrees with the seasonNumber and episodeNumber item.json was created with.",
+          "propertyNames": { "$ref": "#/$defs/ordering" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["episode"],
+            "additionalProperties": false,
+            "properties": {
+              "season": { "type": ["integer", "null"], "minimum": 0 },
+              "episode": { "type": "integer", "minimum": 0 },
+              "episodeEnd": { "type": ["integer", "null"], "minimum": 0, "description": "Set when this one file covers several episodes." }
+            }
+          }
+        }
+      }
+    },
+
     "curation": {
       "type": "object",
       "description": "What a person decided about the texts and images, projected with them so a rebuild does not hand a locked item back to automation.",
@@ -190,5 +275,9 @@
       "description": "Where each value came from, keyed by field path. Lists only fields that are set. Images carry their own origin.",
       "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"] }
     }
+  },
+
+  "$defs": {
+    "ordering": { "enum": ["aired", "dvd", "absolute", "production"] }
   }
 }
