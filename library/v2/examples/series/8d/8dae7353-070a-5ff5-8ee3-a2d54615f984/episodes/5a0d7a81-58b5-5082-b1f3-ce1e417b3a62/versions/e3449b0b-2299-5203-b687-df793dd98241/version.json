@@ -1,6 +1,6 @@
 {
   "schema": "zaentrum.library.version/2",
-  "versionId": "d40ee9b9-0cf6-5e72-881e-84eb858082b7",
+  "versionId": "e3449b0b-2299-5203-b687-df793dd98241",
   "createdAt": "2026-09-18T09:20:00Z",
   "createdBy": "analyzer example",
   "edition": {
@@ -34,11 +34,9 @@
     "evidence": []
   },
   "sourceIds": [
-    "9c9e9620-1e82-58df-8460-bf8272b35982"
+    "711a19f3-61aa-5d68-b4d3-7e9672694a15"
   ],
-  "originalFiles": [
-    "Example Show (US) - S01E01 - Pilot.mkv"
-  ],
+  "originalFiles": [],
   "lostIfOriginalDeleted": [
     "surround",
     "hdr10Metadata",

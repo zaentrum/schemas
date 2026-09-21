@@ -1,20 +1,23 @@
 {
   "schema": "zaentrum.library.source/2",
-  "sourceId": "98bcd818-6dd4-5521-ae1d-55da066fbd9a",
+  "sourceId": "bce3e1b4-6dd5-5844-b8b0-70cb3007e393",
   "takenAt": "2026-09-18T09:05:00Z",
   "takenBy": "analyzer example",
   "file": {
-    "name": "Tears of Steel (2012) - Director's Cut.mkv",
+    "name": "Tears of Steel (2012) - Director's Cut - part1.mkv",
     "kind": "stream-container",
-    "sizeBytes": 80,
+    "sizeBytes": 88,
     "mtime": "2026-09-18T09:00:00Z",
     "fixity": {
-      "qh1": "sha256:e9855b902cf581cae18558123a4c0c3707a5778bf3def80f4c8bbd8b5325c603"
+      "qh1": "sha256:35c48401f999c0e3b9826a5a5fcb73e7ebab5697ea3bf34ac0ee1893db43a1a6"
     },
-    "part": null
+    "part": {
+      "index": 1,
+      "of": 2
+    }
   },
   "origin": {
-    "libraryPath": "movies/Tears of Steel (2012) - Director's Cut/Tears of Steel (2012) - Director's Cut.mkv",
+    "libraryPath": "movies/Tears of Steel (2012) - Director's Cut/Tears of Steel (2012) - Director's Cut - part1.mkv",
     "folder": "movies/Tears of Steel (2012) - Director's Cut",
     "takenBy": "move"
   },
@@ -27,7 +30,7 @@
   },
   "container": {
     "format": "matroska,webm",
-    "durationMs": 812000,
+    "durationMs": 406000,
     "bitrate": null,
     "title": null,
     "muxingApp": null,
@@ -137,8 +140,8 @@
     "tool": "ffprobe",
     "version": null,
     "at": "2026-09-18T09:05:00Z",
-    "file": "sources/98bcd818-6dd4-5521-ae1d-55da066fbd9a/ffprobe.json",
-    "sha256": "sha256:afbf9a59154cc4c816bf510fe89cd0bcc2fdda9eff620db2c29db0322e32d5cf",
+    "file": "sources/bce3e1b4-6dd5-5844-b8b0-70cb3007e393/ffprobe.json",
+    "sha256": "sha256:715660d1c758faf27fee86718c61747c4b893f5e36a13e74e8dbabe634e90298",
     "note": null
   }
 }

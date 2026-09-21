@@ -1,0 +1,147 @@
+{
+  "schema": "zaentrum.library.source/2",
+  "sourceId": "b01e5486-1e84-5253-adfa-7c530752390b",
+  "takenAt": "2026-09-18T09:05:00Z",
+  "takenBy": "analyzer example",
+  "file": {
+    "name": "Tears of Steel (2012) - Director's Cut - part2.mkv",
+    "kind": "stream-container",
+    "sizeBytes": 88,
+    "mtime": "2026-09-18T09:00:00Z",
+    "fixity": {
+      "qh1": "sha256:563a1421d52f1fde4bbc5a6123d3cfe7365e27f360ca8eadcd11985e586c5758"
+    },
+    "part": {
+      "index": 2,
+      "of": 2
+    }
+  },
+  "origin": {
+    "libraryPath": "movies/Tears of Steel (2012) - Director's Cut/Tears of Steel (2012) - Director's Cut - part2.mkv",
+    "folder": "movies/Tears of Steel (2012) - Director's Cut",
+    "takenBy": "move"
+  },
+  "labels": {
+    "quality": "1080p",
+    "medium": "web",
+    "resolution": "1080p",
+    "edition": null,
+    "folderEdition": null
+  },
+  "container": {
+    "format": "matroska,webm",
+    "durationMs": 406000,
+    "bitrate": null,
+    "title": null,
+    "muxingApp": null,
+    "writingApp": null,
+    "creationTime": null,
+    "tags": {}
+  },
+  "fidelity": {
+    "class": "original",
+    "fingerprint": "h264/high/8bit/sdr/1920x800",
+    "evidence": []
+  },
+  "streams": [
+    {
+      "index": 0,
+      "type": "video",
+      "codec": "h264",
+      "language": null,
+      "languageRaw": null,
+      "title": null,
+      "dispositions": {
+        "default": true
+      },
+      "profile": "Main",
+      "level": null,
+      "bitDepth": 8,
+      "pixelFormat": "yuv420p",
+      "width": 1920,
+      "height": 800,
+      "sampleAspectRatio": "1:1",
+      "displayAspectRatio": null,
+      "frameRate": "24/1",
+      "fieldOrder": "progressive",
+      "bitrate": null,
+      "colour": {
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": null,
+        "range": "tv"
+      },
+      "hdr": {
+        "format": "sdr",
+        "masteringDisplay": null,
+        "contentLightLevel": null,
+        "dolbyVision": null
+      },
+      "stereo3d": null,
+      "closedCaptions": false,
+      "encoder": null
+    },
+    {
+      "index": 1,
+      "type": "audio",
+      "codec": "ac3",
+      "language": "en",
+      "languageRaw": "eng",
+      "title": null,
+      "dispositions": {
+        "default": true,
+        "commentary": false
+      },
+      "profile": null,
+      "channels": 6,
+      "channelLayout": "5.1(side)",
+      "sampleRate": 48000,
+      "bitDepth": null,
+      "bitrate": null,
+      "lossless": false,
+      "objectAudio": "none",
+      "titleClaim": null,
+      "encoder": null,
+      "purpose": "main",
+      "purposeFrom": "assumed",
+      "variant": null
+    }
+  ],
+  "sidecars": [],
+  "covers": [],
+  "essence": {
+    "maxAudioChannels": 6,
+    "surround": true,
+    "losslessAudio": false,
+    "objectAudio": false,
+    "maxVideoHeight": 1080,
+    "videoBitDepth": 8,
+    "hdr10Metadata": false,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [],
+    "subtitleTracks": 0,
+    "imageSubtitles": false,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": false,
+    "commentaryTracks": 0,
+    "commentarySubtitles": 0,
+    "audioDescriptionTracks": 0,
+    "sdhSubtitleLanguages": [],
+    "forcedSubtitleLanguages": [],
+    "closedCaptions": false
+  },
+  "probe": {
+    "tool": "ffprobe",
+    "version": null,
+    "at": "2026-09-18T09:05:00Z",
+    "file": "sources/b01e5486-1e84-5253-adfa-7c530752390b/ffprobe.json",
+    "sha256": "sha256:1bc06941d733736be03b15869017dbe4cc181b4414cfdcf088abf9a7b38cc058",
+    "note": null
+  }
+}

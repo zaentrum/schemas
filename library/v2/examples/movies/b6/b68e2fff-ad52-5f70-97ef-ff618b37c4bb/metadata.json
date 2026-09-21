@@ -36,13 +36,35 @@
     }
   ],
   "collection": null,
+  "library": {
+    "primaryVersionId": "a2b24ff6-1002-5571-a749-7914835fa100",
+    "versionLabels": {
+      "a2b24ff6-1002-5571-a749-7914835fa100": "Director's Cut"
+    },
+    "match": {
+      "status": "matched",
+      "decidedBy": "tmdb",
+      "decidedAt": "2026-09-20T12:00:00Z",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "signal": "tmdb",
+          "value": "133701"
+        }
+      ]
+    },
+    "reference": {
+      "runtimeMs": 720000,
+      "runtimeSource": "tmdb"
+    }
+  },
   "images": [
     {
       "kind": "poster",
       "file": "85ac133235bb2fe1e0013f23d250b52199a9ea2e57dedff8faef2dc55a8a28d8.jpg",
       "sha256": "sha256:85ac133235bb2fe1e0013f23d250b52199a9ea2e57dedff8faef2dc55a8a28d8",
       "contentType": "image/jpeg",
-      "bytes": 144,
+      "sizeBytes": 144,
       "width": 1,
       "height": 1,
       "language": null,
@@ -55,7 +77,7 @@
       "file": "b24acf3ea7d250dc3ec763ad9700c40371ea0d3e9e83091aba77ff3ad4a4b1c0.jpg",
       "sha256": "sha256:b24acf3ea7d250dc3ec763ad9700c40371ea0d3e9e83091aba77ff3ad4a4b1c0",
       "contentType": "image/jpeg",
-      "bytes": 146,
+      "sizeBytes": 146,
       "width": 1,
       "height": 1,
       "language": null,
@@ -68,7 +90,7 @@
       "file": "43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6.png",
       "sha256": "sha256:43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6",
       "contentType": "image/png",
-      "bytes": 68,
+      "sizeBytes": 68,
       "width": 1,
       "height": 1,
       "language": "en",

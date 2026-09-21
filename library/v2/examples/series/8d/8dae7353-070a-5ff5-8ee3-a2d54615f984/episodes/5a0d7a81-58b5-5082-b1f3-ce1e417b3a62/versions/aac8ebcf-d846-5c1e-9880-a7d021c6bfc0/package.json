@@ -1,7 +1,7 @@
 {
   "schema": "zaentrum.library.package/2",
-  "packageId": "35ef23c6-783c-561a-8253-617c74c5a735",
-  "createdAt": "2026-09-18T11:30:00Z",
+  "packageId": "b1f0114d-4154-5ea5-97e7-82f96064112a",
+  "createdAt": "2026-09-19T13:00:00Z",
   "packagedBy": "packager example",
   "state": "complete",
   "role": "canonical",
@@ -20,6 +20,20 @@
         "width": 3840,
         "height": 2160,
         "bitrateBps": 8000000,
+        "hdr": true,
+        "frameRate": "24/1",
+        "segments": 10,
+        "targetDuration": 6,
+        "dynamicRange": "hdr10",
+        "sourceStreamIndex": 0
+      },
+      {
+        "id": "v1",
+        "dir": "hls/v1",
+        "codec": "hev1.1.6.L93.B0",
+        "width": 2560,
+        "height": 1440,
+        "bitrateBps": 3000000,
         "hdr": true,
         "frameRate": "24/1",
         "segments": 10,
@@ -105,16 +119,11 @@
     "forcedSubtitleLanguages": [],
     "closedCaptions": false
   },
-  "lostIfOriginalDeleted": [
-    "surround",
-    "hdr10Metadata",
-    "audioChannels 6->2"
-  ],
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",
-    "sha256": "sha256:494318fe1f3e2490fb1c9de6dfe0909b6d79e3d6890d86f14bec2238bc439fe9",
-    "files": 7,
-    "bytes": 18935
+    "sha256": "sha256:704d73ca03a02891c0e4d38ff642fc3927322d354d581273817705cfba2e0402",
+    "files": 8,
+    "bytes": 18924
   }
 }

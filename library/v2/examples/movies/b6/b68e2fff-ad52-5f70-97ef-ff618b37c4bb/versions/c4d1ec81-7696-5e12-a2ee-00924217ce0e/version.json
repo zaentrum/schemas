@@ -50,8 +50,29 @@
       "label": null
     }
   ],
+  "completeness": {
+    "status": "complete",
+    "evidence": [
+      {
+        "signal": "runtime",
+        "value": {
+          "measuredMs": 734000,
+          "referenceMs": 720000
+        },
+        "note": "runs past the reference runtime, so nothing is missing"
+      }
+    ]
+  },
   "sourceIds": [
     "6b58492a-ea00-5e51-ae33-0b310919b757"
   ],
-  "originalFile": "Tears of Steel (2012).mkv"
+  "originalFiles": [
+    "Tears of Steel (2012).mkv"
+  ],
+  "lostIfOriginalDeleted": [
+    "surround",
+    "audioChannels 6->2",
+    "subtitleLanguages en",
+    "subtitleTracks 1->0"
+  ]
 }

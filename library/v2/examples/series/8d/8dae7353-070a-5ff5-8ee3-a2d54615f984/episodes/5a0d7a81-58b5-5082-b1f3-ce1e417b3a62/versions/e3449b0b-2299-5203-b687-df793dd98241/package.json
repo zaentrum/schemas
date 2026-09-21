@@ -1,13 +1,13 @@
 {
   "schema": "zaentrum.library.package/2",
-  "packageId": "55b9f6e7-5e52-5ffd-a732-271df876f9db",
+  "packageId": "cb33bb4f-8e83-517a-80aa-a6e677271b50",
   "createdAt": "2026-09-18T11:30:00Z",
   "packagedBy": "packager example",
   "state": "complete",
-  "role": "derived",
-  "durationMs": 734000,
+  "role": "canonical",
+  "durationMs": 2700000,
   "recipe": {
-    "video": "hevc re-encode, 800p and 533p",
+    "video": "hevc re-encode",
     "audio": "aac-lc 2ch 192k",
     "subtitles": null
   },
@@ -17,28 +17,14 @@
         "id": "v0",
         "dir": "hls/v0",
         "codec": "hev1.1.6.L120.B0",
-        "width": 1920,
-        "height": 800,
+        "width": 3840,
+        "height": 2160,
         "bitrateBps": 8000000,
-        "hdr": false,
+        "hdr": true,
         "frameRate": "24/1",
         "segments": 10,
         "targetDuration": 6,
-        "dynamicRange": "sdr",
-        "sourceStreamIndex": 0
-      },
-      {
-        "id": "v1",
-        "dir": "hls/v1",
-        "codec": "hev1.1.6.L93.B0",
-        "width": 1280,
-        "height": 533,
-        "bitrateBps": 3000000,
-        "hdr": false,
-        "frameRate": "24/1",
-        "segments": 10,
-        "targetDuration": 6,
-        "dynamicRange": "sdr",
+        "dynamicRange": "hdr10",
         "sourceStreamIndex": 0
       }
     ],
@@ -74,7 +60,7 @@
     "gridRows": 10
   },
   "trailers": [],
-  "sizeBytes": 734000000,
+  "sizeBytes": 2700000000,
   "peakBandwidthBps": 8192000,
   "fidelity": {
     "lossless": false,
@@ -85,22 +71,20 @@
         "sourceStreamIndex": 1
       },
       {
-        "kind": "subtitle-dropped",
-        "detail": "1 of 1 source subtitle track(s) not packaged",
-        "sourceStreamIndex": 2
+        "kind": "audio-codec",
+        "detail": "eac3 -> mp4a.40.2",
+        "sourceStreamIndex": 1
       }
     ],
-    "droppedSourceStreams": [
-      2
-    ]
+    "droppedSourceStreams": []
   },
   "essence": {
     "maxAudioChannels": 2,
     "surround": false,
     "losslessAudio": false,
     "objectAudio": false,
-    "maxVideoHeight": 800,
-    "videoBitDepth": 8,
+    "maxVideoHeight": 2160,
+    "videoBitDepth": 10,
     "hdr10Metadata": false,
     "dolbyVision": false,
     "stereo3d": false,
@@ -124,8 +108,8 @@
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",
-    "sha256": "sha256:8e7d5c57e98fc568ef5564f1fe5f0866e3cb35e79649b06a1416637e44161100",
-    "files": 6,
-    "bytes": 5152
+    "sha256": "sha256:1b5829efbd76080edee2e1d5331e90a7ea7635704eeb3c79113f6064e37da054",
+    "files": 7,
+    "bytes": 18924
   }
 }

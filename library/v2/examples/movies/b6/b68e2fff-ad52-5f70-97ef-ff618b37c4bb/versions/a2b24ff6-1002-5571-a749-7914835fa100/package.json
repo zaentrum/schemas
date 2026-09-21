@@ -100,10 +100,6 @@
     "forcedSubtitleLanguages": [],
     "closedCaptions": false
   },
-  "lostIfOriginalDeleted": [
-    "surround",
-    "audioChannels 6->2"
-  ],
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",

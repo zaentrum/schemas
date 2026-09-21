@@ -1,0 +1,9 @@
+{
+  "schema": "zaentrum.library.event/2",
+  "eventId": "bbffd1a6-5528-597b-a696-6f857834874f",
+  "at": "2026-09-20T09:30:00Z",
+  "by": "librarian example",
+  "kind": "version-removed",
+  "versionId": "02384955-2cce-5f32-a822-5234b8cca445",
+  "reason": "an SDR duplicate of the theatrical cut, kept by mistake"
+}

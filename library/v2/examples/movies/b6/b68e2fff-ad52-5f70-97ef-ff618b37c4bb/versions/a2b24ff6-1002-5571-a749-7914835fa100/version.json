@@ -25,8 +25,20 @@
   "chapters": [],
   "chaptersFrom": null,
   "segments": [],
+  "completeness": {
+    "status": "complete",
+    "evidence": []
+  },
   "sourceIds": [
-    "98bcd818-6dd4-5521-ae1d-55da066fbd9a"
+    "bce3e1b4-6dd5-5844-b8b0-70cb3007e393",
+    "b01e5486-1e84-5253-adfa-7c530752390b"
   ],
-  "originalFile": "Tears of Steel (2012) - Director's Cut.mkv"
+  "originalFiles": [
+    "Tears of Steel (2012) - Director's Cut - part1.mkv",
+    "Tears of Steel (2012) - Director's Cut - part2.mkv"
+  ],
+  "lostIfOriginalDeleted": [
+    "surround",
+    "audioChannels 6->2"
+  ]
 }

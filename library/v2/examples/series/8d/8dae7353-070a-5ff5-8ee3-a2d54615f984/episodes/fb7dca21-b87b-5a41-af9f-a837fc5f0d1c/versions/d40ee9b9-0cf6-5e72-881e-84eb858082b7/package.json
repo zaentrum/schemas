@@ -172,16 +172,11 @@
     ],
     "closedCaptions": false
   },
-  "lostIfOriginalDeleted": [
-    "surround",
-    "hdr10Metadata",
-    "audioChannels 6->2"
-  ],
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",
-    "sha256": "sha256:d4e8032c4171856bdc1d26c70bdef7ceaa7b393db544ccaada3c13e2e2c577c9",
+    "sha256": "sha256:6a4e20976ea3ec46756b3e722388dac692f8a61123a202d2cbaf03e2f0d0b287",
     "files": 11,
-    "bytes": 18956
+    "bytes": 18945
   }
 }

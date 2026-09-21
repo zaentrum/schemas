@@ -25,7 +25,10 @@ CREATED = "2026-09-18T09:00:00Z"      # the item entered the library
 TAKEN = "2026-09-18T09:05:00Z"        # an original was taken in
 VERSIONED = "2026-09-18T09:20:00Z"    # a version was established
 PACKAGED = "2026-09-18T11:30:00Z"     # a package completed
+REPACKAGED = "2026-09-19T13:00:00Z"   # a second package was made in a new version folder
+SUPERSEDED = "2026-09-19T13:05:00Z"   # the package it replaces was recorded as superseded
 DELETED = "2026-09-20T08:15:00Z"      # an original was deleted
+REMOVED = "2026-09-20T09:30:00Z"      # a version was removed from the item
 PROJECTED = "2026-09-20T12:00:00Z"    # the database was projected into metadata.json
 
 # A fixed 1x1 JPEG and a fixed 1x1 transparent PNG, as bytes rather than generated, so the fixture
@@ -78,7 +81,7 @@ def image(item_dir, kind, data, ctype, **extra):
     name = f"{digest}.{ext}"
     write(os.path.join(item_dir, "metadata", name), data)
     entry = {"kind": kind, "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
-             "bytes": len(data), "width": 1, "height": 1, "language": None,
+             "sizeBytes": len(data), "width": 1, "height": 1, "language": None,
              "sourceUrl": None, "fetchedAt": PROJECTED, "origin": "manual"}
     entry.update(extra)
     return entry
@@ -144,7 +147,8 @@ def probe_stream(st):
 
 # ---------------------------------------------------------------- the records
 def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms,
-           quality="1080p", medium="disc", fingerprint="h264/high/8bit/sdr/1920x800", size=6300000000):
+           quality="1080p", medium="disc", fingerprint="h264/high/8bit/sdr/1920x800", size=6300000000,
+           part=None):
     """sources/<sid>.json plus the verbatim probe beside it. Written once; it never says where the
     bytes are or whether they still exist — that is the version's record and the events."""
     probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)},
@@ -155,7 +159,7 @@ def source(item_dir, sid, name, library_path, streams, chapters, src_essence, du
     record = {
         "schema": "zaentrum.library.source/2", "sourceId": sid, "takenAt": TAKEN, "takenBy": "analyzer example",
         "file": {"name": name, "kind": "stream-container", "sizeBytes": size, "mtime": CREATED,
-                 "fixity": {"qh1": sha(name.encode())}, "part": None},
+                 "fixity": {"qh1": sha(name.encode())}, "part": part},
         "origin": {"libraryPath": library_path, "folder": os.path.dirname(library_path), "takenBy": "move"},
         "labels": {"quality": quality, "medium": medium, "resolution": quality, "edition": None, "folderEdition": None},
         "container": {"format": "matroska,webm", "durationMs": duration_ms, "bitrate": None, "title": None,
@@ -228,23 +232,27 @@ def renditions(width, height, hdr, source_channels, ladder=False):
     }
 
 
-def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, original_file,
-                   chapters=(), chapters_from=None, segments=()):
+def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, original_files, lost,
+                   chapters=(), chapters_from=None, segments=(), completeness="complete", measured=None,
+                   created=VERSIONED):
     record = {
-        "schema": "zaentrum.library.version/2", "versionId": vid, "createdAt": VERSIONED,
+        "schema": "zaentrum.library.version/2", "versionId": vid, "createdAt": created,
         "createdBy": "analyzer example", "edition": edition, "presentation": presentation,
         "runtimeMs": runtime_ms, "chapters": list(chapters), "chaptersFrom": chapters_from,
-        "segments": list(segments), "sourceIds": list(source_ids), "originalFile": original_file,
+        "segments": list(segments),
+        "completeness": {"status": completeness, "evidence": list(measured or [])},
+        "sourceIds": list(source_ids), "originalFiles": list(original_files),
+        "lostIfOriginalDeleted": list(lost),
     }
     write(os.path.join(vdir, "version.json"), record)
     return record
 
 
-def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, lost, size_bytes,
-                   subtitles=(), recipe=None):
+def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, size_bytes,
+                   subtitles=(), recipe=None, created=PACKAGED):
     """The package files must already be written: the checksums cover them."""
     record = {
-        "schema": "zaentrum.library.package/2", "packageId": pid, "createdAt": PACKAGED,
+        "schema": "zaentrum.library.package/2", "packageId": pid, "createdAt": created,
         "packagedBy": "packager example", "state": "complete", "role": role, "durationMs": duration_ms,
         "recipe": recipe or {"video": "hevc re-encode", "audio": "aac-lc 2ch 192k", "subtitles": None},
         "renditions": ren, "subtitles": list(subtitles), "trickplay": dict(TRICKPLAY), "trailers": [],
@@ -252,15 +260,15 @@ def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, lost,
         "fidelity": {"lossless": not losses, "losses": list(losses),
                      "droppedSourceStreams": sorted({l["sourceStreamIndex"] for l in losses
                                                      if l["kind"].endswith("-dropped") and l["sourceStreamIndex"] is not None})},
-        "essence": pkg_essence, "lostIfOriginalDeleted": list(lost), "checksums": checksums(vdir),
+        "essence": pkg_essence, "checksums": checksums(vdir),
     }
     write(os.path.join(vdir, "package.json"), record)
     return record
 
 
-def event(item_dir, at, kind, **fields):
+def event(item_dir, at, kind, by="librarian example", **fields):
     record = {"schema": "zaentrum.library.event/2", "eventId": uid("event", at, kind), "at": at,
-              "by": "librarian example", "kind": kind, **fields}
+              "by": by, "kind": kind, **fields}
     stamp = at.replace("-", "").replace(":", "")
     write(os.path.join(item_dir, "events", f"{stamp}-{kind}.json"), record)
     return record
@@ -269,7 +277,8 @@ def event(item_dir, at, kind, **fields):
 # ---------------------------------------------------------------- the sample library
 def movie():
     """Tears of Steel, in two versions: a theatrical cut whose original was deleted, and a
-    director's cut that still keeps its original next to its package."""
+    director's cut split across two files that still keeps both next to its package. A third
+    version was removed from the item altogether, and only the event that says so is left."""
     mid = uid("movie", "tears-of-steel")
     mdir = os.path.join(ROOT, "movies", mid[:2], mid)
     write(os.path.join(mdir, "item.json"), {
@@ -291,43 +300,49 @@ def movie():
                   [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)"), subtitle(2, None)],
                   chapters, essence(maxAudioChannels=6, surround=True, chapters=True,
                                     subtitleLanguages=["en"], subtitleTracks=1), 734000)
+    lost1 = ["surround", "audioChannels 6->2", "subtitleLanguages en", "subtitleTracks 1->0"]
     version_record(v1dir, v1,
                    {"kind": "theatrical", "label": None, "decidedBy": "inferred", "decidedAt": VERSIONED,
                     "confidence": 0.6,
                     "evidence": [{"signal": "runtime", "value": {"measuredMs": 734000, "referenceMs": 720000},
                                   "weight": 0.6}]},
                    {"colour": "colour", "dynamicRange": "sdr", "stereo3d": "none", "aspectRatio": "12:5"},
-                   734000, [s1], src1["file"]["name"], chapters, "original-file", credits_seg)
+                   734000, [s1], [src1["file"]["name"]], lost1, chapters, "original-file", credits_seg,
+                   measured=[{"signal": "runtime", "value": {"measuredMs": 734000, "referenceMs": 720000},
+                              "note": "runs past the reference runtime, so nothing is missing"}])
     write(os.path.join(v1dir, ".complete"), b"packager example 2026-09-18\n")
     ren1 = renditions(1920, 800, False, 6, ladder=True)
     for r in ren1["video"] + ren1["audio"]:
         keep(os.path.join(v1dir, r["dir"]))
     trickplay_files(v1dir, 734000)
-    lost1 = ["surround", "audioChannels 6->2", "subtitleLanguages en", "subtitleTracks 1->0"]
     package_record(v1dir, p1, "derived", 734000, ren1, essence(maxVideoHeight=800),
                    [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                     {"kind": "subtitle-dropped", "detail": "1 of 1 source subtitle track(s) not packaged",
                      "sourceStreamIndex": 2}],
-                   lost1, 734000000,
+                   734000000,
                    recipe={"video": "hevc re-encode, 800p and 533p", "audio": "aac-lc 2ch 192k", "subtitles": None})
     # The original is gone; version.json still names it, and this record says what that cost.
     event(mdir, DELETED, "original-deleted", sourceId=s1, versionId=v1, packageId=p1,
           reason="space on the archive volume", accepted=lost1)
 
-    # --- version two: the director's cut, with its original next to its package.
-    v2, s2, p2 = uid(mid, "version", "directors-cut"), uid(mid, "source", "directors-cut"), uid(mid, "package", "directors-cut")
+    # --- version two: the director's cut, in two files, both kept next to the package.
+    v2, p2 = uid(mid, "version", "directors-cut"), uid(mid, "package", "directors-cut")
     v2dir = os.path.join(mdir, "versions", v2)
-    src2 = source(mdir, s2, "Tears of Steel (2012) - Director's Cut.mkv",
-                  "movies/Tears of Steel (2012) - Director's Cut/Tears of Steel (2012) - Director's Cut.mkv",
-                  [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)")],
-                  [], essence(maxAudioChannels=6, surround=True), 812000, medium="web")
-    original = place_original(v2dir, src2)
-    write(os.path.join(mdir, "sources", f"{s2}.json"), src2)
+    parts = []
+    for index in (1, 2):
+        sid = uid(mid, "source", "directors-cut", str(index))
+        name = f"Tears of Steel (2012) - Director's Cut - part{index}.mkv"
+        src = source(mdir, sid, name, f"movies/Tears of Steel (2012) - Director's Cut/{name}",
+                     [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)")],
+                     [], essence(maxAudioChannels=6, surround=True), 406000, medium="web",
+                     part={"index": index, "of": 2})
+        parts.append((sid, place_original(v2dir, src)))
+        write(os.path.join(mdir, "sources", f"{sid}.json"), src)
     version_record(v2dir, v2,
                    {"kind": "directors-cut", "label": "Director's Cut", "decidedBy": "human", "decidedAt": VERSIONED,
                     "evidence": [{"signal": "folder-name", "value": "Tears of Steel (2012) - Director's Cut"}]},
                    {"colour": "colour", "dynamicRange": "sdr", "stereo3d": "none", "aspectRatio": "12:5"},
-                   812000, [s2], original)
+                   812000, [s for s, _ in parts], [f for _, f in parts], ["surround", "audioChannels 6->2"])
     write(os.path.join(v2dir, ".complete"), b"packager example 2026-09-18\n")
     ren2 = renditions(1920, 800, False, 6)
     for r in ren2["video"] + ren2["audio"]:
@@ -335,7 +350,11 @@ def movie():
     trickplay_files(v2dir, 812000)
     package_record(v2dir, p2, "derived", 812000, ren2, essence(maxVideoHeight=800),
                    [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1}],
-                   ["surround", "audioChannels 6->2"], 812000000)
+                   812000000)
+
+    # --- a version that was removed from the item: its folder is gone, this is the only trace.
+    event(mdir, REMOVED, "version-removed", versionId=uid(mid, "version", "sdr-duplicate"),
+          reason="an SDR duplicate of the theatrical cut, kept by mistake")
 
     write(os.path.join(mdir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": mid, "type": "movie",
@@ -349,6 +368,13 @@ def movie():
         "credits": [{"personId": uid("person", "ian-hubert"), "name": "Ian Hubert", "role": "director",
                      "character": None, "order": 0, "tmdbPerson": None}],
         "collection": None,
+        "library": {
+            "primaryVersionId": v2,
+            "versionLabels": {v2: "Director's Cut"},
+            "match": {"status": "matched", "decidedBy": "tmdb", "decidedAt": PROJECTED, "confidence": 1.0,
+                      "evidence": [{"signal": "tmdb", "value": "133701"}]},
+            "reference": {"runtimeMs": 720000, "runtimeSource": "tmdb"},
+        },
         "images": [image(mdir, "poster", jpeg("poster"), "image/jpeg"),
                    image(mdir, "backdrop", jpeg("backdrop"), "image/jpeg"),
                    image(mdir, "logo", PNG, "image/png", language="en")],
@@ -361,46 +387,27 @@ def movie():
     })
 
 
-def episode_item(sdir, series_id, eid, number, title, overview, keeps_original):
-    """One episode folder: identity, projection, one original, one version with its package."""
-    edir = os.path.join(sdir, "episodes", eid)
-    write(os.path.join(edir, "item.json"), {
-        "schema": "zaentrum.library.item/2", "itemId": eid, "type": "episode", "title": title,
-        "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
-        "seriesId": series_id, "seasonNumber": 1, "episodeNumber": number, "episodeCode": f"S01E{number:02d}",
-    })
-    vid, sid, pid = uid(eid, "version"), uid(eid, "source"), uid(eid, "package")
+EPISODE_LOST = ["surround", "hdr10Metadata", "audioChannels 6->2"]
+
+
+def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, packaged_at, role):
+    """One version folder of an episode, with its package."""
     vdir = os.path.join(edir, "versions", vid)
-    streams = [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")]
-    tracks = {}
-    if keeps_original:
+    version_record(vdir, vid,
+                   {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": created_at,
+                    "evidence": []},
+                   {"colour": "colour", "dynamicRange": "hdr10", "stereo3d": "none", "aspectRatio": "16:9"},
+                   2700000, [sid], [original] if original else [], EPISODE_LOST,
+                   segments=[{"kind": "intro", "startMs": 60000, "endMs": 120000, "detector": "chromaprint",
+                              "confidence": 0.85, "label": None}],
+                   created=created_at)
+    write(os.path.join(vdir, ".complete"), b"packager example\n")
+    ren = renditions(3840, 2160, True, 6, ladder=ladder)
+    subs = []
+    if tracks:
         # Characters speak an invented language in a few scenes: the forced track translates only
         # those lines; the full and SDH tracks are there to pick. Which one a viewer sees is up to
         # the player and the viewer's settings, so nothing here says it.
-        streams += [audio(2, "aac", 2, "stereo", title="Commentary", commentary=True),
-                    subtitle(3, "Forced", forced=True), subtitle(4, None), subtitle(5, "SDH", sdh=True)]
-        tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3,
-                  "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
-    src = source(edir, sid, f"Example Show (US) - S01E{number:02d} - {title}.mkv",
-                 f"tv/Example Show (US)/Season 01/Example Show (US) - S01E{number:02d} - {title}.mkv",
-                 streams, [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10,
-                                      hdr10Metadata=True, **tracks),
-                 2700000, "2160p", "web", "hevc/main10/10bit/hdr10/3840x2160")
-    original = None
-    if keeps_original:
-        original = place_original(vdir, src)
-        write(os.path.join(edir, "sources", f"{sid}.json"), src)
-    version_record(vdir, vid,
-                   {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": VERSIONED,
-                    "evidence": []},
-                   {"colour": "colour", "dynamicRange": "hdr10", "stereo3d": "none", "aspectRatio": "16:9"},
-                   2700000, [sid], original,
-                   segments=[{"kind": "intro", "startMs": 60000, "endMs": 120000, "detector": "chromaprint",
-                              "confidence": 0.85, "label": None}])
-    write(os.path.join(vdir, ".complete"), b"packager example 2026-09-18\n")
-    ren = renditions(3840, 2160, True, 6)
-    subs = []
-    if keeps_original:
         ren["audio"].append({"id": "a1", "dir": "hls/a1", "codec": "mp4a.40.2", "language": "eng",
                              "title": "Commentary", "default": False, "channels": 2, "bitrateBps": 192000,
                              "segments": 15, "visible": True, "sourceStreamIndex": 2, "sourceChannels": 2,
@@ -419,13 +426,53 @@ def episode_item(sdir, series_id, eid, number, title, overview, keeps_original):
     for r in ren["video"] + ren["audio"]:
         keep(os.path.join(vdir, r["dir"]))
     trickplay_files(vdir, 2700000)
-    package_record(vdir, pid, "derived" if keeps_original else "canonical", 2700000, ren,
-                   essence(maxVideoHeight=2160, videoBitDepth=10, **tracks),
+    package_record(vdir, pid, role, 2700000, ren, essence(maxVideoHeight=2160, videoBitDepth=10, **tracks),
                    [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
                     {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}],
-                   ["surround", "hdr10Metadata", "audioChannels 6->2"], 2700000000, subtitles=subs,
+                   2700000000, subtitles=subs, created=packaged_at,
                    recipe={"video": "hevc re-encode", "audio": "aac-lc 2ch 192k",
-                           "subtitles": "text -> webvtt" if keeps_original else None})
+                           "subtitles": "text -> webvtt" if tracks else None})
+
+
+def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps_original):
+    """One episode folder: identity, projection, one original and the versions made from it."""
+    edir = os.path.join(sdir, "episodes", eid)
+    write(os.path.join(edir, "item.json"), {
+        "schema": "zaentrum.library.item/2", "itemId": eid, "type": "episode", "title": title,
+        "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
+        "seriesId": series_id, "seasonNumber": 1, "episodeNumber": number, "episodeCode": f"S01E{number:02d}",
+    })
+    sid = uid(eid, "source")
+    streams = [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")]
+    tracks = {}
+    if keeps_original:
+        streams += [audio(2, "aac", 2, "stereo", title="Commentary", commentary=True),
+                    subtitle(3, "Forced", forced=True), subtitle(4, None), subtitle(5, "SDH", sdh=True)]
+        tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3,
+                  "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
+    src = source(edir, sid, f"Example Show (US) - S01E{number:02d} - {title}.mkv",
+                 f"tv/Example Show (US)/Season 01/Example Show (US) - S01E{number:02d} - {title}.mkv",
+                 streams, [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10,
+                                      hdr10Metadata=True, **tracks),
+                 2700000, "2160p", "web", "hevc/main10/10bit/hdr10/3840x2160")
+
+    if keeps_original:
+        # one version, with the original beside its package
+        primary = uid(eid, "version")
+        original = place_original(os.path.join(edir, "versions", primary), src)
+        write(os.path.join(edir, "sources", f"{sid}.json"), src)
+        episode_version(edir, primary, uid(eid, "package"), sid, original, tracks, False,
+                        VERSIONED, PACKAGED, "derived")
+    else:
+        # the original was never kept here, so each package is the only copy; the first was
+        # re-packaged into a new folder and an event says which one took over.
+        old, old_pkg = uid(eid, "version", "first"), uid(eid, "package", "first")
+        primary, new_pkg = uid(eid, "version", "repackaged"), uid(eid, "package", "repackaged")
+        episode_version(edir, old, old_pkg, sid, None, tracks, False, VERSIONED, PACKAGED, "canonical")
+        episode_version(edir, primary, new_pkg, sid, None, tracks, True, REPACKAGED, REPACKAGED, "canonical")
+        event(edir, SUPERSEDED, "package-superseded", by="packager example", versionId=old,
+              packageId=old_pkg, supersededBy={"versionId": primary, "packageId": new_pkg},
+              reason="re-packaged with a second rung")
 
     write(os.path.join(edir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": eid, "type": "episode",
@@ -435,6 +482,13 @@ def episode_item(sdir, series_id, eid, number, title, overview, keeps_original):
                                         "overview": overview}}},
         "genres": [], "tags": [], "rating": None, "credits": [],
         "episode": {"airDate": f"2024-01-{9 + number * 7:02d}"},
+        "library": {
+            "primaryVersionId": primary,
+            "match": {"status": "unmatched", "decidedBy": "inferred", "decidedAt": PROJECTED,
+                      "confidence": 0.2, "evidence": [{"signal": "filename", "value": f"S01E{number:02d}"}]},
+            "reference": {"runtimeMs": 2700000, "runtimeSource": "manual"},
+            "numbering": numbering,
+        },
         "images": [image(edir, "still", jpeg(f"still s01e{number:02d}"), "image/jpeg")],
         "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
         "fieldOrigins": {"titles.primary": "manual", "episode.airDate": "manual", "images": "manual"},
@@ -442,10 +496,12 @@ def episode_item(sdir, series_id, eid, number, title, overview, keeps_original):
 
 
 def series():
-    """Example Show: one season, two episodes. Nothing lists the episodes — the folders are the
-    list, so adding an episode never rewrites the series' records."""
+    """Example Show: one season, two episodes, in two orderings. No record lists the episodes —
+    the folders are the list, so adding one never rewrites a record; the orderings are part of the
+    projection, which is replaced whole."""
     sid = uid("series", "example-show-us")
     sdir = os.path.join(ROOT, "series", sid[:2], sid)
+    ep1, ep2 = uid(sid, "S01E01"), uid(sid, "S01E02")
     write(os.path.join(sdir, "item.json"), {
         "schema": "zaentrum.library.item/2", "itemId": sid, "type": "series", "title": "Example Show",
         "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
@@ -462,14 +518,32 @@ def series():
                    "seasons": [{"number": 1, "tmdbSeason": None, "name": "Season 1",
                                 "overview": "The first season.", "airDate": "2024-01-10",
                                 "episodeCountReference": 8}]},
+        "library": {
+            "match": {"status": "unmatched", "decidedBy": "inferred", "decidedAt": PROJECTED,
+                      "confidence": 0.2,
+                      "evidence": [{"signal": "folder-name", "value": "Example Show (US)"}]},
+            "defaultOrdering": "aired",
+            # The aired ordering lists exactly the episode folders; the disc ordering runs the two
+            # the other way round, and the second file covers two aired episodes.
+            "orderings": {
+                "aired": [{"itemId": ep1, "season": 1, "episode": 1, "episodeEnd": None},
+                          {"itemId": ep2, "season": 1, "episode": 2, "episodeEnd": 3}],
+                "dvd": [{"itemId": ep2, "season": 1, "episode": 1, "episodeEnd": None},
+                        {"itemId": ep1, "season": 1, "episode": 2, "episodeEnd": None}],
+            },
+        },
         "images": [image(sdir, "poster", jpeg("series poster"), "image/jpeg", season=None),
                    image(sdir, "poster", jpeg("season 1 poster"), "image/jpeg", season=1)],
         "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
         "fieldOrigins": {"titles.primary": "manual", "titles.qualifier": "filename", "series": "manual",
                          "images": "manual"},
     })
-    episode_item(sdir, sid, uid(sid, "S01E01"), 1, "Pilot", "The first episode.", keeps_original=True)
-    episode_item(sdir, sid, uid(sid, "S01E02"), 2, "Crosswind", "The second episode.", keeps_original=False)
+    episode_item(sdir, sid, ep1, 1, "Pilot", "The first episode.",
+                 {"aired": {"season": 1, "episode": 1, "episodeEnd": None},
+                  "dvd": {"season": 1, "episode": 2, "episodeEnd": None}}, keeps_original=True)
+    episode_item(sdir, sid, ep2, 2, "Crosswind", "The second episode, and the third on one file.",
+                 {"aired": {"season": 1, "episode": 2, "episodeEnd": 3},
+                  "dvd": {"season": 1, "episode": 1, "episodeEnd": None}}, keeps_original=False)
 
 
 def main():

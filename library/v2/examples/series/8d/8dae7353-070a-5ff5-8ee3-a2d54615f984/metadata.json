@@ -41,13 +41,58 @@
       }
     ]
   },
+  "library": {
+    "match": {
+      "status": "unmatched",
+      "decidedBy": "inferred",
+      "decidedAt": "2026-09-20T12:00:00Z",
+      "confidence": 0.2,
+      "evidence": [
+        {
+          "signal": "folder-name",
+          "value": "Example Show (US)"
+        }
+      ]
+    },
+    "defaultOrdering": "aired",
+    "orderings": {
+      "aired": [
+        {
+          "itemId": "fb7dca21-b87b-5a41-af9f-a837fc5f0d1c",
+          "season": 1,
+          "episode": 1,
+          "episodeEnd": null
+        },
+        {
+          "itemId": "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
+          "season": 1,
+          "episode": 2,
+          "episodeEnd": 3
+        }
+      ],
+      "dvd": [
+        {
+          "itemId": "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
+          "season": 1,
+          "episode": 1,
+          "episodeEnd": null
+        },
+        {
+          "itemId": "fb7dca21-b87b-5a41-af9f-a837fc5f0d1c",
+          "season": 1,
+          "episode": 2,
+          "episodeEnd": null
+        }
+      ]
+    }
+  },
   "images": [
     {
       "kind": "poster",
       "file": "47bfa9f38417346388389c24309057b6252f6326e742ba5d9eca8ff59f0fefe7.jpg",
       "sha256": "sha256:47bfa9f38417346388389c24309057b6252f6326e742ba5d9eca8ff59f0fefe7",
       "contentType": "image/jpeg",
-      "bytes": 151,
+      "sizeBytes": 151,
       "width": 1,
       "height": 1,
       "language": null,
@@ -61,7 +106,7 @@
       "file": "5467670ed712a099d14cde1cdd7b82d167b27d42279384f33f8e1be089fe79c1.jpg",
       "sha256": "sha256:5467670ed712a099d14cde1cdd7b82d167b27d42279384f33f8e1be089fe79c1",
       "contentType": "image/jpeg",
-      "bytes": 153,
+      "sizeBytes": 153,
       "width": 1,
       "height": 1,
       "language": null,
