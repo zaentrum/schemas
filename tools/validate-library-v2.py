@@ -15,22 +15,30 @@ them, never about a document being up to date.
                metadata/, sources/, versions/, events/ (a series: episodes/ instead of sources/ and
                versions/) — so no media can sit in the item folder
   versions     every version is a folder under versions/ whose name is its versionId; its sourceIds
-               name source records that exist; package.json exists exactly when .complete does; a
-               package is canonical exactly when the version keeps no original; lossless means no
-               losses; chapters are ordered and kept when the original carried them; every track
-               says what it is for and the playlist flags do not contradict it
+               name source records that exist and its originalFiles are those sources' file names;
+               package.json exists exactly when .complete does; a package is canonical exactly when
+               the version keeps no original; lossless means no losses; chapters are ordered and
+               kept when the original carried them; every track says what it is for and the playlist
+               flags do not contradict it
   metadata     same item and type as item.json; every image exists with the recorded hash, size,
                content type and dimensions, is named by its own content hash, is listed once, and
-               nothing unlisted sits in metadata/
+               nothing unlisted sits in metadata/; library.primaryVersionId and library.versionLabels
+               name versions that are really there
   series       an episode names its enclosing series, agrees with it on the reference id, numbers
                itself consistently, does not collide with another episode, and sits in a season the
-               series' metadata lists
+               series' metadata lists; the default ordering lists exactly the episode folders, every
+               ordering lists only episodes that exist, and each episode's own numbering agrees with
+               the series' ordering of the same name and with the aired numbers in its item.json
   events       the file name is the event's own moment and kind; every source, version and package
-               it names exists; a deletion names a version that had an original
+               it names exists (a version-removed event is the exception — its folder may be gone,
+               and a folder it names is ignored altogether); a deletion names a version that had an
+               original, one of that version's own sources, and accepts exactly what the version
+               says deleting it costs; a package-superseded event names a successor that exists in
+               another version folder
   checksums    the checksums file matches its recorded hash and file count
-  --check-media  no file under an item folder is a hard link shared with another path; a version
-               that names an original holds it, with its size and qh1, unless an original-deleted
-               event says it is gone — in which case it must NOT be there; every rendition folder,
+  --check-media  no file under an item folder is a hard link shared with another path; every
+               original a version names is there with its size and qh1, unless an original-deleted
+               event covers it — in which case it must NOT be there; every rendition folder,
                subtitle and trickplay sheet the package names exists and the cues cover the
                duration; checksums.sha256 lists exactly the package's files with their total size
   --check-checksums  also hash every package file (implies --check-media)
@@ -55,7 +63,7 @@ SERIES_ENTRIES = {"item.json", "metadata.json", "metadata", "episodes", "events"
 VERSION_ENTRIES = {"version.json", "package.json", "checksums.sha256", ".complete", "hls", "subs", "trickplay", "trailers"}
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
 PACKAGE_MARKERS = (".complete",)
-EVENT_KINDS = ("original-deleted", "package-superseded", "source-removed", "note")
+EVENT_KINDS = ("original-deleted", "version-removed", "package-superseded", "source-removed", "note")
 EVENT_NAME = re.compile(r"^(\d{8}T\d{6}Z)(?:-([0-9a-f]{8}))?-(" + "|".join(EVENT_KINDS) + r")\.json$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 VTT_CUE = re.compile(r"^(\d+):(\d\d):(\d\d)\.(\d{3}) --> (\d+):(\d\d):(\d\d)\.(\d{3})")
@@ -299,7 +307,13 @@ class Checker:
             if name not in allowed:
                 self.err(os.path.join(d, name), f"unexpected entry in a {expect_type} folder"
                                                 f"{'; media belongs in versions/<versionId>/' if expect_type != 'series' else ''}")
-        meta = self.metadata(d, item)
+        events = self.events(d)
+        removed = {e["versionId"] for e in events if e["kind"] == "version-removed" and e.get("versionId")}
+        sources, versions, packages = {}, {}, {}
+        if expect_type != "series":
+            sources = self.sources(d)
+            versions, packages = self.versions(d, sources, events, removed)
+        meta = self.metadata(d, item, versions, removed)
         if not valid:
             return  # the rules that span files assume the documented shape
 
@@ -311,19 +325,16 @@ class Checker:
         if expect_type == "episode":
             if set(ids) & {"tmdbMovie", "tmdbCollection"}:
                 self.err(ip, "an episode carries movie reference ids")
-            self.episode(ip, item, series)
+            self.episode(ip, item, meta, series)
 
-        events = self.events(d)
+        self.event_subjects(events, sources, versions, packages, removed)
         if expect_type == "series":
-            self.event_subjects(events, {}, {}, {})
             self.series(d, item, meta)
-        else:
-            self.versions(d, self.sources(d), events)
         if self.check_media:
             self.hard_links(d)
 
     # ------------------------------------------------------------ metadata.json + metadata/
-    def metadata(self, d, item):
+    def metadata(self, d, item, versions=(), removed=()):
         where = os.path.join(d, "metadata.json")
         meta, valid = self.document("metadata", where)
         if meta is None:
@@ -355,8 +366,8 @@ class Checker:
                 self.err(f, "sha256 does not match metadata.json")
             if name.rsplit(".", 1)[0] != digest.split(":", 1)[1]:
                 self.err(f, "file name is not the hash of its own content")
-            if os.path.getsize(f) != img["bytes"]:
-                self.err(f, f"size {os.path.getsize(f)} != recorded {img['bytes']}")
+            if os.path.getsize(f) != img["sizeBytes"]:
+                self.err(f, f"size {os.path.getsize(f)} != recorded {img['sizeBytes']}")
             ctype, w, h = sniff_image(f)
             if ctype != img["contentType"]:
                 self.err(f, f"content is {ctype or 'not a known image'} but recorded as {img['contentType']}")
@@ -375,7 +386,21 @@ class Checker:
             for name in listdir(md):
                 if name not in listed:
                     self.err(os.path.join(md, name), "not listed in metadata.json")
+        self.projected_decisions(where, meta, versions, removed)
         return meta
+
+    def projected_decisions(self, where, meta, versions, removed):
+        """metadata.library holds what the database decided about this item's storage, so every
+        version it names has to be one that is really there."""
+        lib = meta.get("library") or {}
+        primary = lib.get("primaryVersionId")
+        if primary and primary not in versions:
+            self.err(where, f"library.primaryVersionId {primary} names "
+                            + ("a version that was removed" if primary in removed else "no version folder"))
+        for vid in sorted(lib.get("versionLabels") or {}):
+            if vid not in versions:
+                self.err(where, f"library.versionLabels names {vid}, which is "
+                                + ("a removed version" if vid in removed else "no version folder"))
 
     # ------------------------------------------------------------ events/
     def events(self, d):
@@ -461,7 +486,7 @@ class Checker:
                 self.err(f, "sidecar sha256 does not match the source record")
 
     # ------------------------------------------------------------ versions/
-    def versions(self, d, sources, events):
+    def versions(self, d, sources, events, removed):
         base = os.path.join(d, "versions")
         versions, packages = {}, {}
         if os.path.isdir(base):
@@ -473,12 +498,14 @@ class Checker:
                 if not UUID.match(name):
                     self.err(p, "a version folder is named by its versionId")
                     continue
+                if name in removed:
+                    continue  # a version-removed event says to ignore this folder, so nothing in it counts
                 got = self.version(d, p, name, sources, events)
                 if got:
                     versions[name] = got[0]
                     if got[1]:
                         packages[got[1]["packageId"]] = got[1]
-        self.event_subjects(events, sources, versions, packages)
+        return versions, packages
 
     def version(self, d, vp, vid, sources, events):
         where = os.path.join(vp, "version.json")
@@ -489,11 +516,15 @@ class Checker:
         if v["versionId"] != vid:
             self.err(where, f"versionId {v['versionId']} does not match folder {vid}")
         for name in listdir(vp):
-            if name not in VERSION_ENTRIES and name != v["originalFile"]:
-                self.err(os.path.join(vp, name), "not a record, the package or the original this version names")
+            if name not in VERSION_ENTRIES and name not in v["originalFiles"]:
+                self.err(os.path.join(vp, name), "not a record, the package or an original this version names")
         for sid in v["sourceIds"]:
             if sid not in sources:
                 self.err(where, f"names source {sid}, which has no record under sources/")
+        named = {sources[s]["file"]["name"] for s in v["sourceIds"] if s in sources}
+        for name in v["originalFiles"]:
+            if named and name not in named:
+                self.err(where, f"originalFiles names {name}, which is not the file name of any source this version names")
         for kind in ("chapters", "segments"):
             marks = v.get(kind) or []
             if any(m["endMs"] < m["startMs"] for m in marks):
@@ -516,20 +547,30 @@ class Checker:
         if pkg is not None:
             self.counts["packages"] += 1
             self.package(vp, v, pkg)
-        deleted = [e for e in events if e["kind"] == "original-deleted" and e.get("versionId") == vid]
-        if deleted and not v["originalFile"]:
-            self.err(deleted[0]["where"], f"version {vid} never named an original, so none can have been deleted")
+        gone, whole = set(), False
+        for e in [x for x in events if x["kind"] == "original-deleted" and x.get("versionId") == vid]:
+            if not v["originalFiles"]:
+                self.err(e["where"], f"version {vid} never named an original, so none can have been deleted")
+            if e.get("accepted") is not None and e["accepted"] != v["lostIfOriginalDeleted"]:
+                self.err(e["where"], "accepted is not what the version says deleting its originals costs "
+                                     f"({v['lostIfOriginalDeleted']})")
+            if e.get("sourceId"):
+                if e["sourceId"] not in v["sourceIds"]:
+                    self.err(e["where"], f"names source {e['sourceId']}, which version {vid} was not made from")
+                gone.add(e["sourceId"])
+            else:
+                whole = True
         if self.check_media:
-            self.media(vp, v, pkg, bool(deleted), sources)
+            self.media(vp, v, pkg, sources, gone, whole)
         return v, pkg
 
     def package(self, vp, v, pkg):
         where = os.path.join(vp, "package.json")
         if pkg["fidelity"]["lossless"] != (not pkg["fidelity"]["losses"]):
             self.err(where, "fidelity.lossless must be true exactly when losses is empty")
-        if (pkg["role"] == "canonical") != (v["originalFile"] is None):
+        if (pkg["role"] == "canonical") != (not v["originalFiles"]):
             self.err(where, "role must be 'canonical' exactly when the version keeps no original "
-                            "(version.json originalFile is null); a deletion afterwards is an event, not a rewrite")
+                            "(version.json originalFiles is empty); a deletion afterwards is an event, not a rewrite")
         audio = pkg["renditions"]["audio"]
         video = pkg["renditions"]["video"]
         subs = pkg.get("subtitles") or []
@@ -562,23 +603,22 @@ class Checker:
             self.err(where, f"checksums file lists {len(read_checksums(f))} files, the record says {cs['files']}")
 
     # ------------------------------------------------------------ the bytes
-    def media(self, vp, v, pkg, original_deleted, sources):
-        name = v["originalFile"]
-        if name:
+    def media(self, vp, v, pkg, sources, gone, whole):
+        """gone: sources an original-deleted event named one by one; whole: an event that named none,
+        so every original of the version is gone."""
+        for name in v["originalFiles"]:
             f = os.path.join(vp, name)
-            src = next((sources[s] for s in v["sourceIds"] if s in sources and sources[s]["file"]["name"] == name), None)
-            if src is None:
-                self.err(os.path.join(vp, "version.json"),
-                         f"originalFile {name} is not the file name of any source this version names")
-            if original_deleted and os.path.isfile(f):
-                self.err(f, "an original-deleted event names this version, but the original is still here")
-            elif not original_deleted:
-                if not os.path.isfile(f):
-                    self.err(f, "original file missing, and no original-deleted event says it was removed")
-                elif src and os.path.getsize(f) != src["file"]["sizeBytes"]:
-                    self.err(f, f"original is {os.path.getsize(f)} bytes, its source record says {src['file']['sizeBytes']}")
-                elif src and qh1(f) != src["file"]["fixity"]["qh1"]:
-                    self.err(f, "original does not match its qh1 fixity")
+            sid = next((s for s in v["sourceIds"] if s in sources and sources[s]["file"]["name"] == name), None)
+            src = sources.get(sid)
+            if whole or sid in gone:
+                if os.path.isfile(f):
+                    self.err(f, "an original-deleted event names this original, but it is still here")
+            elif not os.path.isfile(f):
+                self.err(f, "original file missing, and no original-deleted event says it was removed")
+            elif src and os.path.getsize(f) != src["file"]["sizeBytes"]:
+                self.err(f, f"original is {os.path.getsize(f)} bytes, its source record says {src['file']['sizeBytes']}")
+            elif src and qh1(f) != src["file"]["fixity"]["qh1"]:
+                self.err(f, "original does not match its qh1 fixity")
         if pkg is None:
             return
         where = os.path.join(vp, "package.json")
@@ -646,30 +686,55 @@ class Checker:
                         f"the library must hold independent files")
 
     # ------------------------------------------------------------ events against the records
-    def event_subjects(self, events, sources, versions, packages):
+    def event_subjects(self, events, sources, versions, packages, removed):
         for e in events:
-            for field, known, what in (("sourceId", sources, "source record under sources/"),
-                                       ("versionId", versions, "version folder under versions/"),
-                                       ("packageId", packages, "package of any version")):
-                if e.get(field) and e[field] not in known:
-                    self.err(e["where"], f"{field} {e[field]} names no {what}")
+            subjects = [("sourceId", e.get("sourceId"), sources, "source record under sources/"),
+                        ("packageId", e.get("packageId"), packages, "package of any version")]
+            if e["kind"] != "version-removed":
+                # the one event whose subject is allowed to be gone: that is what it records
+                subjects.append(("versionId", e.get("versionId"), versions, "version folder under versions/"))
+            by = e.get("supersededBy") or {}
+            subjects += [("supersededBy.versionId", by.get("versionId"), versions, "version folder under versions/"),
+                         ("supersededBy.packageId", by.get("packageId"), packages, "package of any version")]
+            for field, value, known, what in subjects:
+                if value and value not in known:
+                    self.err(e["where"], f"{field} {value} names no {what}"
+                                         + (", and a removed version is not one" if value in removed else ""))
+            if by.get("versionId") and by["versionId"] == e.get("versionId"):
+                self.err(e["where"], "supersededBy names the version it supersedes; a re-package is a new folder")
 
     # ------------------------------------------------------------ series and episodes
     def series(self, d, item, meta):
-        seasons = {s["number"] for s in ((meta or {}).get("series") or {}).get("seasons") or []}
+        lib = (meta or {}).get("library") or {}
+        orderings = lib.get("orderings") or {}
+        where = os.path.join(d, "metadata.json")
         ed = os.path.join(d, "episodes")
-        if not os.path.isdir(ed):
-            return
+        folders = set()
+        if os.path.isdir(ed):
+            for name in listdir(ed):
+                if os.path.isdir(os.path.join(ed, name)):
+                    folders.add(name)
+                else:
+                    self.err(os.path.join(ed, name), "unexpected file among the episode folders")
+        default = lib.get("defaultOrdering")
+        if orderings and default and default not in orderings:
+            self.err(where, f"library.defaultOrdering is {default}, which library.orderings does not describe")
+        for name, entries in sorted(orderings.items()):
+            listed = [e["itemId"] for e in entries]
+            if len(listed) != len(set(listed)):
+                self.err(where, f"library.orderings.{name} lists an episode twice")
+            for missing in sorted(set(listed) - folders):
+                self.err(where, f"library.orderings.{name} lists {missing}, which is no episode folder of this series")
+            if name == default:
+                for absent in sorted(folders - set(listed)):
+                    self.err(where, f"library.orderings.{name} is the default ordering but leaves out episode {absent}")
         context = {"itemId": item["itemId"], "tmdbTv": (item.get("externalIds") or {}).get("tmdbTv"),
-                   "seasons": seasons, "listed": {}, "where": os.path.join(d, "metadata.json")}
-        for name in listdir(ed):
-            p = os.path.join(ed, name)
-            if not os.path.isdir(p):
-                self.err(p, "unexpected file among the episode folders")
-                continue
-            self.item(p, "episode", series=context)
+                   "seasons": {s["number"] for s in ((meta or {}).get("series") or {}).get("seasons") or []},
+                   "orderings": orderings, "listed": {}, "where": where}
+        for name in sorted(folders):
+            self.item(os.path.join(ed, name), "episode", series=context)
 
-    def episode(self, where, item, series):
+    def episode(self, where, item, meta, series):
         if series is None:
             self.err(where, "episode outside a series folder")
             return
@@ -688,6 +753,31 @@ class Checker:
         if other:
             self.err(where, f"S{season:02d}E{number:02d} is already the numbering of episode {other}")
         series["listed"][(season, number)] = item["itemId"]
+        self.numbering(os.path.join(os.path.dirname(where), "metadata.json"), item, meta, series)
+
+    def numbering(self, where, item, meta, series):
+        """The episode's place in each ordering, against the series' projection of the same ordering
+        and against the aired numbering item.json was created with."""
+        mine = ((meta or {}).get("library") or {}).get("numbering") or {}
+        aired = mine.get("aired")
+        if aired and (aired.get("season"), aired["episode"]) != (item["seasonNumber"], item["episodeNumber"]):
+            self.err(where, f"library.numbering.aired is S{aired.get('season')}E{aired['episode']}, but item.json was "
+                            f"created with S{item['seasonNumber']}E{item['episodeNumber']}")
+        for name, place in sorted(mine.items()):
+            entries = series["orderings"].get(name)
+            if entries is None:
+                if series["orderings"]:
+                    self.err(where, f"library.numbering.{name} is an ordering the series does not describe")
+                continue
+            theirs = next((e for e in entries if e["itemId"] == item["itemId"]), None)
+            if theirs is None:
+                self.err(where, f"library.numbering.{name} places this episode in an ordering that leaves it out")
+            elif (theirs.get("season"), theirs["episode"], theirs.get("episodeEnd")) != \
+                    (place.get("season"), place["episode"], place.get("episodeEnd")):
+                self.err(where, f"library.numbering.{name} disagrees with the series' ordering of the same name")
+        for name, entries in sorted(series["orderings"].items()):
+            if any(e["itemId"] == item["itemId"] for e in entries) and name not in mine:
+                self.err(where, f"the series' {name} ordering places this episode, but it records no numbering for it")
 
     # ------------------------------------------------------------ roots
     def root(self, r):
