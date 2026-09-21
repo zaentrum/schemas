@@ -2,7 +2,7 @@
 """Read a v2 library tree and produce the catalog contents it implies.
 
 Usage:
-  library-v2-rebuild.py LIBRARY [--out rows.json] [--compare CATALOG.json]
+  library-v2-rebuild.py LIBRARY [--out rows.json] [--compare CATALOG.json [--subset]]
                         [--text-language LANG] [--ignore-fields a,b,c]
 
 The database is the working copy and this tree is the record that can rebuild it. This reads the
@@ -28,6 +28,9 @@ Fields that cannot agree by construction are ignored by default (--ignore-fields
   id     a database key, not a fact about the item
   path   the bytes moved into the version folder, so the database's old paths are stale
   hash   never filled by either side
+
+--subset reports the rows only the database has without counting them, for a tree that was built
+from part of a catalog.
 """
 import argparse, base64, datetime, hashlib, json, os, re, sys, uuid
 
@@ -348,17 +351,24 @@ def normalise(row):
     return out
 
 
-def compare(tree_rows, db_rows, ignore):
+def compare(tree_rows, db_rows, ignore, subset=False):
     """Both directions, field by field. Returns (lines, number of differences)."""
     tree = {r["id"]: normalise(r) for r in tree_rows}
     db = {r["id"]: normalise(r) for r in db_rows}
     lines, n = [], 0
     only_tree, only_db = sorted(set(tree) - set(db)), sorted(set(db) - set(tree))
-    for iid in only_tree:
-        lines.append(f"  only on storage: {iid} {tree[iid].get('title')!r}")
-    for iid in only_db:
-        lines.append(f"  only in the database: {iid} {db[iid].get('title')!r}")
-    n += len(only_tree) + len(only_db)
+    for label, missing, source in (("only on storage", only_tree, tree),
+                                   ("only in the database", only_db, db)):
+        if not missing:
+            continue
+        counted = not (subset and label == "only in the database")
+        lines.append(f"  {label}: {len(missing)} item(s)" + ("" if counted else ", which a subset is expected to be"))
+        for iid in missing[:5]:
+            lines.append(f"      {iid} {source[iid].get('title')!r}")
+        if len(missing) > 5:
+            lines.append(f"      … and {len(missing) - 5} more")
+        if counted:
+            n += len(missing)
     fields = {}
     for iid in sorted(set(tree) & set(db)):
         a, b = tree[iid], db[iid]
@@ -419,6 +429,9 @@ def main():
                     help="the localized title the description and tagline are read from")
     ap.add_argument("--ignore-fields", default="id,path,hash",
                     help="fields that cannot agree by construction; comma-separated")
+    ap.add_argument("--subset", action="store_true",
+                    help="the tree holds only some of the database's items: rows only the database "
+                         "has are reported but are not a difference")
     args = ap.parse_args()
 
     r = Rebuild(os.path.abspath(args.root), args.text_language)
@@ -443,7 +456,7 @@ def main():
     ignore = {x.strip() for x in args.ignore_fields.split(",") if x.strip()}
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
-    lines, n = compare(r.items, export.get("items") or [], ignore)
+    lines, n = compare(r.items, export.get("items") or [], ignore, args.subset)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     for line in lines:
         print(line)
