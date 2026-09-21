@@ -341,6 +341,7 @@ def normalise(row):
     """A catalog row as it can be compared: the artwork reduced to its hash, nothing else changed."""
     out = dict(row)
     out["artwork"] = [{"kind": a.get("kind"), "contentType": a.get("contentType"), "sha256": artwork_key(a),
+                       "fetchedAt": a.get("fetchedAt"),
                        "sizeBytes": a.get("sizeBytes") if a.get("sizeBytes") is not None
                        else len(base64.b64decode(a.get("base64") or "", validate=False)) or None}
                       for a in row.get("artwork") or []]
