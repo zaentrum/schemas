@@ -242,15 +242,23 @@ first. Four kinds, and what each one changes:
 
 | Kind | Effect |
 |---|---|
-| `original-deleted` | The originals it names are gone from the version folder: the source it names, or all of them when it names none. Once none is left, that version's package is the only copy of it — canonical, whatever `role` its record was written with — and everything the version's `lostIfOriginalDeleted` lists is permanent. |
+| `original-deleted` | The originals it names are gone from the version folder: the source it names, or all of them when it names none. Once none is left, that version's package is the only copy of it — canonical, whatever `role` its record was written with — and everything the package failed to carry is permanent. |
 | `version-removed` | The version is no longer part of the item. Ignore its folder even when it is still on storage: its package is not playable, and nothing may point at it. |
 | `package-superseded` | The package it names is no longer the one to use; the package under `supersededBy` is authoritative for its version from that moment. The superseded folder stays exactly as it was. |
 | `note` | Nothing. It is something a person recorded that no other record holds. |
 
+The **deletion gate** — what deleting a version's originals would cost — is not recorded anywhere.
+A reader computes it as the essence of the version's sources minus the essence of its package, so it
+stays right however often the version is re-packaged, and a version with an original and nothing
+packaged can still answer it. The only fact is a person's answer: `accepted` on an `original-deleted`
+event, named in essence terms (`surround`, `maxAudioChannels`, `subtitleLanguages:en`). It is a
+subset of the gate and not necessarily all of it, because someone who measures again before deleting
+may accept less.
+
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
 outside a version folder, `package.json` exists exactly when `.complete` does, images are named by
-their own hash, events reference records that exist and a deletion accepts exactly what its version
-says it costs, episodes agree with their series' orderings):
+their own hash, events reference records that exist and a deletion accepts no more than the gate its
+records compute, episodes do not contradict their own numbering):
 
 ```sh
 pip install "jsonschema[format-nongpl]>=4.23" referencing
@@ -266,18 +274,32 @@ python tools/make-library-v2-examples.py                      # regenerate libra
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-09-21 (c)** — the gate is computed, not recorded. `lostIfOriginalDeleted` is gone from both
+  `version.json` and `package.json`: it is the sources' essence minus the package's, which a reader
+  computes from the records beside it, and recording it on the version fought the write order (the
+  analyzer writes `version.json` before the packager writes `package.json`). What stays is the fact —
+  `accepted` on an `original-deleted` event — now named in essence terms and required only to be a
+  **subset** of the gate, so someone who measures again and accepts less is not rejected. The
+  series-level `library.orderings` map is gone too: `defaultOrdering` is a decision and stays, but the
+  orderings themselves are the episodes' own `library.numbering`, which is the one place they are
+  written; what is left to check is that an episode does not contradict the numbers its `item.json`
+  was created with and that no two episodes of a series claim one place in one ordering.
+  `source.json` gains `naming`, how the file's own name numbered what it holds (`S07E23-24`) — a fact
+  about the bytes, and often the only record of how a release was numbered — and `item.json` gains
+  `provenance` (`migratedFrom`, `legacyItemId`, `migratedAt`, `legacyCreatedBy`), so a tree built by
+  migrating an old catalog keeps the old ids. `checksums.files` and `checksums.bytes` keep their v1
+  names, which read as a pair; the metadata image field stays `sizeBytes`.
 - **2026-09-21 (b)** — the decisions a rebuild could not recover. `metadata.json` gains `library`:
   `primaryVersionId` (which version plays when the viewer does not choose), `versionLabels`
   (versionId → the label a person set; every other version is labelled at read time from its edition
   and presentation), `match` (v1's matched / unmatched / manual / disputed, so a re-sync cannot
   overwrite a human decision), `reference` (v1's published runtime and where it came from), and for
-  a series `defaultOrdering` plus `orderings`, with each episode's place in them under `numbering`,
-  `episodeEnd` included. They are projections, not records: adding an episode re-projects the series'
-  `metadata.json` rather than editing anything written once. `version.json` gains `completeness`
+  a series `defaultOrdering`, with each episode's place in every ordering under `numbering`,
+  `episodeEnd` included. They are projections, not records: a changed decision replaces the file
+  rather than editing anything written once. `version.json` gains `completeness`
   (complete / truncated / suspect, measured — a version nobody measured leaves it out) and replaces
   `originalFile` with `originalFiles`, an ordered array, so a version split across parts can say what
-  is in its folder; `lostIfOriginalDeleted` moves from `package.json` to `version.json`, so a version
-  that has an original and no package can still answer the deletion gate. `event.schema.json` gains
+  is in its folder. `event.schema.json` gains
   the kind `version-removed`, so a deleted version folder leaves a trace, and `package-superseded`
   now carries `supersededBy` (versionId + packageId), so a reader never infers the successor from
   timestamps; the schema's description states the order and effect of applying events, and
