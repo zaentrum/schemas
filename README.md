@@ -197,10 +197,14 @@ any more and no `rev`, `updatedAt` or `review` anywhere. A file is either a reco
 that cannot change — `item.json`, `sources/<id>.json`, `versions/<id>/version.json`,
 `versions/<id>/package.json` — written once when the thing it describes is made and never touched
 again, or the projection of the database (`metadata.json`), replaced whole by the service that owns
-the item. Nothing is merged, so there is no conflict to resolve. The few facts that arise later get
-their own file under `events/` instead of a rewrite: an original deleted, a package superseded. Every
-version is a folder, so a re-package is a new folder rather than an edit, and a record always sits
-next to the bytes it describes.
+the item. **A fact about the bytes is a record; a decision the database holds is a projection**, so
+what an original contained and what a package lost are written once, while which version plays by
+default, what a viewer's version picker says, how far to trust the reference ids and how the
+episodes are ordered live in `metadata.json` under `library`. Nothing is merged, so there is no
+conflict to resolve. The few facts that arise later get their own file under `events/` instead of a
+rewrite: an original deleted, a version removed, a package superseded. Every version is a folder, so
+a re-package is a new folder rather than an edit, and a record always sits next to the bytes it
+describes.
 
 ```
 movies/<aa>/<itemId>/
@@ -230,9 +234,23 @@ series/<aa>/<seriesId>/            item.json, metadata.json, metadata/, episodes
 | [`event.schema.json`](https://zaentrum.github.io/schemas/library/v2/event.schema.json) | `events/<timestamp>-<kind>.json` | `zaentrum.library.event/2` |
 | [`defs.schema.json`](https://zaentrum.github.io/schemas/library/v2/defs.schema.json) | shared definitions | — |
 
+### Applying events
+
+The records describe things that cannot change, so a reader — a rebuild, a verify, a player's
+catalog — reads an item's records first and then applies its `events/` in order of `at`, earliest
+first. Four kinds, and what each one changes:
+
+| Kind | Effect |
+|---|---|
+| `original-deleted` | The originals it names are gone from the version folder: the source it names, or all of them when it names none. Once none is left, that version's package is the only copy of it — canonical, whatever `role` its record was written with — and everything the version's `lostIfOriginalDeleted` lists is permanent. |
+| `version-removed` | The version is no longer part of the item. Ignore its folder even when it is still on storage: its package is not playable, and nothing may point at it. |
+| `package-superseded` | The package it names is no longer the one to use; the package under `supersededBy` is authoritative for its version from that moment. The superseded folder stays exactly as it was. |
+| `note` | Nothing. It is something a person recorded that no other record holds. |
+
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
 outside a version folder, `package.json` exists exactly when `.complete` does, images are named by
-their own hash, events reference records that exist, episodes agree with their series):
+their own hash, events reference records that exist and a deletion accepts exactly what its version
+says it costs, episodes agree with their series' orderings):
 
 ```sh
 pip install "jsonschema[format-nongpl]>=4.23" referencing
@@ -248,6 +266,24 @@ python tools/make-library-v2-examples.py                      # regenerate libra
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-09-21 (b)** — the decisions a rebuild could not recover. `metadata.json` gains `library`:
+  `primaryVersionId` (which version plays when the viewer does not choose), `versionLabels`
+  (versionId → the label a person set; every other version is labelled at read time from its edition
+  and presentation), `match` (v1's matched / unmatched / manual / disputed, so a re-sync cannot
+  overwrite a human decision), `reference` (v1's published runtime and where it came from), and for
+  a series `defaultOrdering` plus `orderings`, with each episode's place in them under `numbering`,
+  `episodeEnd` included. They are projections, not records: adding an episode re-projects the series'
+  `metadata.json` rather than editing anything written once. `version.json` gains `completeness`
+  (complete / truncated / suspect, measured — a version nobody measured leaves it out) and replaces
+  `originalFile` with `originalFiles`, an ordered array, so a version split across parts can say what
+  is in its folder; `lostIfOriginalDeleted` moves from `package.json` to `version.json`, so a version
+  that has an original and no package can still answer the deletion gate. `event.schema.json` gains
+  the kind `version-removed`, so a deleted version folder leaves a trace, and `package-superseded`
+  now carries `supersededBy` (versionId + packageId), so a reader never infers the successor from
+  timestamps; the schema's description states the order and effect of applying events, and
+  [Applying events](#applying-events) repeats it. The metadata image field `bytes` is `sizeBytes`,
+  the word the rest of the format uses. `defs` gains `decidedBy` and `decision`, now shared by the
+  version's edition and the projection's match.
 - **2026-09-21 (a)** — first publication of the record layout, against
   [Database first, storage as the record](https://github.com/zaentrum/zaentrum/blob/main/docs/library/record.md).
   Against v1: `manifest.json` is split into `item.json`, `sources/<id>.json`,
