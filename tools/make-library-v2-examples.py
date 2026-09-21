@@ -148,7 +148,7 @@ def probe_stream(st):
 # ---------------------------------------------------------------- the records
 def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms,
            quality="1080p", medium="disc", fingerprint="h264/high/8bit/sdr/1920x800", size=6300000000,
-           part=None):
+           part=None, naming=None):
     """sources/<sid>.json plus the verbatim probe beside it. Written once; it never says where the
     bytes are or whether they still exist — that is the version's record and the events."""
     probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)},
@@ -161,6 +161,7 @@ def source(item_dir, sid, name, library_path, streams, chapters, src_essence, du
         "file": {"name": name, "kind": "stream-container", "sizeBytes": size, "mtime": CREATED,
                  "fixity": {"qh1": sha(name.encode())}, "part": part},
         "origin": {"libraryPath": library_path, "folder": os.path.dirname(library_path), "takenBy": "move"},
+        **({"naming": naming} if naming else {}),
         "labels": {"quality": quality, "medium": medium, "resolution": quality, "edition": None, "folderEdition": None},
         "container": {"format": "matroska,webm", "durationMs": duration_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
@@ -232,7 +233,7 @@ def renditions(width, height, hdr, source_channels, ladder=False):
     }
 
 
-def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, original_files, lost,
+def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, original_files,
                    chapters=(), chapters_from=None, segments=(), completeness="complete", measured=None,
                    created=VERSIONED):
     record = {
@@ -242,7 +243,6 @@ def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, ori
         "segments": list(segments),
         "completeness": {"status": completeness, "evidence": list(measured or [])},
         "sourceIds": list(source_ids), "originalFiles": list(original_files),
-        "lostIfOriginalDeleted": list(lost),
     }
     write(os.path.join(vdir, "version.json"), record)
     return record
@@ -285,6 +285,8 @@ def movie():
         "schema": "zaentrum.library.item/2", "itemId": mid, "type": "movie", "title": "Tears of Steel",
         "externalIds": {"tmdbMovie": "133701", "imdb": "tt2285752"},
         "createdAt": CREATED, "createdBy": "ingest example",
+        "provenance": {"migratedFrom": "legacy-catalog", "legacyItemId": uid("legacy", "tears-of-steel"),
+                       "migratedAt": CREATED, "legacyCreatedBy": "catalog import"},
     })
 
     chapters = [{"startMs": 0, "endMs": 300000, "title": "Chapter 1"},
@@ -298,16 +300,15 @@ def movie():
     src1 = source(mdir, s1, "Tears of Steel (2012).mkv",
                   "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
                   [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)"), subtitle(2, None)],
-                  chapters, essence(maxAudioChannels=6, surround=True, chapters=True,
+                  chapters, essence(maxAudioChannels=6, surround=True, chapters=True, maxVideoHeight=800,
                                     subtitleLanguages=["en"], subtitleTracks=1), 734000)
-    lost1 = ["surround", "audioChannels 6->2", "subtitleLanguages en", "subtitleTracks 1->0"]
     version_record(v1dir, v1,
                    {"kind": "theatrical", "label": None, "decidedBy": "inferred", "decidedAt": VERSIONED,
                     "confidence": 0.6,
                     "evidence": [{"signal": "runtime", "value": {"measuredMs": 734000, "referenceMs": 720000},
                                   "weight": 0.6}]},
                    {"colour": "colour", "dynamicRange": "sdr", "stereo3d": "none", "aspectRatio": "12:5"},
-                   734000, [s1], [src1["file"]["name"]], lost1, chapters, "original-file", credits_seg,
+                   734000, [s1], [src1["file"]["name"]], chapters, "original-file", credits_seg,
                    measured=[{"signal": "runtime", "value": {"measuredMs": 734000, "referenceMs": 720000},
                               "note": "runs past the reference runtime, so nothing is missing"}])
     write(os.path.join(v1dir, ".complete"), b"packager example 2026-09-18\n")
@@ -321,9 +322,11 @@ def movie():
                      "sourceStreamIndex": 2}],
                    734000000,
                    recipe={"video": "hevc re-encode, 800p and 533p", "audio": "aac-lc 2ch 192k", "subtitles": None})
-    # The original is gone; version.json still names it, and this record says what that cost.
+    # The original is gone. What the package failed to carry stays computable from the records
+    # beside it; what a person agreed to lose is only ever here.
     event(mdir, DELETED, "original-deleted", sourceId=s1, versionId=v1, packageId=p1,
-          reason="space on the archive volume", accepted=lost1)
+          reason="space on the archive volume",
+          accepted=["surround", "maxAudioChannels", "subtitleLanguages:en", "subtitleTracks"])
 
     # --- version two: the director's cut, in two files, both kept next to the package.
     v2, p2 = uid(mid, "version", "directors-cut"), uid(mid, "package", "directors-cut")
@@ -334,15 +337,15 @@ def movie():
         name = f"Tears of Steel (2012) - Director's Cut - part{index}.mkv"
         src = source(mdir, sid, name, f"movies/Tears of Steel (2012) - Director's Cut/{name}",
                      [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)")],
-                     [], essence(maxAudioChannels=6, surround=True), 406000, medium="web",
-                     part={"index": index, "of": 2})
+                     [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=800), 406000,
+                     medium="web", part={"index": index, "of": 2})
         parts.append((sid, place_original(v2dir, src)))
         write(os.path.join(mdir, "sources", f"{sid}.json"), src)
     version_record(v2dir, v2,
                    {"kind": "directors-cut", "label": "Director's Cut", "decidedBy": "human", "decidedAt": VERSIONED,
                     "evidence": [{"signal": "folder-name", "value": "Tears of Steel (2012) - Director's Cut"}]},
                    {"colour": "colour", "dynamicRange": "sdr", "stereo3d": "none", "aspectRatio": "12:5"},
-                   812000, [s for s, _ in parts], [f for _, f in parts], ["surround", "audioChannels 6->2"])
+                   812000, [s for s, _ in parts], [f for _, f in parts])
     write(os.path.join(v2dir, ".complete"), b"packager example 2026-09-18\n")
     ren2 = renditions(1920, 800, False, 6)
     for r in ren2["video"] + ren2["audio"]:
@@ -387,9 +390,6 @@ def movie():
     })
 
 
-EPISODE_LOST = ["surround", "hdr10Metadata", "audioChannels 6->2"]
-
-
 def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, packaged_at, role):
     """One version folder of an episode, with its package."""
     vdir = os.path.join(edir, "versions", vid)
@@ -397,7 +397,7 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
                    {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": created_at,
                     "evidence": []},
                    {"colour": "colour", "dynamicRange": "hdr10", "stereo3d": "none", "aspectRatio": "16:9"},
-                   2700000, [sid], [original] if original else [], EPISODE_LOST,
+                   2700000, [sid], [original] if original else [],
                    segments=[{"kind": "intro", "startMs": 60000, "endMs": 120000, "detector": "chromaprint",
                               "confidence": 0.85, "label": None}],
                    created=created_at)
@@ -450,11 +450,14 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
                     subtitle(3, "Forced", forced=True), subtitle(4, None), subtitle(5, "SDH", sdh=True)]
         tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3,
                   "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
-    src = source(edir, sid, f"Example Show (US) - S01E{number:02d} - {title}.mkv",
-                 f"tv/Example Show (US)/Season 01/Example Show (US) - S01E{number:02d} - {title}.mkv",
+    name = f"Example Show (US) - S01E{number:02d}{'-03' if number == 2 else ''} - {title}.mkv"
+    src = source(edir, sid, name, f"tv/Example Show (US)/Season 01/{name}",
                  streams, [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10,
                                       hdr10Metadata=True, **tracks),
-                 2700000, "2160p", "web", "hevc/main10/10bit/hdr10/3840x2160")
+                 2700000, "2160p", "web", "hevc/main10/10bit/hdr10/3840x2160",
+                 naming={"scheme": "unknown", "seasonNumber": 1, "episodeNumber": number,
+                         "episodeEnd": 3 if number == 2 else None,
+                         "raw": f"S01E{number:02d}{'-03' if number == 2 else ''}"})
 
     if keeps_original:
         # one version, with the original beside its package
@@ -496,9 +499,9 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
 
 
 def series():
-    """Example Show: one season, two episodes, in two orderings. No record lists the episodes —
-    the folders are the list, so adding one never rewrites a record; the orderings are part of the
-    projection, which is replaced whole."""
+    """Example Show: one season, two episodes, in two orderings — aired, and a disc ordering that
+    runs the two the other way round. Nothing lists the episodes: the folders are the list, and each
+    episode records its own place in each ordering."""
     sid = uid("series", "example-show-us")
     sdir = os.path.join(ROOT, "series", sid[:2], sid)
     ep1, ep2 = uid(sid, "S01E01"), uid(sid, "S01E02")
@@ -522,15 +525,9 @@ def series():
             "match": {"status": "unmatched", "decidedBy": "inferred", "decidedAt": PROJECTED,
                       "confidence": 0.2,
                       "evidence": [{"signal": "folder-name", "value": "Example Show (US)"}]},
+            # The decision is which ordering a viewer sees; the orderings themselves are the
+            # episodes' own numbering, so adding an episode never rewrites this file's list of them.
             "defaultOrdering": "aired",
-            # The aired ordering lists exactly the episode folders; the disc ordering runs the two
-            # the other way round, and the second file covers two aired episodes.
-            "orderings": {
-                "aired": [{"itemId": ep1, "season": 1, "episode": 1, "episodeEnd": None},
-                          {"itemId": ep2, "season": 1, "episode": 2, "episodeEnd": 3}],
-                "dvd": [{"itemId": ep2, "season": 1, "episode": 1, "episodeEnd": None},
-                        {"itemId": ep1, "season": 1, "episode": 2, "episodeEnd": None}],
-            },
         },
         "images": [image(sdir, "poster", jpeg("series poster"), "image/jpeg", season=None),
                    image(sdir, "poster", jpeg("season 1 poster"), "image/jpeg", season=1)],

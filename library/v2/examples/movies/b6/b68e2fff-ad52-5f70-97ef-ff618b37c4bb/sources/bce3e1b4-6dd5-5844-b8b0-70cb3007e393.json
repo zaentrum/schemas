@@ -114,7 +114,7 @@
     "surround": true,
     "losslessAudio": false,
     "objectAudio": false,
-    "maxVideoHeight": 1080,
+    "maxVideoHeight": 800,
     "videoBitDepth": 8,
     "hdr10Metadata": false,
     "dolbyVision": false,

@@ -54,37 +54,7 @@
         }
       ]
     },
-    "defaultOrdering": "aired",
-    "orderings": {
-      "aired": [
-        {
-          "itemId": "fb7dca21-b87b-5a41-af9f-a837fc5f0d1c",
-          "season": 1,
-          "episode": 1,
-          "episodeEnd": null
-        },
-        {
-          "itemId": "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
-          "season": 1,
-          "episode": 2,
-          "episodeEnd": 3
-        }
-      ],
-      "dvd": [
-        {
-          "itemId": "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
-          "season": 1,
-          "episode": 1,
-          "episodeEnd": null
-        },
-        {
-          "itemId": "fb7dca21-b87b-5a41-af9f-a837fc5f0d1c",
-          "season": 1,
-          "episode": 2,
-          "episodeEnd": null
-        }
-      ]
-    }
+    "defaultOrdering": "aired"
   },
   "images": [
     {

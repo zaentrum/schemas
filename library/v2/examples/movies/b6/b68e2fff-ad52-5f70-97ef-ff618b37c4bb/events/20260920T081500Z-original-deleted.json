@@ -10,8 +10,8 @@
   "reason": "space on the archive volume",
   "accepted": [
     "surround",
-    "audioChannels 6->2",
-    "subtitleLanguages en",
-    "subtitleTracks 1->0"
+    "maxAudioChannels",
+    "subtitleLanguages:en",
+    "subtitleTracks"
   ]
 }

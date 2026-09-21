@@ -18,6 +18,13 @@
     "folder": "tv/Example Show (US)/Season 01",
     "takenBy": "move"
   },
+  "naming": {
+    "scheme": "unknown",
+    "seasonNumber": 1,
+    "episodeNumber": 1,
+    "episodeEnd": null,
+    "raw": "S01E01"
+  },
   "labels": {
     "quality": "2160p",
     "medium": "web",

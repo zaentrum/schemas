@@ -8,5 +8,11 @@
     "imdb": "tt2285752"
   },
   "createdAt": "2026-09-18T09:00:00Z",
-  "createdBy": "ingest example"
+  "createdBy": "ingest example",
+  "provenance": {
+    "migratedFrom": "legacy-catalog",
+    "legacyItemId": "eeb45e45-581d-5579-acae-1da2f17b4f72",
+    "migratedAt": "2026-09-18T09:00:00Z",
+    "legacyCreatedBy": "catalog import"
+  }
 }

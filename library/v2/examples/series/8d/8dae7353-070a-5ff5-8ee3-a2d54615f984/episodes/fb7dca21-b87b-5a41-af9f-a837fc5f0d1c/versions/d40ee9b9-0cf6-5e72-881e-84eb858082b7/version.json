@@ -38,10 +38,5 @@
   ],
   "originalFiles": [
     "Example Show (US) - S01E01 - Pilot.mkv"
-  ],
-  "lostIfOriginalDeleted": [
-    "surround",
-    "hdr10Metadata",
-    "audioChannels 6->2"
   ]
 }
