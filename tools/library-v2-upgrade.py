@@ -30,7 +30,8 @@ What it will not do:
     wrote, never computed again, so a file that changed since is not blessed — the validator's
     --check-checksums and the media check's --checksums still prove every one of them;
   * touch a projection (metadata.json, person.json, images), a version an event removed, a version
-    without a finished package, or anything under people/.
+    without a finished package, anything under people/, or an extra: extras/<extraId>/ came after
+    2026-10-02 (b) and was only ever written in the layout in which it proves itself.
 
 Every file is written to a temporary name in its own folder and renamed into place, and a version
 is written from the top of the chain down — package.json, then checksums.sha256, then .complete — so

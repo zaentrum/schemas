@@ -1169,6 +1169,10 @@ def test_upgrade(t):
         t.ok("no package file and no original was written again",
              all(files_before[k] == files_after[k] for k in files_before
                  if "/hls/" in k or "/subs/" in k or "/trickplay/" in k or k.endswith(".mkv")))
+        t.ok("and every extra is exactly as it was: an extra has no earlier layout to upgrade from",
+             any("/extras/" in k for k in files_before)
+             and {k: v for k, v in files_after.items() if "/extras/" in k} == {k: v for k, v in files_before.items()
+                                                                              if "/extras/" in k})
         code, text = run(UPGRADE, root)
         t.ok("a second run changes nothing", code == 0 and "nothing to do" in text and stamps(root) == files_after, text)
 
