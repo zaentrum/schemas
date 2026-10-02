@@ -21,9 +21,11 @@ rule and checks the tool notices:
   compare        an item only on storage is an orphan when the deletion log explains it and lost
                  when it does not, an item only in the database is a missing record, and only the
                  last two fail; without a log nothing on storage can be called an orphan; a person
-                 only on storage takes the class of the items that credit them; a projection whose
-                 row was modified since is stale and one that reflects a later state is ahead, and
-                 both fail, while one that does not say which state it reflects fails nothing
+                 only on storage is an orphan when the log names them as a person and nothing in
+                 their folder is newer — an untyped entry names an item — and otherwise takes the
+                 class of the items that credit them; a projection whose row was modified since is
+                 stale and one that reflects a later state is ahead, and both fail, while one that
+                 does not say which state it reflects fails nothing
   people         a credited person gets a record that holds what the credit knows; a people list in
                  the export fills every field it carries; --people-only touches no item record; a
                  projection that drops a portrait removes it
@@ -40,8 +42,10 @@ rule and checks the tool notices:
   sweep          a dry run finds every kind of garbage and only it, --apply removes exactly that
                  through a quarantine it checks again — putting back what is referenced by then — and
                  finishes one an interrupted run left; whatever is referenced, younger than the
-                 grace, unclassifiable or a person's is left alone, with the reason; of an extra, only
-                 a package that never finished is ever garbage
+                 grace, unclassifiable, or a person the log does not name as one is left alone, with
+                 the reason; a deleted person goes once no item record on storage credits them, in
+                 the same sweep as a deleted item that does; of an extra, only a package that never
+                 finished is ever garbage
   v1 -> v2       the v1 example tree converts, the result passes validate-library-v2.py and the
                  media check, the texts and the packages survive, and a second run does nothing
   catalog -> v2  an export, a package store and source files become a tree that validates; the
@@ -621,6 +625,33 @@ def test_export_sample(t):
              code == 0 and not any(os.path.exists(os.path.join(out, "movies", i[:2], i)) for i in deleted)
              and os.path.isfile(os.path.join(out, "movies", kept[:2], kept, "item.json")), text)
 
+    # the same export as the catalog prints it once it logs people: every entry says what it deleted, and
+    # a person no title credits any more is deleted and logged as a person
+    typed = json.loads(EXPORT_SAMPLE)
+    for e in typed["deletedItems"]:
+        e["type"] = "movie"
+    person = "5f5f5f5f-0000-4000-8000-0000000000aa"
+    typed["deletedItems"].append({"id": person, "type": "person", "deletedAt": "2026-10-02T14:01:37Z", "deletedBy": "catalog"})
+    with tempfile.TemporaryDirectory() as tmp:
+        export, empty, out = os.path.join(tmp, "catalog.json"), os.path.join(tmp, "share"), os.path.join(tmp, "library")
+        jwrite(export, typed)
+        os.makedirs(empty)
+        run(FROM_CATALOG, "--export", export, "--packages", empty, "--media", empty, "--out", out)
+        for iid in deleted:
+            outlive(out, iid)
+        folder = os.path.join(out, "people", person[:2], person)
+        shutil.copytree(sorted(glob.glob(os.path.join(EXAMPLES, "people", "*", "*")))[0], folder)
+        jwrite(os.path.join(folder, "person.json"), dict(jload(os.path.join(folder, "person.json")), personId=person))
+        code, text = run(REBUILD, out, "--compare", export)
+        t.ok("with typed entries the item folders it names are orphans, and so is the folder of the person it names",
+             code == 0 and sorted(report_section(text, "orphan")) == deleted and report_section(text, "people: orphan") == [person]
+             and "5 orphan(s) on storage are safe to remove" in text, text)
+        code, text = run(SWEEP, out, "--export", export, "--grace", "0", "--apply")
+        t.ok("and the sweep removes them all, the person's folder with them, and keeps the item that exists",
+             code == 0 and "removed 5 target(s)" in text and not os.path.exists(folder)
+             and not any(os.path.exists(os.path.join(out, "movies", i[:2], i)) for i in deleted)
+             and os.path.isfile(os.path.join(out, "movies", kept[:2], kept, "item.json")), text)
+
 
 def test_compare(t):
     """The export a tree is compared with starts as the rows the tree rebuilds to, so the two agree;
@@ -662,7 +693,7 @@ def test_compare(t):
          code == 0 and section(text, "orphan") == [movie["id"]] and "1 orphan(s) on storage are safe" in text, text)
     t.ok("the orphan says when and by whom", "deleted 2026-09-30T10:00:00Z by librarian" in text, text)
     director = movie["people"][0]["personId"]
-    t.ok("a person only a deleted item credits is unreferenced: kept, never an orphan, and not a failure",
+    t.ok("a person only a deleted item credits, whom the log does not name, is unreferenced: kept, and not a failure",
          section(text, "people: unreferenced") == [director] and "only items the database deleted credit them" in text
          and not section(text, "people: lost"), text)
 
@@ -785,6 +816,69 @@ def test_compare(t):
         t.ok("a person nothing on storage credits, whom the database does not hold, is unreferenced",
              code == 0 and section(text, "people: unreferenced") == [stray]
              and "nothing on storage credits them" in text, text)
+
+        # ---- the catalog deletes a person no title credits any more, and logs them as a person
+        def logged(pid, at="2026-09-30T10:00:00Z", **entry):
+            return lambda e: e["deletedItems"].append({"id": pid, "type": "person", "deletedAt": at,
+                                                       "deletedBy": "catalog", **entry})
+
+        code, text = compare(logged(stray), tree=tree)
+        t.ok("a person the log names as deleted, nothing in their folder newer, is an orphan, and an orphan alone "
+             "does not fail", code == 0 and section(text, "people: orphan") == [stray]
+             and not section(text, "people: unreferenced") and "deleted 2026-09-30T10:00:00Z by catalog" in text
+             and "1 orphan(s) on storage are safe to remove" in text, text)
+        code, text = compare(lambda e: e["deletedItems"].append({"id": stray, "deletedAt": "2026-09-30T10:00:00Z"}),
+                             tree=tree)
+        t.ok("an entry without a type is an item's, as in an export from before people were logged: the person "
+             "stays unreferenced, and the compare says why", code == 0 and section(text, "people: unreferenced") == [stray]
+             and not section(text, "people: orphan") and "no person on storage can be called deleted" in text, text)
+        for kind in ("movie", "collection"):
+            code, text = compare(logged(stray, type=kind), tree=tree)
+            t.ok(f"and one of the type {kind!r} names no person either",
+                 code == 0 and section(text, "people: unreferenced") == [stray] and not section(text, "people: orphan"), text)
+        code, text = compare(logged(stray, at="2026-09-20T11:00:00Z"), tree=tree)
+        t.ok("a person whose record is newer than the deletion was created again since: not an orphan",
+             code == 0 and section(text, "people: unreferenced") == [stray] and "created again since" in text, text)
+        code, text = compare(logged(stray, deletedAt=None), tree=tree)
+        t.ok("and a log entry with no deletedAt proves nothing", code == 0 and section(text, "people: unreferenced") == [stray]
+             and "no deletedAt to prove it" in text, text)
+
+        record = jload(os.path.join(p, "person.json"))
+        jwrite(os.path.join(p, "person.json"), dict(record, images=[dict(record["images"][0], fetchedAt="2026-10-01T08:00:00Z",
+                                                                          origin={"source": "manual"})]))
+        code, text = compare(logged(stray), tree=tree)
+        t.ok("a portrait fetched after the deletion keeps the person from being an orphan",
+             code == 0 and section(text, "people: unreferenced") == [stray] and "holds a record of 2026-10-01T08:00:00Z" in text,
+             text)
+        jwrite(os.path.join(p, "person.json"), record)
+        dropped = os.path.join(p, hashlib.sha256(b"\xff\xd8 dropped portrait").hexdigest() + ".jpg")
+        with open(dropped, "wb") as f:
+            f.write(b"\xff\xd8 dropped portrait")
+        code, text = compare(logged(stray), tree=tree)
+        t.ok("and so does a file the record says nothing of, by its time, written after the deletion",
+             code == 0 and section(text, "people: unreferenced") == [stray] and "created again since" in text, text)
+        old = datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc).timestamp()
+        os.utime(dropped, (old, old))
+        code, text = compare(logged(stray), tree=tree)
+        t.ok("but not once that file is older than the deletion", code == 0 and section(text, "people: orphan") == [stray], text)
+
+    code, text = compare(both(uncredit(movie["id"]), logged(director)))
+    t.ok("an item record on storage that still credits a deleted person is a note: they are an orphan all the same, "
+         "and not one safe to remove", section(text, "people: orphan") == [director]
+         and f"a note: {movie['id']} on storage still credits them" in text
+         and "orphan(s) on storage are safe to remove" not in text, text)
+    code, text = compare(logged(lead))
+    t.ok("a deleted person the database holds again is present, and compared as the live person they are",
+         code == 0 and not section(text, "people: orphan") and "people in the deletion log but held by the database again: 1" in text,
+         text)
+    typed = lambda kind: lambda e: e["deletedItems"].append({"id": movie["id"], "type": kind, "deletedAt": "2026-09-30T10:00:00Z",
+                                                            "deletedBy": "librarian"})
+    code, text = compare(both(drop(movie["id"]), typed("movie")))
+    t.ok("an entry of an item's own type is the item's", code == 0 and section(text, "orphan") == [movie["id"]], text)
+    for kind in ("person", "collection"):
+        code, text = compare(both(drop(movie["id"]), typed(kind)))
+        t.ok(f"and one of the type {kind!r} proves nothing of an item, which is lost",
+             code == 1 and section(text, "lost —") == [movie["id"]] and not section(text, "orphan"), text)
 
     code, text = compare(uncredit(series["id"]))
     t.ok("a person on storage that an item the database holds still credits is lost",
@@ -1839,6 +1933,7 @@ def test_upgrade(t):
 
 # ---------------------------------------------------------------- sweeping provable garbage
 GONE = "0d0d0d0d-0000-4000-8000-000000000001"           # an item the database deleted
+GONE_PERSON = "0d0d0d0d-0000-4000-8000-0000000000aa"    # a person it deleted, because no title credits them
 NOTHING_WROTE = "11111111-0000-4000-8000-00000000000b"  # a version folder with part of a package, no record
 RECORDED = "22222222-0000-4000-8000-00000000000b"       # a version that wrote its record, kept no original
 BESIDE = "33333333-0000-4000-8000-00000000000b"         # an unfinished package beside a kept original
@@ -1886,13 +1981,31 @@ def garbage(tmp, age=True):
                 if jload(os.path.join(p, "person.json"))["name"] == "Mara Example")
     where["dropped portrait"] = os.path.join(lead, hashlib.sha256(portrait).hexdigest() + ".jpg")
     open(where["dropped portrait"], "wb").write(portrait)
+    director = next(p for p in glob.glob(os.path.join(root, "people", "*", "*"))
+                    if jload(os.path.join(p, "person.json"))["name"] == "Ian Hubert")
+    where["gone person"] = os.path.join(root, "people", GONE_PERSON[:2], GONE_PERSON)
+    shutil.copytree(director, where["gone person"])
+    jwrite(os.path.join(where["gone person"], "person.json"),
+           dict(jload(os.path.join(director, "person.json")), personId=GONE_PERSON, name="Credited No More"))
     rows, _ = rows_of(EXAMPLES)
     export = os.path.join(tmp, "catalog.json")
     jwrite(export, {"exportedAt": "2026-10-01T12:00:00Z", "items": list(rows.values()),
-                    "deletedItems": [{"id": GONE, "deletedAt": "2026-09-30T10:00:00Z", "deletedBy": "librarian"}]})
+                    "deletedItems": [{"id": GONE, "deletedAt": "2026-09-30T10:00:00Z", "deletedBy": "librarian"},
+                                     {"id": GONE_PERSON, "type": "person", "deletedAt": "2026-09-30T10:00:00Z",
+                                      "deletedBy": "catalog"}]})
     if age:
         aged(root)
     return root, export, where
+
+
+def credit(item_dir, pid, name="Credited No More"):
+    """item_dir's metadata.json crediting pid as well, as a projection written before the database
+    dropped the credit still does."""
+    p = os.path.join(item_dir, "metadata.json")
+    doc = jload(p)
+    doc["credits"] = list(doc.get("credits") or []) + [{"personId": pid, "name": name, "role": "actor", "character": None,
+                                                        "order": None, "tmdbPerson": None}]
+    jwrite(p, doc)
 
 
 def swept(text, root):
@@ -1910,12 +2023,14 @@ def test_sweep(t):
         root, export, where = garbage(tmp)
         expected = sorted([where["gone"], where["nothing wrote"], where["recorded"],
                            os.path.join(where["beside"], "hls"), os.path.join(where["beside"], "trickplay"),
-                           where["dropped image"], where["dropped portrait"]])
+                           where["dropped image"], where["dropped portrait"], where["gone person"]])
         before = stamps(root)
         code, text = run(SWEEP, root, "--export", export)
         t.eq("a dry run finds every kind of garbage, and nothing else", swept(text, root), expected)
         t.ok("and says why each one is garbage",
              "deleted item: deleted 2026-09-30T10:00:00Z by librarian, and nothing in it is newer" in text
+             and "deleted person: deleted 2026-09-30T10:00:00Z by catalog: nothing in the folder is newer, and no item "
+                 "record credits them" in text
              and "no .complete and no version.json: nothing can have known it" in text
              and "no .complete, no original, and nothing names it" in text
              and "beside the original" in text and "metadata.json no longer lists it" in text
@@ -1927,7 +2042,7 @@ def test_sweep(t):
         gone = [k for k in before if not any(os.path.join(root, k) == e or os.path.join(root, k).startswith(e + os.sep)
                                              for e in expected)]
         t.ok("--apply, piped into a pod's Python, removes exactly those", code == 0
-             and not any(os.path.lexists(e) for e in expected) and "removed 7 target(s)" in text, text)
+             and not any(os.path.lexists(e) for e in expected) and "removed 8 target(s)" in text, text)
         t.ok("and leaves every other file as it was", all(rest.get(k) == before[k] for k in gone))
         t.ok("and no quarantine behind it", not os.path.exists(os.path.join(root, "_swept")))
         t.ok("the original beside the unfinished package stays, with its record",
@@ -2025,6 +2140,71 @@ def test_sweep(t):
     refused("an image younger than the grace", lambda r, e, w: touch(w["dropped image"]), "written within the grace period",
             what="dropped image")
 
+    # ---- a person the catalog deleted: swept only when nothing keeps them
+    def person_entry(change):
+        return lambda d: [change(x) for x in d["deletedItems"] if x["id"] == GONE_PERSON]
+
+    def gone_record(w, **fields):
+        p = os.path.join(w["gone person"], "person.json")
+        jwrite(p, dict(jload(p), **fields))
+
+    refused("a deleted person the database's people list holds again",
+            lambda r, e, w: export_edit(e, lambda d: d.update(people=[{"id": GONE_PERSON, "name": "Back"}])),
+            "the database holds them again", what="gone person")
+    refused("a deleted person an item of the database credits again",
+            lambda r, e, w: export_edit(e, lambda d: d["items"][0].setdefault("people", []).append(
+                {"personId": GONE_PERSON, "name": "Back", "role": "actor"})), "the database holds them again", what="gone person")
+    refused("a deleted person an item record on storage still credits",
+            lambda r, e, w: credit(movie_of(w), GONE_PERSON), "still credits them", what="gone person", age_after=True)
+    refused("a deleted person an episode's record on storage still credits",
+            lambda r, e, w: credit(glob.glob(os.path.join(w["series"], "episodes", "*"))[0], GONE_PERSON),
+            "still credits them", what="gone person", age_after=True)
+    refused("a deleted person while a projection on storage cannot be read, which may credit them",
+            lambda r, e, w: open(os.path.join(glob.glob(os.path.join(w["series"], "episodes", "*"))[0], "metadata.json"),
+                                 "w").write("not JSON"), "cannot be read, so it may credit them", what="gone person",
+            age_after=True)
+    refused("a deleted person whose deletion is younger than the grace",
+            lambda r, e, w: export_edit(e, person_entry(lambda x: x.update(deletedAt=(
+                datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")))),
+            "within the grace period", what="gone person")
+    refused("a deleted person's folder written to within the grace",
+            lambda r, e, w: touch(os.path.join(w["gone person"], "person.json")), "written to within the grace period",
+            what="gone person")
+    refused("a deleted person whose folder holds a record newer than the deletion",
+            lambda r, e, w: gone_record(w, databaseUpdatedAt="2026-10-01T08:00:00Z"),
+            "holds a record of 2026-10-01T08:00:00Z: created again since", what="gone person", age_after=True)
+    refused("a deleted person whose portrait was fetched after the deletion",
+            lambda r, e, w: gone_record(w, images=[dict(jload(os.path.join(w["gone person"], "person.json"))["images"][0],
+                                                       fetchedAt="2026-10-01T08:00:00Z", origin={"source": "manual"})]),
+            "holds a record of 2026-10-01T08:00:00Z", what="gone person", age_after=True)
+
+    def written_after(w):
+        """A file beside person.json that it says nothing of, written after the deletion and before the grace."""
+        p = os.path.join(w["gone person"], hashlib.sha256(b"\xff\xd8 later").hexdigest() + ".jpg")
+        with open(p, "wb") as f:
+            f.write(b"\xff\xd8 later")
+        at = datetime.datetime(2026, 10, 1, 8, tzinfo=datetime.timezone.utc).timestamp()
+        os.utime(p, (at, at))
+
+    refused("a deleted person whose folder holds a file written after the deletion",
+            lambda r, e, w: written_after(w), "holds a record of 2026-10-01T08:00:00Z", what="gone person")
+    refused("a deleted person whose person.json names someone else",
+            lambda r, e, w: gone_record(w, personId=NOTHING_WROTE), "names another person", what="gone person", age_after=True)
+    refused("a person an entry without a type names, as before people were logged",
+            lambda r, e, w: export_edit(e, person_entry(lambda x: x.pop("type"))),
+            "an entry without a type is an item's, so the person is not proved deleted", what="gone person")
+    refused("a person an entry of an item's type names",
+            lambda r, e, w: export_edit(e, person_entry(lambda x: x.update(type="movie"))),
+            "names this id as an item's, not a person's", what="gone person")
+    refused("a deleted person without an export", lambda r, e, w: None, "no --export", what="gone person", export_too=False)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        export_edit(export, lambda d: [x.pop("type") for x in d["deletedItems"] if x["id"] == GONE_PERSON])
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("a log none of whose entries says what it deleted names no person, and the sweep says so",
+             code == 0 and where["gone person"] not in swept(text, root) and "carry no type" in text, text)
+
     with tempfile.TemporaryDirectory() as tmp:
         root, export, where = garbage(tmp)
         lead = os.path.dirname(where["dropped portrait"])
@@ -2035,7 +2215,7 @@ def test_sweep(t):
                                                         personId=os.path.basename(nobody), name="Credited By Nothing"))
         aged(root)
         code, text = run(SWEEP, root, "--export", export)
-        t.ok("a person's folder is never swept, not even when nothing credits the person",
+        t.ok("a person's folder the deletion log does not name is never swept, not even when nothing credits the person",
              not any(p.startswith(nobody) for p in swept(text, root)) and os.path.isdir(nobody), text)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -2091,6 +2271,55 @@ def test_sweep(t):
         s = sw.Sweep(root, sw.References(root, export), 86400, now)
         s.run()
         a = sw.Apply(s)
+        check = a.finish
+
+        def credited_late(q):
+            credit(movie_of(where), GONE_PERSON)
+            check(q)
+        a.finish = credited_late
+        a.run(now)
+        t.ok("a deleted person an item record credits by the time they are checked is put back",
+             os.path.isdir(where["gone person"]) and any("metadata.json credits them" in n for n in a.put_back)
+             and not os.path.exists(os.path.join(root, "_swept")), a.put_back)
+
+    # ---- a deleted item that credits a deleted person: one sweep takes both, and putting one back keeps both
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp, age=False)
+        credit(where["gone"], GONE_PERSON)
+        aged(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("a credit in an item folder the same sweep removes as a deleted item keeps nobody",
+             where["gone person"] in swept(text, root) and where["gone"] in swept(text, root), text)
+        code, text = run(SWEEP, root, "--export", export, "--apply")
+        t.ok("and --apply takes both, so a second sweep finds neither",
+             code == 0 and not os.path.exists(where["gone"]) and not os.path.exists(where["gone person"])
+             and not {where["gone"], where["gone person"]} & set(swept(run(SWEEP, root, "--export", export)[1], root)), text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp, age=False)
+        credit(where["gone"], GONE_PERSON)
+        aged(root)
+        s = sw.Sweep(root, sw.References(root, export), 86400, now)
+        s.run()
+        a = sw.Apply(s)
+        check = a.finish
+
+        def item_back(q):
+            doc = jload(export)
+            doc["items"].append({"id": GONE, "type": "movie", "title": "Restored"})
+            jwrite(export, doc)
+            check(q)
+        a.finish = item_back
+        a.run(now)
+        t.ok("a deleted item put back brings back the credits in it: the person it credits is checked after it, and "
+             "put back too", os.path.isdir(where["gone"]) and os.path.isdir(where["gone person"])
+             and any(n.startswith("put back people/") and "credits them" in n for n in a.put_back), a.put_back)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        s = sw.Sweep(root, sw.References(root, export), 86400, now)
+        s.run()
+        a = sw.Apply(s)
         q = a.quarantine_dir(now)
         a.write_plan(q, s.targets, now)
         for target in s.targets:
@@ -2100,7 +2329,7 @@ def test_sweep(t):
         t.ok("a dry run says an earlier --apply did not finish", "did not finish" in text, text)
         code, text = run(SWEEP, root, "--export", export, "--apply")
         t.ok("and the next --apply checks and finishes it", code == 0 and not os.path.exists(os.path.join(root, "_swept"))
-             and "removed 7 target(s)" in text, text)
+             and "removed 8 target(s)" in text, text)
 
     with tempfile.TemporaryDirectory() as tmp:
         root, export, where = garbage(tmp)

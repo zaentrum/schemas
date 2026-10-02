@@ -36,8 +36,11 @@ Applying events, earliest first:
 --compare reports both directions against a catalog export, and says which of three things each
 difference about an item's existence is. Deleting an item is supposed to delete its folder; when a
 writer missed that, the tree holds a record the database does not, and only the database's deletion
-log (the export's top-level deletedItems: [{id, deletedAt, deletedBy}]) can say whether the database
-lost the item or deleted it:
+log (the export's top-level deletedItems: [{id, type, deletedAt, deletedBy}]) can say whether the
+database lost the item or deleted it. An entry's type is the item's own — movie, series, episode — or
+person, for a person the catalog deleted because no title credits them any more; an entry without a
+type is an item's, as every entry of an export from before people were logged is, and one of a type
+the format does not know proves nothing:
 
   orphan          on storage, not in the database, in the deletion log, and nothing in its folder
                   is newer than that deletion: the database deleted it, so the folder is safe to
@@ -60,11 +63,16 @@ People are compared too. The database's people are the export's top-level people
 carries one, and otherwise everyone its items credit, by personId and name — all a catalog without
 person records knows — and only the fields the export carries are compared: every field of the
 people list there is, and of each portrait its bytes by their hash, kind, type, size, dimensions,
-whether it is primary, the path TMDB lists it under and when it was fetched. The deletion log holds
-items only, so a person is never an orphan: a person only on storage is lost when an item on storage
-that is lost, or that the database holds, credits them, and unreferenced — kept, not counted, and
-never swept — when nothing the database holds credits them. A person the database holds and the
-tree does not is a missing record; with --subset only when an item on storage credits them.
+whether it is primary, the path TMDB lists it under and when it was fetched. A person only on
+storage is an orphan when the deletion log names them as a person and nothing in their folder is
+newer than that deletion — person.json's asOf, its databaseUpdatedAt and TMDB fetchedAt, each image's
+fetchedAt, and the modification time of a file that states none — and an item record on storage that
+still credits them is a note: its projection is stale, and the sweep keeps the person's folder until
+no item record credits them. Otherwise a person only on storage is lost when an item on storage that
+is lost, or that the database holds, credits them, and unreferenced — kept, not counted, and never
+swept — when nothing the database holds credits them; so is one an untyped entry of an older export
+names. A person the database holds is present, whatever the log says, and one it holds and the tree
+does not is a missing record; with --subset only when an item on storage credits them.
 
 Every row both sides hold is then judged by how fresh its projection is. A projection says which
 state of its database row it reflects — databaseUpdatedAt, the row's modifiedAt when it was
@@ -207,6 +215,40 @@ def local_copies(extras):
     return out
 
 
+PERSON_MOMENTS = ("asOf", "databaseUpdatedAt", "sources.tmdb.fetchedAt")
+
+
+def newest_person(d):
+    """The newest moment a person folder states: person.json's asOf, the databaseUpdatedAt of the row
+    it reflects and when its TMDB data was fetched, and for each file beside it the fetchedAt
+    person.json records for that image. A person.json that states none, and a file it records none
+    for, count with their modification time, so a folder never looks older than what is in it.
+    Returns an RFC 3339 string, or None."""
+    moments, fetched = [], {}
+    p = os.path.join(d, "person.json")
+    try:
+        doc = load(p)
+        for field in PERSON_MOMENTS:
+            v = doc
+            for part in field.split("."):
+                v = v.get(part) if isinstance(v, dict) else None
+            if instant(v):
+                moments.append(instant(v))
+        for img in doc.get("images") or []:
+            t = instant(img.get("fetchedAt")) or instant(image_origin(img).get("fetchedAt"))
+            if t and isinstance(img.get("file"), str):
+                fetched[img["file"]] = t
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    if not moments and os.path.isfile(p):
+        moments.append(datetime.datetime.fromtimestamp(os.path.getmtime(p), datetime.timezone.utc))
+    for name in listdir(d):
+        if name != "person.json":
+            moments.append(fetched.get(name) or
+                           datetime.datetime.fromtimestamp(os.path.getmtime(os.path.join(d, name)), datetime.timezone.utc))
+    return utc(max(moments)) if moments else None
+
+
 def newest_record(d):
     """The newest moment any record in the item folder d states — its own records, not an episode's.
     A record that cannot be read, or that states no moment, counts with its file's modification time,
@@ -242,6 +284,7 @@ class Rebuild:
         self.storage = []
         self.notes = []
         self.newest = {}
+        self.people_newest = {}
 
     def note(self, msg):
         self.notes.append(msg)
@@ -300,6 +343,7 @@ class Rebuild:
             "tmdbFetchedAt": tmdb.get("fetchedAt"), "tmdbChangedAt": tmdb.get("changedAt"),
             "modifiedAt": doc.get("databaseUpdatedAt"),
             "artwork": [artwork_row(i, i["file"]) for i in doc.get("images") or []]})
+        self.people_newest[doc["personId"]] = newest_person(d)
 
     def item(self, d):
         try:
@@ -692,13 +736,32 @@ def instant(value):
     return t if t.tzinfo else None
 
 
-def deletion_log(export):
-    """The database's record of what it deleted, by item id — or None when there is no log: the key
-    is absent, or null because the catalog keeps no log yet. An empty list is a log that says nothing
-    was deleted, which is not the same thing."""
+ITEM_TYPES = ("movie", "series", "episode")
+
+
+def logged_as(entry):
+    """What a deletion log entry deleted: 'item' — an entry of an item's type, or of none, as every
+    entry of an export from before people were logged is — 'person', or None for a type the format
+    does not know, which proves nothing."""
+    kind = entry.get("type")
+    return "item" if not kind or kind in ITEM_TYPES else "person" if kind == "person" else None
+
+
+def deletion_log(export, of="item"):
+    """The database's record of what it deleted — its items, or with of='person' its people — by id,
+    or None when there is no log: the key is absent, or null because the catalog keeps no log yet. An
+    empty list is a log that says nothing was deleted, which is not the same thing."""
     if export.get("deletedItems") is None:
         return None
-    return {str(e["id"]): e for e in export["deletedItems"] if isinstance(e, dict) and e.get("id")}
+    return {str(e["id"]): e for e in export["deletedItems"]
+            if isinstance(e, dict) and e.get("id") and logged_as(e) == of}
+
+
+def untyped_log(export):
+    """Whether the deletion log holds entries and none of them says what it deleted: an export from
+    before people were logged, which can name no person as deleted."""
+    entries = [e for e in export.get("deletedItems") or [] if isinstance(e, dict)]
+    return bool(entries) and not any(e.get("type") for e in entries)
 
 
 def folder_newest(tree, newest):
@@ -749,7 +812,10 @@ CLASSES = (
     ("missing", "missing record — in the database, not on storage"),
 )
 PEOPLE_CLASSES = (
-    ("unreferenced", "people: unreferenced — on storage, not in the database, and nothing it holds credits them: kept, never swept"),
+    ("orphan", "people: orphan — on storage and in the deletion log as a person, nothing newer: the database deleted them, "
+               "safe to remove once no item record credits them"),
+    ("unreferenced", "people: unreferenced — on storage, not in the database, nothing it holds credits them and the log does "
+                     "not name them: kept, never swept"),
     ("lost", "people: lost — on storage, not in the database, and credited by an item on storage: restore candidates"),
     ("missing", "people: missing record — in the database, not on storage"),
 )
@@ -862,60 +928,87 @@ def database_people(export, text_language):
     return out
 
 
-def people_existence(tree_people, db_people, tree, item_classes):
-    """The deletion log holds items only, so a person is never an orphan: a person only on storage is
-    lost when an item on storage that is lost, or that the database holds, credits them, and
-    unreferenced otherwise — nothing the database holds credits them, so nothing would restore them,
-    and nothing sweeps them either."""
+def people_existence(tree_people, db_people, tree, item_classes, log=None, newest=None):
+    """A person only on storage is an orphan when the deletion log names them as a person — the
+    catalog deletes a person no title credits any more — and nothing in their folder is newer than
+    that deletion; an item record on storage that still credits them is a note, and keeps the folder
+    from the sweep. Otherwise a person only on storage is lost when an item on storage that is lost,
+    or that the database holds, credits them, and unreferenced when nothing the database holds
+    credits them: then nothing would restore them, and nothing sweeps them either. log is the
+    people's deletion log or None; newest the newest moment each person folder states."""
     credited = {}
     for iid, row in tree.items():
         for c in row.get("people") or []:
             credited.setdefault(c.get("personId"), set()).add(iid)
     of = {key: {iid for iid, _ in found} for key, found in item_classes.items()}
-    out = {"unreferenced": [], "lost": [], "missing": []}
+    out = {"orphan": [], "unreferenced": [], "lost": [], "missing": []}
     for pid in sorted(set(tree_people) - set(db_people)):
         by = credited.get(pid, set())
+        entry = (log or {}).get(pid)
+        deleted = instant((entry or {}).get("deletedAt"))
+        latest = (newest or {}).get(pid)
+        logged = ""
+        if entry is not None and deleted is None:
+            logged = "; in the deletion log as a person, but the entry has no deletedAt to prove it"
+        elif entry is not None and latest and instant(latest) and instant(latest) > deleted:
+            logged = f"; deleted {entry['deletedAt']}, but their folder holds a record of {latest}: created again since"
+        elif entry is not None:
+            still = (f"; a note: {', '.join(sorted(by))} on storage still credits them, so the sweep keeps their "
+                     f"folder until no item record does") if by else ""
+            out["orphan"].append((pid, f"deleted {entry['deletedAt']} by {entry.get('deletedBy') or 'unknown'}{still}"))
+            continue
         live = sorted(by - of["orphan"] - of["lost"])
         if by & of["lost"]:
-            out["lost"].append((pid, f"credited by {sorted(by & of['lost'])[0]}, which is lost"))
+            out["lost"].append((pid, f"credited by {sorted(by & of['lost'])[0]}, which is lost{logged}"))
         elif live:
-            out["lost"].append((pid, f"credited by {live[0]}, which the database holds"))
+            out["lost"].append((pid, f"credited by {live[0]}, which the database holds{logged}"))
         elif by:
-            out["unreferenced"].append((pid, "only items the database deleted credit them"))
+            out["unreferenced"].append((pid, f"only items the database deleted credit them{logged}"))
         else:
-            out["unreferenced"].append((pid, "nothing on storage credits them"))
+            out["unreferenced"].append((pid, f"nothing on storage credits them{logged}"))
     out["missing"] = [(pid, "not on storage") for pid in sorted(set(db_people) - set(tree_people))]
     return out, credited
 
 
-def compare(tree_rows, tree_people, export, ignore, subset=False, text_language="und", newest=None, extras=()):
-    """Both directions, field by field. Returns (lines, number of differences, number of orphans).
-    newest is the newest moment each item folder's records state, by item id. extras are the tree's
-    bonus material, which the catalog has no table for yet: they are counted, never compared."""
+def compare(tree_rows, tree_people, export, ignore, subset=False, text_language="und", newest=None, extras=(),
+            people_newest=None):
+    """Both directions, field by field. Returns (lines, number of differences, number of orphans safe
+    to remove). newest is the newest moment each item folder's records state, by item id, and
+    people_newest each person folder's, by person id. extras are the tree's bonus material, which the
+    catalog has no table for yet: they are counted, never compared."""
     tree = {r["id"]: normalise(r) for r in tree_rows}
     db = {r["id"]: normalise(r) for r in export.get("items") or []}
-    log = deletion_log(export)
+    log, people_log = deletion_log(export), deletion_log(export, "person")
     lines = []
     if log is None:
         lines.append("  the export carries no deletion log (deletedItems is "
                      + ("null" if "deletedItems" in export else "absent")
                      + "), so nothing on storage can be called deleted")
+    elif untyped_log(export):
+        lines.append("  the deletion log's entries say nothing of what they deleted, as before people were logged: "
+                     "every one is an item's, so no person on storage can be called deleted")
     if extras:
         lines.append(f"  extras: {len(extras)} on storage, not compared: the catalog has no table for them yet")
     classes = existence(tree, db, log, newest or {})
-    stale = sorted(iid for iid in set(log or {}) & set(db))
+    again = sorted(iid for iid in set(log or {}) & set(db))
     n = report_classes(lines, classes, CLASSES, lambda iid: tree.get(iid) or db.get(iid), "item(s)",
                        lambda key, iid: key == "lost" or (key == "missing" and not subset))
-    if stale:
-        lines.append(f"  in the deletion log but held by the database again: {len(stale)} item(s), "
+    if again:
+        lines.append(f"  in the deletion log but held by the database again: {len(again)} item(s), "
                      f"compared as the live items they are")
-        lines += [f"      {iid}" for iid in stale[:LISTED]]
+        lines += [f"      {iid}" for iid in again[:LISTED]]
 
     mine = {p["id"]: normalise(p) for p in tree_people}
     theirs = database_people(export, text_language)
-    who, credited = people_existence(mine, theirs, tree, classes)
+    who, credited = people_existence(mine, theirs, tree, classes, people_log, people_newest)
     n += report_classes(lines, who, PEOPLE_CLASSES, lambda pid: mine.get(pid) or theirs.get(pid), "person(s)",
                         lambda key, pid: key == "lost" or (key == "missing" and (not subset or bool(credited.get(pid)))))
+    back = sorted(pid for pid in set(people_log or {}) & set(theirs))
+    if back:
+        lines.append(f"  people in the deletion log but held by the database again: {len(back)} person(s), "
+                     f"compared as the live people they are")
+        lines += [f"      {pid}" for pid in back[:LISTED]]
+    removable = len(classes["orphan"]) + sum(1 for pid, _ in who["orphan"] if not credited.get(pid))
 
     # how fresh each projection both sides hold is: the state of its row it reflects, against the row
     fresh, people_fresh, unknown = {"stale": [], "ahead": []}, {"stale": [], "ahead": []}, 0
@@ -947,7 +1040,7 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
             lines.append(f"      {iid}: storage {a!r} != database {b!r}" + (" — stale projection" if iid in went_stale else ""))
         if len(rows) > 5:
             lines.append(f"      … and {len(rows) - 5} more")
-    return lines, n, len(classes["orphan"])
+    return lines, n, removable
 
 
 def diff_field(fields, iid, key, a, b, ignore, prefix=""):
@@ -1032,7 +1125,7 @@ def main():
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
     lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest,
-                                extras=r.extras)
+                                extras=r.extras, people_newest=r.people_newest)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     for line in lines:
         print(line)
