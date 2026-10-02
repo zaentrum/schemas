@@ -159,6 +159,7 @@ class Check:
         self.covered(d, {"item.json"}, "item.json")
         events = self.events(d)
         removed = {e["versionId"] for e in events if e.get("kind") == "version-removed" and e.get("versionId")}
+        retired = {e["extraId"] for e in events if e.get("kind") == "extra-removed" and e.get("extraId")}
         sources = self.sources(d)
         self.metadata(d)
         base = os.path.join(d, "versions")
@@ -169,7 +170,7 @@ class Check:
             if name in removed:
                 continue
             self.version(vp, name, sources, events)
-        self.extras(d, kind)
+        self.extras(d, kind, retired)
         self.hard_links(d)
 
     def events(self, d):
@@ -393,8 +394,9 @@ class Check:
                     self.err(os.path.join(vp, rel), "does not match its checksum")
 
     # -------------------------------------------------- bonus material
-    def extras(self, d, kind):
-        """extras/<extraId>/ beside a movie's versions or a series' episodes; an episode has none."""
+    def extras(self, d, kind, retired=()):
+        """extras/<extraId>/ beside a movie's versions or a series' episodes; an episode has none. The
+        folder of an extra an extra-removed event retired is not part of the item, and is not checked."""
         base = os.path.join(d, "extras")
         if not os.path.isdir(base):
             return
@@ -403,6 +405,8 @@ class Check:
             return
         for name in listdir(base):
             xp = os.path.join(base, name)
+            if name in retired:
+                continue
             if not os.path.isdir(xp) or not UUID_RE.match(name):
                 self.err(xp, "not an extras/<extraId>/ folder")
                 continue

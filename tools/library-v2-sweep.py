@@ -6,7 +6,7 @@ Usage:
 
 Deleting an item deletes its folder, a writer that dies leaves a version folder unfinished, and a
 projection that drops an image leaves the file behind — and nothing but this collects what a writer
-missed. It finds four kinds of garbage, each proved by the records and the database, never guessed:
+missed. It finds five kinds of garbage, each proved by the records and the database, never guessed:
 
   deleted item       an item folder whose id the export's deletion log names (deletedItems), that the
                      database does not hold again, and in which no record states a moment after that
@@ -27,6 +27,11 @@ missed. It finds four kinds of garbage, each proved by the records and the datab
                      metadata.json under library.extras, not the export); when it keeps an original,
                      only the unfinished package beside it, its checksums with it. An extra that holds
                      no package is never garbage: finished by its checksums, or its writer's to finish.
+  removed extra      the folder of an extra an extra-removed event retired, still on storage — the
+                     whole folder, whatever it holds — once the removal is older than the grace and
+                     nothing names the extra: not the item's library.extras, not another event, not the
+                     export. This is how the old folder goes when an extra kept only as its original is
+                     packaged later, into a new one.
   dropped image      an image in an item's metadata/ or beside a person's person.json that the
                      projection does not list, named by the hash of its own bytes.
 
@@ -219,8 +224,8 @@ class References:
         return None
 
     def extra_named(self, item_dir, xid):
-        """What names an extra and so keeps its folder: the item's projection, the database. No event
-        names an extra."""
+        """What names an extra and so keeps its folder: the item's projection, an event other than the
+        one that removed it, the database."""
         try:
             lib = load(os.path.join(item_dir, "metadata.json")).get("library") or {}
             if xid in (lib.get("extras") or {}):
@@ -228,9 +233,31 @@ class References:
         except (OSError, ValueError, AttributeError):
             if os.path.exists(os.path.join(item_dir, "metadata.json")):
                 return "metadata.json cannot be read, so it may name it"
+        base = os.path.join(item_dir, "events")
+        for name in (listdir(base) if os.path.isdir(base) else []):
+            p = os.path.join(base, name, "event.json") if os.path.isdir(os.path.join(base, name)) else os.path.join(base, name)
+            try:
+                ev = load(p)
+            except (OSError, ValueError):
+                return f"event {name} cannot be read, so it may name it"
+            if ev.get("kind") != "extra-removed" and ev.get("extraId") == xid:
+                return f"event {name} names it"
         if xid in self.mentioned:
             return "the export names it"
         return None
+
+    def retired(self, item_dir):
+        """The extras an extra-removed event of the item retired: {extraId: that event}. An event that
+        cannot be read retires nothing — it proves nothing."""
+        out, base = {}, os.path.join(item_dir, "events")
+        for name in (listdir(base) if os.path.isdir(base) else []):
+            try:
+                ev = load(os.path.join(base, name, "event.json"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(ev, dict) and ev.get("kind") == "extra-removed" and ev.get("extraId"):
+                out[str(ev["extraId"])] = ev
+        return out
 
     def listed(self, projection):
         """The image files a projection lists, or None when it cannot be read."""
@@ -307,9 +334,12 @@ class Sweep:
         if os.path.isdir(base) and episode:
             self.leave(base, "an extras/ folder under an episode, which has none: the sweep cannot classify it")
         elif os.path.isdir(base):
+            retired = self.refs.retired(d)
             for name in listdir(base):
                 xp = os.path.join(base, name)
-                if os.path.isdir(xp) and not os.path.isfile(os.path.join(xp, ".complete")):
+                if name in retired and os.path.lexists(xp):
+                    self.removed_extra(d, xp, name, retired[name])
+                elif os.path.isdir(xp) and not os.path.isfile(os.path.join(xp, ".complete")):
                     self.unfinished_extra(d, xp, name)
         if os.path.isdir(os.path.join(d, "metadata")):
             self.images(os.path.join(d, "metadata"), os.path.join(d, "metadata.json"))
@@ -398,6 +428,28 @@ class Sweep:
         for n in [n for n in entries if n in PACKAGE_PARTS or n in RECORDS_TMP]:
             self.target(os.path.join(vp, n), "unfinished package",
                         f"no .complete: the package never finished beside the original {kept[0]}, which stays")
+
+    # -------------------------------------------------- (b'') an extra an event retired
+    def removed_extra(self, item_dir, xp, xid, ev):
+        """An extra-removed event says the extra is no longer part of the item, so its folder, still
+        on storage, is garbage — whatever it holds, finished or not — once the removal and everything
+        in the folder are older than the grace, and nothing names the extra any more."""
+        at = instant(ev.get("at"))
+        if at is None:
+            self.leave(xp, "an extra-removed event names it, but states no moment to prove it by")
+            return
+        if at > self.cutoff:
+            self.leave(xp, f"an extra-removed event of {ev['at']} names it, within the grace period")
+            return
+        young = self.young(xp)
+        if young:
+            self.leave(xp, f"a removed extra, but written to within the grace period ({young})")
+            return
+        named = self.refs.extra_named(item_dir, xid)
+        if named:
+            self.leave(xp, f"a removed extra, but {named}")
+            return
+        self.target(xp, "removed extra", f"an extra-removed event of {ev['at']} says it is no longer part of the item")
 
     # -------------------------------------------------- (b') an extra whose package never finished
     def unfinished_extra(self, item_dir, xp, xid):
@@ -495,6 +547,12 @@ class Sweep:
                 return "its version has finished since"
             named = self.refs.version_named(item_dir, vid)
             return named
+        if t["class"] == "removed extra":
+            i = parts.index("extras")
+            item_dir, xid = os.path.join(self.root, *parts[:i]), parts[i + 1]
+            if xid not in self.refs.retired(item_dir):
+                return "no extra-removed event names it any more"
+            return self.refs.extra_named(item_dir, xid)
         if t["class"] in ("unfinished extra", "unfinished extra package"):
             i = parts.index("extras")
             item_dir, xid = os.path.join(self.root, *parts[:i]), parts[i + 1]

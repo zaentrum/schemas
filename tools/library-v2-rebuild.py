@@ -27,6 +27,7 @@ Applying events, earliest first:
                       record says, with everything the package failed to carry permanently lost
   version-removed     the version is not part of the item: its folder is ignored altogether
   package-superseded  the package it names is not the one to use; the successor is
+  extra-removed       the extra is not part of the item: its folder is ignored, and it has no row
   note                nothing
 
 --compare reports both directions against a catalog export, and says which of three things each
@@ -266,7 +267,7 @@ class Rebuild:
         versions, storage = self.versions(d, item, sources, events)
         extras = []
         if item.get("type") in ("movie", "series"):
-            extras = self.extra_rows(d, item, meta)
+            extras = self.extra_rows(d, item, meta, events)
         elif os.path.isdir(os.path.join(d, "extras")):
             self.note(f"{item['itemId']}: an episode has no extras, so its extras/ folder is ignored")
         self.items.append(self.row(d, item, meta, versions, sources, extras))
@@ -482,19 +483,23 @@ class Rebuild:
                  "isDefault": bool(s.get("default"))} for s in v["package"].get("subtitles") or []]
 
     # -------------------------------------------------- bonus material
-    def extra_rows(self, d, item, meta):
+    def extra_rows(self, d, item, meta, events=()):
         """One row per finished extra beside a movie or series: what extra.json recorded, what the
         projection decided about showing it, and what there is to play — the original kept beside it
         and the package, in the shape an item's playback rows have. An extra that never finished is
         left out: a packaged one is finished by its .complete, one that keeps only its original by its
-        checksums file."""
+        checksums file. So is one an extra-removed event retired, whether or not its folder is gone."""
         iid = item["itemId"]
         decided = ((meta or {}).get("library") or {}).get("extras") or {}
+        retired = {e.get("extraId") for e in events if e.get("kind") == "extra-removed" and e.get("extraId")}
         base = os.path.join(d, "extras")
         rows = []
         for xid in (listdir(base) if os.path.isdir(base) else []):
             xp = os.path.join(base, xid)
             if not os.path.isdir(xp) or not UUID_RE.match(xid):
+                continue
+            if xid in retired:
+                self.note(f"{iid}: extra {xid} was removed by an event; its folder is ignored")
                 continue
             try:
                 x = load(os.path.join(xp, "extra.json"))

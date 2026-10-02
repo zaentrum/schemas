@@ -507,6 +507,20 @@ def test_events(t):
         t.ok("the version it names is canonical and its losses are permanent",
              bool(loss) and loss[0]["canonical"] and "surround" in loss[0]["permanentLoss"])
 
+        # ---- extra-removed: the extra has no row, even while its folder is still there
+        featurette = extra_of(base, "featurette")
+        movie_dir = os.path.dirname(os.path.dirname(featurette))
+        xid = os.path.basename(featurette)
+        retirement = write_event(movie_dir, {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
+                                             "at": "2026-09-21T10:30:00Z", "by": "test", "kind": "extra-removed",
+                                             "extraId": xid})
+        _, doc3 = rows_of(base)
+        t.ok("extra-removed drops the extra's row, though its folder is still there",
+             xid not in [r["id"] for r in doc3["extras"]] and os.path.isdir(featurette)
+             and any(f"extra {xid} was removed by an event" in n for n in doc3["notes"]), doc3["notes"])
+        shutil.rmtree(retirement)
+        t.ok("and without the event it is a row again", xid in [r["id"] for r in rows_of(base)[1]["extras"]])
+
         # ---- note: nothing
         write_event(item, {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
                            "at": "2026-09-21T11:00:00Z", "by": "test", "kind": "note",
@@ -1907,6 +1921,92 @@ def test_sweep_extras(t):
             t.ok(name, os.path.exists(back) and any(why in n for n in a.put_back)
                  and not os.path.exists(os.path.join(root, "_swept")), a.put_back)
 
+    # ---- the folder of an extra an extra-removed event retired, still on storage
+    def retired_garbage(tmp):
+        """The examples with the folder of the trailer's old extra still there: the extra-removed event
+        retired it, and the writer that packaged the trailer into a new folder left the old one."""
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        movie = glob.glob(os.path.join(root, "movies", "*", "*"))[0]
+        event = glob.glob(os.path.join(movie, "events", "*-extra-removed", "event.json"))[0]
+        xid = jload(event)["extraId"]
+        old = os.path.join(movie, "extras", xid)
+        shutil.copytree(extra_of(root, "trailer"), old)
+        for name in (".complete", "package.json", "hls", "trickplay"):
+            p = os.path.join(old, name)
+            shutil.rmtree(p) if os.path.isdir(p) else os.unlink(p)
+        jwrite(os.path.join(old, "extra.json"), dict(jload(os.path.join(old, "extra.json")), extraId=xid))
+        rows, _ = rows_of(EXAMPLES)
+        export = os.path.join(tmp, "catalog.json")
+        jwrite(export, {"exportedAt": "2026-10-01T12:00:00Z", "items": list(rows.values()), "deletedItems": []})
+        aged(root)
+        return root, export, {"old": old, "movie": movie, "event": event, "xid": xid}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = retired_garbage(tmp)
+        before = stamps(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.eq("the folder of an extra an event removed is garbage, once the removal is older than the grace",
+             swept(text, root), [where["old"]])
+        t.ok("and the sweep says which event says so",
+             "removed extra: an extra-removed event of 2026-09-19T10:05:00Z says it is no longer part of the item" in text, text)
+        code, text = run_piped(SWEEP, root, "--export", export, "--apply")
+        t.ok("--apply removes it through the quarantine, and nothing else",
+             code == 0 and not os.path.exists(where["old"]) and "removed 1 target(s)" in text
+             and not os.path.exists(os.path.join(root, "_swept"))
+             and all(stamps(root).get(k) == v for k, v in before.items() if not k.startswith(
+                 os.path.relpath(where["old"], root) + os.sep)), text)
+
+    def kept_alone(name, change, phrase):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, export, where = retired_garbage(tmp)
+            change(root, export, where)
+            code, text = run(SWEEP, root, "--export", export)
+            t.ok(f"the sweep leaves alone {name}", code == 0 and where["old"] not in swept(text, root)
+                 and any(phrase in line for line in left_alone(text)), text)
+
+    def decided(w):
+        meta = os.path.join(w["movie"], "metadata.json")
+        doc = jload(meta)
+        doc["library"]["extras"][w["xid"]] = {"hidden": True}
+        jwrite(meta, doc)
+        aged(w["movie"])
+
+    def export_edit_names(export, xid):
+        doc = jload(export)
+        doc["items"][0]["playbackAssets"].append({"id": "x", "kind": "packaged", "path": f"/library/extras/{xid}/package.json"})
+        jwrite(export, doc)
+
+    kept_alone("a removed extra whose removal is younger than the grace",
+               lambda r, e, w: jwrite(w["event"], dict(jload(w["event"]), at=(datetime.datetime.now(datetime.timezone.utc)
+                                                                            - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))),
+               "within the grace period")
+    kept_alone("a removed extra's folder written to within the grace",
+               lambda r, e, w: os.utime(os.path.join(w["old"], "extra.json"), None), "written to within the grace period")
+    kept_alone("a removed extra the projection still names", lambda r, e, w: decided(w), "metadata.json names it")
+    kept_alone("a removed extra the database still names",
+               lambda r, e, w: export_edit_names(e, w["xid"]), "the export names it")
+    kept_alone("a removed extra a note names",
+               lambda r, e, w: (write_event(w["movie"], {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
+                                                        "at": "2026-09-21T10:00:00Z", "by": "test", "kind": "note",
+                                                        "extraId": w["xid"], "reason": "a person looked at it"}),
+                                aged(w["movie"])), "names it")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = retired_garbage(tmp)
+        s = sw.Sweep(root, sw.References(root, export), 86400, now)
+        s.run()
+        a = sw.Apply(s)
+        check = a.finish
+
+        def named_late(q):
+            decided(where)
+            check(q)
+        a.finish = named_late
+        a.run(now)
+        t.ok("a removed extra the projection names by the time it is checked is put back",
+             os.path.isdir(where["old"]) and any("metadata.json names it" in n for n in a.put_back), a.put_back)
+
 
 # ---------------------------------------------------------------- the media check
 def test_media_check(t):
@@ -2132,6 +2232,17 @@ def test_media_check(t):
          lambda r: [os.unlink(os.path.join(featurette(r), n)) for n in (".complete", "package.json", "checksums.sha256")],
          "an extra whose package never finished")
     case("an extra kept only as its package", True, package_only, "OK", ("--checksums",))
+
+    def resurrect_extra(r):
+        """The folder of the extra the movie's extra-removed event retired, back on storage, full of junk."""
+        ev = jload(glob.glob(os.path.join(movie(r), "events", "*-extra-removed", "event.json"))[0])
+        xp = os.path.join(movie(r), "extras", ev["extraId"])
+        os.makedirs(xp)
+        with open(os.path.join(xp, "extra.json"), "w") as f:
+            f.write("this is not even JSON")
+
+    case("the folder of an extra an event removed, still on storage: not part of the item, so not checked", True,
+         resurrect_extra, "OK", ("--checksums",))
 
 
 def rename_image(d):
