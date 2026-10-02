@@ -31,7 +31,7 @@ rule and checks the tool notices:
   media check    every check it makes fails on a tree that breaks it and passes on one that does not
   the pieces     the JPEG and PNG header parsing, the qh1 fingerprint and the generated ids
 """
-import base64, glob, hashlib, importlib.util, json, os, shutil, subprocess, sys, tempfile, uuid
+import base64, datetime, glob, hashlib, importlib.util, json, os, shutil, subprocess, sys, tempfile, uuid
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES = os.path.join(TOOLS, "..", "library", "v2", "examples")
@@ -317,6 +317,65 @@ def test_events(t):
 
 
 # ---------------------------------------------------------------- an orphan, a loss, a missing record
+def report_section(text, label):
+    """The ids listed under one class of a compare report."""
+    out, inside = [], False
+    for line in text.splitlines():
+        if line.startswith("  ") and not line.startswith("      "):
+            inside = line.strip().startswith(label)
+        elif inside and line.startswith("      "):
+            out.append(line.split()[0])
+    return out
+
+
+# What the catalog's export query prints, verbatim: a catalog with its deletion log, and one from
+# before the log existed, where deletedItems is null rather than empty.
+EXPORT_SAMPLE = r'''{"exportedAt" : "2026-10-02T14:01:54Z", "items" : [{"id" : "7a9c1e3a-5b7d-4e9f-8a1c-3e5a7c9e1b3d", "type" : "movie", "title" : "Kept Film", "sortTitle" : "kept film", "year" : 2022, "description" : null, "tagline" : null, "rating" : null, "durationMs" : null, "parentId" : null, "seasonNumber" : null, "episodeNumber" : null, "metadataLocked" : false, "createdAt" : "2026-10-02T16:01:20Z", "createdBy" : null, "modifiedAt" : "2026-10-02T16:01:20Z", "externalIds" : [], "genres" : [], "tags" : [], "people" : [], "chapters" : [], "segments" : [], "playbackAssets" : [], "subtitleAssets" : [], "trailers" : [], "artwork" : []}], "deletedItems" : [{"id" : "2c4e6a8b-0d1f-4a3c-9b5d-7e9f1a3c5e7a", "deletedAt" : "2026-10-02T14:01:37Z", "deletedBy" : "anonymous"}, {"id" : "4e6a8c0e-2f3b-4c5e-8d7f-9a1b3c5e7a9c", "deletedAt" : "2026-10-02T14:01:37Z", "deletedBy" : "anonymous"}, {"id" : "6d2f1c3e-8a4b-4c1d-9e2f-0a1b2c3d4e5f", "deletedAt" : "2026-10-02T14:01:37Z", "deletedBy" : "anonymous"}, {"id" : "9b7e5d3c-1a2b-4c3d-8e4f-5a6b7c8d9e0f", "deletedAt" : "2026-10-02T14:01:37Z", "deletedBy" : "anonymous"}]}'''
+EXPORT_BEFORE_LOG = r'''{"exportedAt" : "2026-10-02T14:01:03Z", "items" : [], "deletedItems" : null}'''
+
+
+def outlive(tree, iid):
+    """A folder the catalog deleted that outlived its item: the example movie under another id, its
+    records as old as the example's."""
+    src = glob.glob(os.path.join(EXAMPLES, "movies", "*", "*"))[0]
+    d = os.path.join(tree, "movies", iid[:2], iid)
+    shutil.copytree(src, d)
+    for name in ("item.json", "metadata.json"):
+        jwrite(os.path.join(d, name), dict(jload(os.path.join(d, name)), itemId=iid))
+    return d
+
+
+def test_export_sample(t):
+    """The export the catalog's query prints, read by the tools as it is: four ids in the deletion
+    log whose folders outlived them, one item kept, and the same tree against a catalog that keeps
+    no log yet."""
+    sample = json.loads(EXPORT_SAMPLE)
+    deleted = sorted(e["id"] for e in sample["deletedItems"])
+    kept = sample["items"][0]["id"]
+    with tempfile.TemporaryDirectory() as tmp:
+        export, before = os.path.join(tmp, "catalog.json"), os.path.join(tmp, "before-the-log.json")
+        with open(export, "w") as f:
+            f.write(EXPORT_SAMPLE)
+        with open(before, "w") as f:
+            f.write(EXPORT_BEFORE_LOG)
+        empty = os.path.join(tmp, "share")
+        os.makedirs(empty)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", empty, "--media", empty, "--out", out)
+        t.ok("the export query's output becomes a tree",
+             code == 0 and os.path.isfile(os.path.join(out, "movies", kept[:2], kept, "item.json")), text)
+        for iid in deleted:
+            outlive(out, iid)
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", "id,path,hash,modifiedAt")
+        t.ok("every folder its deletion log names is an orphan, and the item it keeps agrees",
+             code == 0 and sorted(report_section(text, "orphan")) == deleted
+             and not report_section(text, "lost") and "4 orphan(s) on storage are safe to remove" in text, text)
+        code, text = run(REBUILD, out, "--compare", before, "--ignore-fields", "id,path,hash,modifiedAt")
+        t.ok("against a catalog from before the log, every folder is lost and none an orphan",
+             code == 1 and sorted(report_section(text, "lost")) == sorted(deleted + [kept])
+             and not report_section(text, "orphan") and "deletedItems is null" in text, text)
+
+
 def test_compare(t):
     """The export a tree is compared with starts as the rows the tree rebuilds to, so the two agree;
     each case then changes what the database holds or remembers deleting, and checks the class the
@@ -336,15 +395,7 @@ def test_compare(t):
             code, text = run(REBUILD, tree, "--compare", path, "--text-language", "en", *extra)
         return code, text
 
-    def section(text, label):
-        """The ids listed under one class of the report."""
-        out, inside = [], False
-        for line in text.splitlines():
-            if line.startswith("  ") and not line.startswith("      "):
-                inside = line.strip().startswith(label)
-            elif inside and line.startswith("      "):
-                out.append(line.split()[0])
-        return out
+    section = report_section
 
     def drop(*ids):
         return lambda e: e.update(items=[r for r in e["items"] if r["id"] not in ids])
@@ -360,19 +411,24 @@ def test_compare(t):
 
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
     t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",
-         code == 0 and section(text, "orphan") == [movie["id"]] and "orphan(s) on storage are safe" in text, text)
+         code == 0 and section(text, "orphan") == [movie["id"]] and "1 orphan(s) on storage are safe" in text, text)
     t.ok("the orphan says when and by whom", "deleted 2026-09-30T10:00:00Z by librarian" in text, text)
     director = movie["people"][0]["personId"]
-    t.ok("a person only an orphan credits is an orphan too",
-         section(text, "people: orphan") == [director] and "only orphans credit them" in text, text)
+    t.ok("a person only a deleted item credits is unreferenced: kept, never an orphan, and not a failure",
+         section(text, "people: unreferenced") == [director] and "only items the database deleted credit them" in text
+         and not section(text, "people: lost"), text)
 
     code, text = compare(drop(movie["id"]))
     t.ok("an item the database neither holds nor deleted is lost, and fails",
          code == 1 and section(text, "lost —") == [movie["id"]] and not section(text, "orphan"), text)
 
+    code, text = compare(both(drop(movie["id"]), deleted(movie["id"]), lambda e: e.update(deletedItems=None)))
+    t.ok("a log that is null is no log: nothing can be called deleted, so the item is lost",
+         code == 1 and section(text, "lost —") == [movie["id"]] and not section(text, "orphan")
+         and "deletedItems is null" in text, text)
     code, text = compare(both(drop(movie["id"]), lambda e: e.pop("deletedItems")))
-    t.ok("without a deletion log nothing can be told apart, and it fails as a possible loss",
-         code == 1 and section(text, "lost or orphan") == [movie["id"]] and not section(text, "orphan"), text)
+    t.ok("and so is an export without one",
+         code == 1 and section(text, "lost —") == [movie["id"]] and "deletedItems is absent" in text, text)
 
     code, text = compare(lambda e: e["items"].append(
         {"id": "00000000-0000-4000-8000-0000000000aa", "type": "movie", "title": "Only Here"}))
@@ -390,7 +446,36 @@ def test_compare(t):
 
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"], at="2026-09-01T00:00:00Z")))
     t.ok("a record created after the deletion the log names is lost, not an orphan",
-         code == 1 and section(text, "lost —") == [movie["id"]] and "created after that" in text, text)
+         code == 1 and section(text, "lost —") == [movie["id"]] and "created again since" in text, text)
+
+    # the movie was created on 2026-09-18 and projected on 2026-09-20: a deletion in between explains
+    # its item.json, but not the projection written after it
+    code, text = compare(both(drop(movie["id"]), deleted(movie["id"], at="2026-09-19T00:00:00Z")))
+    t.ok("any record newer than the deletion makes a lost item, not only its creation",
+         code == 1 and section(text, "lost —") == [movie["id"]] and "holds a record of 2026-09-20T12:00:00Z" in text, text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, tree)
+        newer = os.path.join(tree, "series", series["id"][:2], series["id"], "episodes", episodes[0], "metadata.json")
+        jwrite(newer, dict(jload(newer), asOf="2026-10-01T08:00:00Z"))
+        code, text = compare(both(drop(series["id"], *episodes), deleted(series["id"])), tree=tree)
+        t.ok("an episode's newer record keeps its deleted series, and every episode in it, from being an orphan",
+             code == 1 and sorted(section(text, "lost —")) == sorted([series["id"], *episodes])
+             and not section(text, "orphan"), text)
+
+        meta = os.path.join(tree, "movies", movie["id"][:2], movie["id"], "metadata.json")
+        doc = jload(meta)
+        doc.pop("asOf")
+        jwrite(meta, doc)
+        code, text = compare(both(drop(movie["id"]), deleted(movie["id"])), tree=tree)
+        t.ok("a record that states no moment counts with its file's time, which is after the deletion",
+             code == 1 and section(text, "lost —") == [movie["id"]], text)
+        old = datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc).timestamp()
+        os.utime(meta, (old, old))
+        code, text = compare(both(drop(movie["id"]), deleted(movie["id"])), tree=tree)
+        t.ok("and before it once the file is older than the deletion",
+             code == 0 and section(text, "orphan") == [movie["id"]], text)
 
     code, text = compare(both(drop(movie["id"]), lambda e: e["deletedItems"].append({"id": movie["id"]})))
     t.ok("a log entry with no deletedAt proves nothing, so the item is lost",
@@ -408,11 +493,11 @@ def test_compare(t):
 
     code, text = compare(drop(movie["id"]))
     t.ok("a person a lost item credits is lost with it",
-         code == 1 and section(text, "people: lost —") == [director] and "which is lost" in text, text)
+         code == 1 and section(text, "people: lost") == [director] and "which is lost" in text, text)
 
-    code, text = compare(both(drop(movie["id"]), lambda e: e.pop("deletedItems")))
-    t.ok("a person only items that may be lost credit may be lost too",
-         code == 1 and section(text, "people: lost or orphan") == [director], text)
+    code, text = compare(both(drop(movie["id"]), lambda e: e.update(deletedItems=None)))
+    t.ok("with no log the item is lost, and so is the person it credits",
+         code == 1 and section(text, "people: lost") == [director], text)
 
     with tempfile.TemporaryDirectory() as tmp:
         tree = os.path.join(tmp, "library")
@@ -423,16 +508,17 @@ def test_compare(t):
         doc = jload(os.path.join(p, "person.json"))
         jwrite(os.path.join(p, "person.json"), dict(doc, personId=stray, name="Credited By Nothing"))
         code, text = compare(lambda e: None, tree=tree)
-        t.ok("a person nothing on storage credits, whom the database does not hold, is an orphan",
-             code == 0 and section(text, "people: orphan") == [stray] and "nothing on storage credits them" in text, text)
+        t.ok("a person nothing on storage credits, whom the database does not hold, is unreferenced",
+             code == 0 and section(text, "people: unreferenced") == [stray]
+             and "nothing on storage credits them" in text, text)
 
     code, text = compare(uncredit(series["id"]))
-    t.ok("a person on storage that an item the database holds still credits is lost, not an orphan",
-         code == 1 and section(text, "people: lost —") == [lead] and "which the database holds" in text, text)
+    t.ok("a person on storage that an item the database holds still credits is lost",
+         code == 1 and section(text, "people: lost") == [lead] and "which the database holds" in text, text)
 
     code, text = compare(lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"}]))
     t.ok("with a people list, a person it does not hold is judged by the list",
-         code == 1 and section(text, "people: lost —") == [lead], text)
+         code == 1 and section(text, "people: lost") == [lead], text)
 
     code, text = compare(lambda e: e["items"][0].setdefault("people", []).append(
         {"personId": "00000000-0000-4000-8000-0000000000bb", "name": "Nobody Recorded", "role": "actor"}))
@@ -902,6 +988,7 @@ def main():
     wanted = sys.argv[1:]
     for section, fn in (("the pieces", test_pieces), ("the example tree", test_round_trip),
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
+                        ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog), ("people", test_people),
                         ("the media check", test_media_check)):

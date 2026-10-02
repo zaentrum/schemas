@@ -335,21 +335,25 @@ classes, each listed with its ids:
 
 | Class | What it means | Fails the compare |
 |---|---|---|
-| orphan | On storage and in the deletion log, deleted after the record was created: the database deleted it, and the folder is safe to remove. An episode whose series was deleted is an orphan with it. | no |
-| lost | On storage, not in the database and not in its deletion log — or in the log but created after that deletion, which the log cannot explain: a restore candidate. | yes |
+| orphan | On storage, not in the database, in the deletion log, and nothing in its folder is newer than that deletion: the database deleted it, and the folder is safe to remove. An episode whose series was deleted is an orphan with it. | no |
+| lost | On storage and not in the database, but not in the log either — or in the log while a record in the folder is newer than the deletion, because the id was created again since: the database lost what the record still knows, a restore candidate. | yes |
 | missing record | In the database, not on storage: the tree cannot restore it. Not counted with `--subset`. | yes |
 
-An export without `deletedItems` predates the log: every item only on storage is then *lost or
-orphan*, and fails the compare, because any of them may be a loss. A field that disagrees between
-two rows both sides hold fails it too. An id that is in the log and in the database again is compared
-as the live item it is.
+*Nothing newer* is the newest moment any record in the folder states — `item.json`'s `createdAt` and
+`migratedAt`, `metadata.json`'s `asOf`, every source's `takenAt`, version's and package's `createdAt`
+and event's `at`, and for a series its episodes' as well — and a record that states none counts with
+its file's modification time, so a folder never looks older than what is in it. An id that is in the
+log and in the database is present: the item that exists wins, and the log entry describes an
+earlier life. When `deletedItems` is `null` — a catalog that keeps no log yet — or absent, nothing
+can be called deleted, and every item only on storage is lost. `[]` is a log that says nothing was
+deleted. A field that disagrees between two rows both sides hold fails the compare too.
 
-People are compared too. The database's people are the export's top-level `people` list when it
+People are compared as well. The database's people are the export's top-level `people` list when it
 carries one, and otherwise everyone its items credit — a `personId` and a name, which is all a catalog
-without person records knows — and only the fields the export carries are compared. Nothing logs a
-person's deletion, so a person only on storage takes the class of the items on storage that credit
-them: an orphan when nothing credits them or only orphans do, lost when an item that is lost, or one
-the database still holds, credits them.
+without person records knows — and only the fields the export carries are compared. The deletion log
+holds items only, so a person is never an orphan and never swept: a person only on storage is *lost*
+when an item on storage that is lost, or that the database holds, credits them, and *unreferenced* —
+listed, kept, not a failure — when nothing the database holds credits them.
 
 ### Library v2 changelog
 
