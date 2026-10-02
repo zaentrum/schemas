@@ -16,9 +16,10 @@ The bonus material beside a movie or series becomes rows of its own, under extra
 JSON: kind, title, language, runtime and season as extra.json recorded them, the order, hidden
 flag and label the item's metadata.json decided, and the original and package to play, in the shape
 an item's playback rows have, listed in the order a viewer sees them. Only a finished extra counts —
-a packaged one by its .complete, one that keeps only its original by its checksums file. The
-catalog has no table for extras yet, so they are in the rows JSON only, and --compare counts them
-without comparing them.
+a packaged one by its .complete, one that keeps only its original by its checksums file. An extra
+whose origin names a link that metadata.json's videos[] lists gives that link its localPath back:
+the original it keeps. The catalog has no table for extras yet, so they are in the rows JSON only,
+and --compare counts them without comparing them.
 
 Applying events, earliest first:
   original-deleted    the originals it names are gone, so they are not playback assets any more,
@@ -66,6 +67,9 @@ Fields that cannot agree by construction are ignored by default (--ignore-fields
   id     a database key, not a fact about the item
   path   the bytes moved into the version folder, so the database's old paths are stale
   hash   never filled by either side
+A trailer link's localPath is compared by its file name for the same reason: a downloaded trailer
+moved into its extra's folder and kept its name, so whether the link has a local copy, and which
+file it is, can be compared, and where it lives cannot.
 
 --subset reports the rows only the database has without counting them, for a tree that was built
 from part of a catalog.
@@ -140,6 +144,22 @@ EXTRA_DIRS = ("hls", "subs", "trickplay")
 
 def utc(t):
     return t.astimezone(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def local_copies(extras):
+    """Where an item's extras keep a file downloaded from a link, by the link's site and key and by
+    its url: what gives a trailer link of metadata.json its localPath back."""
+    out = {}
+    for x in extras:
+        origin = x.get("origin") or {}
+        path = next((a["path"] for a in x["playbackAssets"] if a["kind"] == "primary"), None)
+        if origin.get("kind") != "link" or not path:
+            continue
+        if origin.get("site") and origin.get("externalId"):
+            out.setdefault(("site", origin["site"], origin["externalId"]), path)
+        if origin.get("url"):
+            out.setdefault(("url", origin["url"]), path)
+    return out
 
 
 def newest_record(d):
@@ -244,11 +264,13 @@ class Rebuild:
         events = self.events(d, item["itemId"])
         sources = self.sources(d)
         versions, storage = self.versions(d, item, sources, events)
-        self.items.append(self.row(d, item, meta, versions, sources))
+        extras = []
         if item.get("type") in ("movie", "series"):
-            self.extras += self.extra_rows(d, item, meta)
+            extras = self.extra_rows(d, item, meta)
         elif os.path.isdir(os.path.join(d, "extras")):
             self.note(f"{item['itemId']}: an episode has no extras, so its extras/ folder is ignored")
+        self.items.append(self.row(d, item, meta, versions, sources, extras))
+        self.extras += extras
         self.newest[item["itemId"]] = newest_record(d)
         self.storage.append({"itemId": item["itemId"], "newestRecordAt": self.newest[item["itemId"]],
                              "versions": storage})
@@ -362,7 +384,8 @@ class Rebuild:
         return live, storage
 
     # -------------------------------------------------- the catalog row
-    def row(self, d, item, meta, versions, sources):
+    def row(self, d, item, meta, versions, sources, extras=()):
+        copies = local_copies(extras)
         titles = meta.get("titles") or {}
         localized = titles.get("localized") or {}
         body = localized.get(self.text_language) or localized.get("und") or \
@@ -392,7 +415,8 @@ class Rebuild:
             "trailers": [{"source": v.get("origin"), "site": v.get("site"), "externalId": v.get("key"),
                           "url": v.get("url"), "title": v.get("name"),
                           "durationSec": (v["durationMs"] // 1000) if v.get("durationMs") else None,
-                          "localPath": None} for v in meta.get("videos") or []],
+                          "localPath": copies.get(("site", v.get("site"), v.get("key"))) or copies.get(("url", v.get("url")))}
+                         for v in meta.get("videos") or []],
             "artwork": [{"kind": i["kind"], "contentType": i["contentType"], "fetchedAt": i.get("fetchedAt"),
                          "sha256": i["sha256"], "sizeBytes": i["sizeBytes"],
                          "file": os.path.join("metadata", i["file"])} for i in meta.get("images") or []],
@@ -492,8 +516,9 @@ class Rebuild:
                 except (OSError, ValueError) as e:
                     self.note(f"{iid}: the package of extra {xid} could not be read ({e})")
             kept = [n for n in x.get("originalFiles") or [] if isinstance(n, str)]
-            facts = {n: {"file": {"name": n}, "streams": x.get("streams") or [], "container": x.get("container") or {}}
-                     for n in kept}
+            sizes = {o.get("name"): o.get("sizeBytes") for o in x.get("originals") or [] if isinstance(o, dict)}
+            facts = {n: {"file": {"name": n, "sizeBytes": sizes.get(n)}, "streams": x.get("streams") or [],
+                         "container": x.get("container") or {}} for n in kept}
             v = {"id": xid, "dir": xp, "kept": kept, "package": package, "superseded": False}
             decision = decided.get(xid) or {}
             rows.append({
@@ -502,6 +527,7 @@ class Rebuild:
                 "runtimeMs": x.get("runtimeMs"), "seasonNumber": x.get("seasonNumber"),
                 "createdAt": x.get("createdAt"), "createdBy": x.get("createdBy"),
                 "order": decision.get("order"), "hidden": bool(decision.get("hidden")), "label": decision.get("label"),
+                "origin": dict(x.get("origin") or {}),
                 "playbackAssets": self.assets(item, v, facts, False),
                 "subtitleAssets": self.subtitles(item, v) if package else []})
         return rows
@@ -538,6 +564,11 @@ def normalise(row):
                        "sizeBytes": a.get("sizeBytes") if a.get("sizeBytes") is not None
                        else len(base64.b64decode(a.get("base64") or "", validate=False)) or None}
                       for a in row.get("artwork") or []]
+    if isinstance(row.get("trailers"), list):
+        # a downloaded trailer moved into its extra's folder and kept its name, so its local copy is
+        # compared by that name: whether there is one, and that it is the same file
+        out["trailers"] = [dict(t, localPath=os.path.basename(str(t["localPath"]).replace("\\", "/")))
+                           if isinstance(t, dict) and t.get("localPath") else t for t in row["trailers"]]
     return out
 
 

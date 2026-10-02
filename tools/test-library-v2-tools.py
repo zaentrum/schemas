@@ -353,6 +353,17 @@ def test_round_trip(t):
     t.ok("and each one's original is played from its own folder",
          all(a["path"].startswith(os.path.join(os.path.abspath(EXAMPLES), "")) and "/extras/" + r["id"] + "/" in a["path"]
              for r in doc["extras"] for a in r["playbackAssets"]), doc["extras"])
+    sizes = {(jload(p)["extraId"], o["name"]): o["sizeBytes"]
+             for p in glob.glob(os.path.join(EXAMPLES, "*", "*", "*", "extras", "*", "extra.json")) for o in jload(p)["originals"]}
+    handed = [(r["id"], os.path.basename(a["path"]), a["sizeBytes"]) for r in doc["extras"] for a in r["playbackAssets"]
+              if a["kind"] == "primary"]
+    t.ok("with the size extra.json records of it", handed and all(s == sizes[(x, n)] for x, n, s in handed), handed)
+    trailer = extra_of(os.path.abspath(EXAMPLES), "trailer")
+    kept = os.path.join(trailer, jload(os.path.join(trailer, "extra.json"))["originalFiles"][0])
+    movie_row = next(r for r in rows.values() if r["type"] == "movie")
+    t.eq("a link an extra was downloaded from gets its local copy back: the original that extra keeps",
+         [(v["site"], v["externalId"], v["localPath"]) for v in movie_row["trailers"]],
+         [("example.org", "tears-of-steel-trailer", kept)])
 
     with tempfile.TemporaryDirectory() as tmp:
         tree = os.path.join(tmp, "library")
@@ -1074,14 +1085,18 @@ def test_from_catalog_extras(t):
             t.skip("the tree passes validate-library-v2.py", "jsonschema is not importable here")
         code, mtext = run(MEDIA_CHECK, "--checksums", out)
         t.ok("and the media check", code == 0 and "'extras': 1" in mtext, mtext)
-        _, built = rows_of(out, "--text-language", "und")
+        t.eq("whose origin names the link it was downloaded from", x.get("origin"),
+             {"kind": "link", "site": "YouTube", "externalId": "abc123", "url": "https://example.org/abc123"})
+        rows, built = rows_of(out, "--text-language", "und")
         t.eq("the rebuild gives the trailer back as an extra row, played from its folder",
              [(r["itemId"], r["kind"], [a["kind"] for a in r["playbackAssets"]]) for r in built["extras"]],
              [(iid, "trailer", ["primary"])])
+        t.eq("and gives the link its local copy back: the trailer the extra keeps",
+             [v["localPath"] for v in rows[iid]["trailers"]], [os.path.join(xp, TRAILER)])
         code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und",
                           "--ignore-fields", "id,path,hash,modifiedAt,codec,resolution,bitrateKbps,durationMs,sizeBytes")
-        t.ok("and agrees with the export but for the link's localPath, which no v2 record keeps",
-             code == 1 and "trailers.localPath: 1 difference(s)" in ctext and ctext.strip().endswith("1 difference(s)"), ctext)
+        t.ok("so it agrees with the export it came from, the link's localPath included: the same file, in its extra",
+             code == 0 and "the tree and the database agree" in ctext and "localPath" not in ctext, ctext)
         again = os.path.join(tmp, "library-again")
         code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", again)
         t.ok("a second run into a fresh folder writes the same bytes", code == 0 and tree_files(out) == tree_files(again), text)
@@ -1141,7 +1156,8 @@ def test_from_catalog_extras(t):
         x = jload(found[0]) if found else {}
         t.ok("a series' downloaded trailer is the series' extra, of no particular season",
              code == 0 and len(found) == 1 and x.get("kind") == "trailer" and "seasonNumber" not in x, text)
-        t.eq("titled by its file when its link has no title", x.get("title"), "series")
+        t.eq("titled by its file when its link has no title, its origin naming only what the link says",
+             (x.get("title"), x.get("origin")), ("series", {"kind": "link", "site": "YouTube", "externalId": "series"}))
         t.ok("an episode's stays a link, because an episode has no extras",
              not os.path.exists(os.path.join(sdir, "episodes", eid, "extras"))
              and "trailer episode.mp4 stays a link: an episode has no extras" in text, text)

@@ -47,10 +47,9 @@ What it can fill in, and what it cannot:
   * the identity, texts, images, people, chapters, segments and trailers come from the export;
   * a trailer the catalog downloaded — one whose localPath is a file on the share — also becomes an
     extra of kind trailer beside its movie or series, its file copied or moved in as --media-mode
-    says, its link kept in metadata.json's videos. An episode's stays a link, because an episode has
-    no extras, and so does every one with --media-mode none, because an extra holds its own file.
-    extra.json has no field for the link it came from, so a rebuild cannot give the link its
-    localPath back;
+    says, its link kept in metadata.json's videos and named by the extra's origin, so a rebuild gives
+    the link its localPath back. An episode's stays a link, because an episode has no extras, and so
+    does every one with --media-mode none, because an extra holds its own file;
   * the container, streams, fidelity and essence of an original come from `ffprobe`, which is used
     when it is on PATH — without it a source record still carries the file's size, mtime and qh1
     fingerprint, and says in `probe.note` that nothing was probed;
@@ -131,6 +130,17 @@ def ts(v):
         s += "Z"
     s = re.sub(r"([+-]\d\d)(\d\d)$", r"\1:\2", s)
     return s.replace("+00:00", "Z")
+
+
+def link_of(t):
+    """The site and the key a trailer link is listed under in videos[]: its site, or failing that the
+    source it was found in, and the site's id for it, or failing that the last part of its url. An
+    extra downloaded from the link names it the same way, so a rebuild finds one from the other."""
+    site = text(t.get("site")) or text(t.get("source"))
+    key = text(t.get("externalId"))
+    if not key and t.get("url"):
+        key = text(str(t["url"]).rsplit("/", 1)[-1])
+    return site, key
 
 
 def ts_of_mtime(p):
@@ -907,10 +917,7 @@ class Build:
     def videos(self, row):
         out = []
         for t in row.get("trailers") or []:
-            site = text(t.get("site")) or text(t.get("source"))
-            key = text(t.get("externalId"))
-            if not key and t.get("url"):
-                key = text(str(t["url"]).rsplit("/", 1)[-1])
+            site, key = link_of(t)
             if not site or not key:
                 self.note(row["id"], "a trailer names neither a site nor an id, dropped")
                 continue
@@ -1257,6 +1264,10 @@ class Build:
                    "language": None, "runtimeMs": None, "originalFiles": [name],
                    "originals": [{"name": name, "sizeBytes": os.path.getsize(path),
                                   "fixity": {"qh1": qh1(path), "sha256": digest, "sha256At": self.as_of}}]}
+            site, key = link_of(t)
+            doc["origin"] = {"kind": "link", **{k: v for k, v in (("site", site), ("externalId", key),
+                                                                  ("url", text(t.get("url"))),
+                                                                  ("fetchedAt", ts(t.get("fetchedAt")))) if v}}
             probe = ffprobe(path) if self.probe_version else None
             if probe:
                 self.counts["probed"] += 1
