@@ -92,19 +92,28 @@ def pkg(vp):
 
 
 def deletion(root):
-    return only("movies/*/*/events/*-original-deleted.json", root)
+    return only("movies/*/*/events/*-original-deleted/event.json", root)
 
 
 def removal(root):
-    return only("movies/*/*/events/*-version-removed.json", root)
+    return only("movies/*/*/events/*-version-removed/event.json", root)
 
 
 def supersede(root):
-    return only("series/*/*/episodes/*/events/*-package-superseded.json", root)
+    return only("series/*/*/episodes/*/events/*-package-superseded/event.json", root)
 
 
 def episode_source(root, number):
-    return sorted(glob.glob(os.path.join(episode(root, number), "sources", "*.json")))[0]
+    return sorted(glob.glob(os.path.join(episode(root, number), "sources", "*", "source.json")))[0]
+
+
+def movie_source(root):
+    """The source record of the movie's deleted theatrical original: the one with a probe."""
+    return sorted(glob.glob(os.path.join(movie(root), "sources", "*", "source.json")))[0]
+
+
+def sums(folder):
+    return os.path.join(folder, "checksums.sha256")
 
 
 def probe(root):
@@ -155,6 +164,13 @@ def bare_person(root):
 
 # ---------------------------------------------------------------- editing the fixture
 def edit(path, change):
+    """Change a record and write the checksums that cover it again, so a case breaks only the rule
+    it is about. edit_raw leaves them as they were, for the cases about the checksums themselves."""
+    edit_raw(path, change)
+    recover(path)
+
+
+def edit_raw(path, change):
     with open(path) as f:
         doc = json.load(f)
     change(doc)
@@ -168,30 +184,103 @@ def write_json(path, doc):
         json.dump(doc, f, indent=2)
 
 
+def digest(p):
+    return hashlib.sha256(open(p, "rb").read()).hexdigest()
+
+
+def write_sums(folder, names):
+    with open(sums(folder), "w") as f:
+        f.write("".join(f"{digest(os.path.join(folder, n))}  {n}\n" for n in sorted(names)))
+
+
+def recover(path):
+    """The checksums over a record that a case changed, written again from the bottom of the chain
+    up: an item, source or event folder's over the names it lists, and for a version the checksums,
+    package.json's record of them and .complete."""
+    folder, name = os.path.split(path)
+    if name == "version.json":
+        if os.path.isfile(pkg(folder)):
+            rechecksum(folder)
+    elif name == "package.json":
+        close(folder)
+    elif os.path.isfile(sums(folder)) and name not in ("metadata.json", "person.json"):
+        listed = [line.split("  ", 1)[1].rstrip("\n") for line in open(sums(folder)) if "  " in line]
+        write_sums(folder, listed)
+
+
+def close(vp):
+    """.complete, the last link: the hash of package.json as it is now."""
+    if os.path.isfile(os.path.join(vp, ".complete")):
+        with open(os.path.join(vp, ".complete"), "w") as f:
+            f.write("sha256:" + digest(pkg(vp)) + "\n")
+
+
 def rechecksum(vp):
-    """Rewrite checksums.sha256 and the package record after the package files changed."""
-    files = []
+    """Rewrite checksums.sha256 over version.json and the package files, the package record's hash of
+    it, and .complete, after the package files or version.json changed."""
+    files = ["version.json"]
     for d in ("hls", "subs", "trickplay", "trailers"):
         for root, dirs, names in os.walk(os.path.join(vp, d)):
             dirs.sort()
             files += [os.path.relpath(os.path.join(root, n), vp) for n in sorted(names)]
-    if os.path.isfile(os.path.join(vp, ".complete")):
-        files.append(".complete")
-    files.sort()
-    body = "".join(f"{hashlib.sha256(open(os.path.join(vp, r), 'rb').read()).hexdigest()}  {r}\n" for r in files)
-    with open(os.path.join(vp, "checksums.sha256"), "w") as f:
-        f.write(body)
-    edit(pkg(vp), lambda d: d["checksums"].update(
-        sha256="sha256:" + hashlib.sha256(body.encode()).hexdigest(), files=len(files),
+    write_sums(vp, files)
+    edit_raw(pkg(vp), lambda d: d["checksums"].update(
+        sha256="sha256:" + digest(sums(vp)), files=len(files),
         bytes=sum(os.path.getsize(os.path.join(vp, r)) for r in files)))
+    close(vp)
+
+
+def new_event(item_dir, doc, name=None):
+    """An event folder, events/<stamp>-<eventId8>-<kind>/, with the checksums written with it."""
+    stamp = doc["at"].replace("-", "").replace(":", "")
+    folder = os.path.join(item_dir, "events", name or f"{stamp}-{doc['eventId'][:8]}-{doc['kind']}")
+    write_json(os.path.join(folder, "event.json"), doc)
+    write_sums(folder, ["event.json"])
+    return folder
+
+
+def event_name(root):
+    """The folder name of the movie's original-deleted event."""
+    return os.path.basename(os.path.dirname(deletion(root)))
+
+
+def rename_event(path, name):
+    """Move an event folder to another name, its checksums with it."""
+    shutil.move(os.path.dirname(path), os.path.join(os.path.dirname(os.path.dirname(path)), name))
+
+
+def listing(folder):
+    """The names a checksums file lists."""
+    return [line.split("  ", 1)[1].rstrip("\n") for line in open(sums(folder)) if "  " in line]
+
+
+def relist(vp, names):
+    """A version's checksums over exactly names, with the package record and .complete closed over
+    them, so only what is or is not listed can be wrong."""
+    write_sums(vp, names)
+    edit_raw(pkg(vp), lambda d: d["checksums"].update(
+        sha256="sha256:" + digest(sums(vp)), files=len(names),
+        bytes=sum(os.path.getsize(os.path.join(vp, n)) for n in names)))
+    close(vp)
+
+
+def old_source(root):
+    """Put a source back the way it was before each source was a folder: sources/<id>.json."""
+    sp = movie_source(root)
+    shutil.move(sp, os.path.dirname(os.path.dirname(sp)) + "/" + os.path.basename(os.path.dirname(sp)) + ".json")
+
+
+def old_event(root):
+    """Put an event back the way it was before each event was a folder: events/<stamp>-<kind>.json."""
+    ep = deletion(root)
+    shutil.move(ep, os.path.join(os.path.dirname(os.path.dirname(ep)), "20260920T081500Z-original-deleted.json"))
+    shutil.rmtree(os.path.dirname(ep))
 
 
 def note(root, at="2026-09-20T09:45:00Z", **fields):
     """Add a note event to the movie."""
-    stamp = at.replace("-", "").replace(":", "")
-    write_json(os.path.join(movie(root), "events", f"{stamp}-note.json"),
-               {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": at, "by": "test",
-                "kind": "note", "reason": "a fact no other record holds", **fields})
+    new_event(movie(root), {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": at, "by": "test",
+                            "kind": "note", "reason": "a fact no other record holds", **fields})
 
 
 def resurrect(root):
@@ -310,11 +399,12 @@ CASES = [
     ("an event naming a version that does not exist", False, lambda r: edit(deletion(r), lambda d: d.update(versionId=NOWHERE)), "names no version folder under versions/", []),
     ("an event naming a package that does not exist", False, lambda r: edit(deletion(r), lambda d: d.update(packageId=NOWHERE)), "names no package of any version", []),
     ("an event naming a source that does not exist", False, lambda r: edit(deletion(r), lambda d: d.update(sourceId=NOWHERE)), "names no source record under sources/", []),
-    ("an event file named for another kind", False, lambda r: shutil.move(deletion(r), os.path.join(os.path.dirname(deletion(r)), "20260920T081500Z-note.json")), "file name says note but the record's kind", []),
-    ("an event file named for another moment", False, lambda r: shutil.move(deletion(r), os.path.join(os.path.dirname(deletion(r)), "20261231T235959Z-original-deleted.json")), "the record happened at", []),
-    ("an event file that is not a record name", False, lambda r: shutil.move(deletion(r), os.path.join(os.path.dirname(deletion(r)), "deleted.json")), "not an events/", []),
-    ("a deletion of a version that never had an original", False, lambda r: write_json(
-        os.path.join(episode(r, 2), "events", "20260920T110000Z-original-deleted.json"),
+    ("an event folder named for another kind", False, lambda r: rename_event(deletion(r), event_name(r).replace("original-deleted", "note")), "folder name says note but the record's kind", []),
+    ("an event folder named for another moment", False, lambda r: rename_event(deletion(r), event_name(r).replace("20260920T081500Z", "20261231T235959Z")), "the record happened at", []),
+    ("an event folder that is not a record name", False, lambda r: rename_event(deletion(r), "deleted"), "not an events/", []),
+    ("an event folder without its eventId", False, lambda r: rename_event(deletion(r), "20260920T081500Z-original-deleted"), "not an events/", []),
+    ("an event folder naming another eventId", False, lambda r: rename_event(deletion(r), "20260920T081500Z-00000000-original-deleted"), "which does not start the eventId", []),
+    ("a deletion of a version that never had an original", False, lambda r: new_event(episode(r, 2),
         {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": "2026-09-20T11:00:00Z", "by": "test",
          "kind": "original-deleted", "versionId": os.path.basename(primary(episode(r, 2))), "reason": "space",
          "accepted": []}),
@@ -338,11 +428,10 @@ CASES = [
     # ---- sources
     ("a probe whose hash is wrong", False, lambda r: open(probe(r), "a").write(" "), "probe sha256 does not match", []),
     ("a probe missing", False, lambda r: os.remove(probe(r)), "probe file missing", []),
-    ("a source folder no record names", False, lambda r: os.makedirs(os.path.join(movie(r), "sources", "22222222-2222-4222-8222-222222222222")), "no sources/<sourceId>.json record names this folder", []),
-    ("a stray file in a source folder", False, lambda r: open(os.path.join(os.path.dirname(probe(r)), "notes.txt"), "w").write("x"), "not the probe or a sidecar of this source", []),
+    ("a source folder without its record", False, lambda r: os.makedirs(os.path.join(movie(r), "sources", "22222222-2222-4222-8222-222222222222")), "a source folder without its source.json record", []),
+    ("a stray file in a source folder", False, lambda r: open(os.path.join(os.path.dirname(probe(r)), "notes.txt"), "w").write("x"), "not the record, the probe, a sidecar or the checksums of this source", []),
     ("a source record under another name", False, lambda r: shutil.move(
-        sorted(glob.glob(os.path.join(movie(r), "sources", "*.json")))[0],
-        os.path.join(movie(r), "sources", NOWHERE + ".json")), "does not match the file name", []),
+        os.path.dirname(movie_source(r)), os.path.join(movie(r), "sources", NOWHERE)), "does not match the folder name", []),
 
     # ---- the series and its episodes
     ("an episode naming another series", False, lambda r: edit(item(episode(r, 1)), lambda d: d.update(seriesId=NOWHERE)), "is not the enclosing series", []),
@@ -359,7 +448,7 @@ CASES = [
     ("a deletion naming a source the version was not made from", False, lambda r: edit(deletion(r), lambda d: d.update(sourceId=json.load(open(ver(kept(r))))["sourceIds"][0])), "was not made from", []),
 
     # ---- a version removed from the item, and a package replaced by another
-    ("a removal naming a version that is still counted", False, lambda r: edit(removal(r), lambda d: d.update(kind="note", reason="x")), "file name says version-removed but the record's kind", []),
+    ("a removal naming a version that is still counted", False, lambda r: edit(removal(r), lambda d: d.update(kind="note", reason="x")), "folder name says version-removed but the record's kind", []),
     ("a re-package with no successor", False, lambda r: edit(supersede(r), lambda d: d.pop("supersededBy")), "'supersededBy' is a required property", []),
     ("a successor that does not exist", False, lambda r: edit(supersede(r), lambda d: d["supersededBy"].update(packageId=NOWHERE)), "supersededBy.packageId", []),
     ("a package superseded by its own version", False, lambda r: edit(supersede(r), lambda d: d["supersededBy"].update(versionId=d["versionId"])), "supersededBy names the version it supersedes", []),
@@ -385,6 +474,39 @@ CASES = [
     ("a naming field the format does not model", False, lambda r: edit(episode_source(r, 2), lambda d: d["naming"].update(title="Crosswind")), "'title' was unexpected", []),
     ("provenance the format does not model", False, lambda r: edit(item(movie(r)), lambda d: d["provenance"].update(legacyPath="/old/library")), "'legacyPath' was unexpected", []),
     ("a legacy id that is not an id", False, lambda r: edit(item(movie(r)), lambda d: d["provenance"].update(legacyItemId="movie-12")), "does not match", []),
+
+    # ---- every write-once folder proves its records: the item's identity
+    ("an item record changed after it was written", False, lambda r: edit_raw(item(movie(r)), lambda d: d.update(title="Another Title")), "does not match the checksum checksums.sha256 recorded for it", []),
+    ("an item folder without its checksums", False, lambda r: os.remove(sums(movie(r))), "missing: item.json is covered by a checksums file", []),
+    ("a series folder without its checksums", False, lambda r: os.remove(sums(series(r))), "missing: item.json is covered by a checksums file", []),
+    ("an episode folder without its checksums", False, lambda r: os.remove(sums(episode(r, 1))), "missing: item.json is covered by a checksums file", []),
+    ("an item's checksums listing more than item.json", False, lambda r: write_sums(movie(r), ["item.json", "metadata.json"]), "lists metadata.json, which is not item.json", []),
+    ("an item's checksums listing nothing", False, lambda r: open(sums(movie(r)), "w").write(""), "does not list item.json", []),
+    ("an item's checksums that are not a sha256sum file", False, lambda r: open(sums(movie(r)), "a").write("item.json is fine\n"), "not a sha256sum line", []),
+
+    # ---- a source: its record, probe and sidecars, one folder
+    ("a source record changed after it was written", False, lambda r: edit_raw(movie_source(r), lambda d: d.update(takenBy="someone else")), "does not match the checksum checksums.sha256 recorded for it", []),
+    ("a probe changed after it was written", False, lambda r: (edit_raw(probe(r), lambda d: d.update(note="x")), edit(movie_source(r), lambda d: d["probe"].update(sha256="sha256:" + digest(probe(r)))), write_sums(os.path.dirname(probe(r)), ["source.json"]), open(sums(os.path.dirname(probe(r))), "a").write(f"{'0' * 64}  ffprobe.json\n")), "ffprobe.json: does not match the checksum", []),
+    ("a source's checksums without its probe", False, lambda r: write_sums(os.path.dirname(movie_source(r)), ["source.json"]), "does not list ffprobe.json", []),
+    ("a source folder without its checksums", False, lambda r: os.remove(sums(os.path.dirname(movie_source(r)))), "missing: source.json, its probe or one of its sidecars is covered", []),
+    ("a source in the layout before each source was a folder", False, old_source, "a source record in the layout before 2026-10-02 (b)", []),
+
+    # ---- an event: one folder per fact
+    ("an event changed after it was written", False, lambda r: edit_raw(deletion(r), lambda d: d.update(reason="changed afterwards")), "does not match the checksum checksums.sha256 recorded for it", []),
+    ("an event folder without its checksums", False, lambda r: os.remove(sums(os.path.dirname(deletion(r)))), "missing: event.json is covered by a checksums file", []),
+    ("a stray file in an event folder", False, lambda r: open(os.path.join(os.path.dirname(deletion(r)), "notes.txt"), "w").write("x"), "not event.json or the checksums written with it", []),
+    ("an event in the layout before each event was a folder", False, old_event, "an event record in the layout before 2026-10-02 (b)", []),
+
+    # ---- a version: .complete -> package.json -> checksums.sha256 -> version.json and the package
+    ("a version record changed after its package completed", False, lambda r: edit_raw(ver(kept(r)), lambda d: d.update(runtimeMs=1)), "version.json: does not match the checksum checksums.sha256 recorded for it", []),
+    ("a version's checksums that do not list version.json", False, lambda r: relist(kept(r), [n for n in listing(kept(r)) if n != "version.json"]), "does not list version.json", []),
+    ("a version's checksums listing the marker above them", False, lambda r: relist(kept(r), listing(kept(r)) + [".complete"]), "lists .complete, which is written after it", []),
+    ("a version's checksums listing the package record", False, lambda r: relist(kept(r), listing(kept(r)) + ["package.json"]), "lists package.json, which holds the hash of this file", []),
+    ("a package record changed after it completed", False, lambda r: edit_raw(pkg(kept(r)), lambda d: d.update(packagedBy="someone else")), "does not name this package.json", []),
+    ("a marker naming another package record", False, lambda r: open(os.path.join(kept(r), ".complete"), "w").write("sha256:" + "0" * 64 + "\n"), "does not name this package.json", []),
+    ("a marker that is not a hash", False, lambda r: open(os.path.join(kept(r), ".complete"), "w").write("packager example 2026-09-18\n"), "not sha256:<hex> of package.json", []),
+    ("a checksums total that leaves out version.json", False, lambda r: edit(pkg(kept(r)), lambda d: d["checksums"].update(bytes=d["checksums"]["bytes"] - os.path.getsize(ver(kept(r))))), "the record says", ["--check-media"]),
+    ("a marker without a trailing line break", True, lambda r: open(os.path.join(kept(r), ".complete"), "w").write("sha256:" + digest(pkg(kept(r)))), "OK", ["--check-checksums"]),
 
     # ---- people: a category of their own, a projection like metadata.json
     ("a person folder not named by its id", False, lambda r: move_person(r, director(r), "a1" + NOWHERE[2:]), "does not match folder", []),
@@ -414,8 +536,6 @@ CASES = [
     ("a season listed with no episodes on storage", True, lambda r: edit(meta(series(r)), lambda d: d["series"]["seasons"].append(
         {"number": 2, "tmdbSeason": None, "name": "Season 2", "overview": None, "airDate": None, "episodeCountReference": 8})), "OK", []),
     ("a note with no subject", True, note, "OK", []),
-    ("an event file named with its eventId", True, lambda r: shutil.move(deletion(r), os.path.join(
-        os.path.dirname(deletion(r)), "20260920T081500Z-" + json.load(open(deletion(r)))["eventId"][:8] + "-original-deleted.json")), "OK", []),
     ("an original with no audio", True, silent, "OK", ["--check-checksums"]),
     ("a deletion accepting less than the gate", True, lambda r: edit(deletion(r), lambda d: d.update(accepted=["surround"])), "OK", []),
     ("a deletion that gave up nothing", True, lambda r: edit(deletion(r), lambda d: d.update(accepted=[])), "OK", []),

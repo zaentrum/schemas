@@ -199,34 +199,40 @@ occasions only, a deliberate rebuild and a deliberate verification.
 
 That makes every file single-writer and one-directional, which is why there is no `manifest.json`
 any more and no `rev`, `updatedAt` or `review` anywhere. A file is either a record of something
-that cannot change — `item.json`, `sources/<id>.json`, `versions/<id>/version.json`,
-`versions/<id>/package.json` — written once when the thing it describes is made and never touched
-again, or the projection of the database (`metadata.json`), replaced whole by the service that owns
-the item. **A fact about the bytes is a record; a decision the database holds is a projection**, so
+that cannot change — `item.json`, `sources/<id>/source.json`, `versions/<id>/version.json`,
+`versions/<id>/package.json`, `events/<…>/event.json` — written once when the thing it describes is
+made and never touched again, or a projection of the database (`metadata.json`, and `person.json` for
+a person), replaced whole by the service that owns it. **A fact about the bytes is a record; a decision the database holds is a projection**, so
 what an original contained and what a package lost are written once, while which version plays by
 default, what a viewer's version picker says, how far to trust the reference ids and how the
 episodes are ordered live in `metadata.json` under `library`. Nothing is merged, so there is no
-conflict to resolve. The few facts that arise later get their own file under `events/` instead of a
-rewrite: an original deleted, a version removed, a package superseded. Every version is a folder, so
+conflict to resolve. The few facts that arise later get their own folder under `events/` instead of
+a rewrite: an original deleted, a version removed, a package superseded. Every version is a folder, so
 a re-package is a new folder rather than an edit, and a record always sits next to the bytes it
 describes.
 
 ```
 movies/<aa>/<itemId>/
   item.json                        identity, written once
+  checksums.sha256                 covers item.json, written with it
   metadata.json                    the database's texts, projected
   metadata/<sha256>.jpg            images named by their own content hash
-  sources/<sourceId>.json          one original as it was found, written once
-  sources/<sourceId>/ffprobe.json  the verbatim probe and copied sidecars
+  sources/<sourceId>/
+    source.json                    one original as it was found, written once
+    ffprobe.json                   the verbatim probe, and each copied sidecar beside it
+    checksums.sha256               covers the files above, written with them
   versions/<versionId>/
     version.json                   edition, presentation, marks, sources — written once
-    package.json                   renditions, losses, checksums — written once
     <original file>                the original, when this version keeps it
     hls/  subs/  trickplay/        the package
-    checksums.sha256               every package file, sha256sum -c format
-    .complete                      the package is finished
-  events/<timestamp>-<kind>.json   facts that arise later, written once
-series/<aa>/<seriesId>/            item.json, metadata.json, metadata/, episodes/<episodeId>/
+    checksums.sha256               version.json and every package file, sha256sum -c format
+    package.json                   renditions, losses, and the hash of checksums.sha256
+    .complete                      the hash of package.json: the version is finished
+  events/<timestamp>-<eventId8>-<kind>/
+    event.json                     a fact that arose later, written once
+    checksums.sha256               covers event.json, written with it
+series/<aa>/<seriesId>/            item.json, checksums.sha256, metadata.json, metadata/,
+                                   episodes/<episodeId>/
 people/<aa>/<personId>/
   person.json                      the database's person, projected
   <sha256>.jpg                     the portraits it lists, named by their own content hash
@@ -245,11 +251,44 @@ yet is a note, not an error: the person may simply not have been projected.
 | [`item.schema.json`](https://zaentrum.github.io/schemas/library/v2/item.schema.json) | `item.json` | `zaentrum.library.item/2` |
 | [`metadata.schema.json`](https://zaentrum.github.io/schemas/library/v2/metadata.schema.json) | `metadata.json` | `zaentrum.library.metadata/2` |
 | [`person.schema.json`](https://zaentrum.github.io/schemas/library/v2/person.schema.json) | `people/<aa>/<personId>/person.json` | `zaentrum.library.person/2` |
-| [`source.schema.json`](https://zaentrum.github.io/schemas/library/v2/source.schema.json) | `sources/<sourceId>.json` | `zaentrum.library.source/2` |
+| [`source.schema.json`](https://zaentrum.github.io/schemas/library/v2/source.schema.json) | `sources/<sourceId>/source.json` | `zaentrum.library.source/2` |
 | [`version.schema.json`](https://zaentrum.github.io/schemas/library/v2/version.schema.json) | `versions/<versionId>/version.json` | `zaentrum.library.version/2` |
 | [`package.schema.json`](https://zaentrum.github.io/schemas/library/v2/package.schema.json) | `versions/<versionId>/package.json` | `zaentrum.library.package/2` |
-| [`event.schema.json`](https://zaentrum.github.io/schemas/library/v2/event.schema.json) | `events/<timestamp>-<kind>.json` | `zaentrum.library.event/2` |
+| [`event.schema.json`](https://zaentrum.github.io/schemas/library/v2/event.schema.json) | `events/<timestamp>-<eventId8>-<kind>/event.json` | `zaentrum.library.event/2` |
 | [`defs.schema.json`](https://zaentrum.github.io/schemas/library/v2/defs.schema.json) | shared definitions | — |
+
+### A record proves itself
+
+The records a rebuild trusts are covered by checksums written with them, in the folder they sit in,
+so `sha256sum -c checksums.sha256` in any folder written once proves its records are the bytes that
+were written — with no database and no network:
+
+| Folder | Its `checksums.sha256` lists | Written |
+|---|---|---|
+| `movies/<aa>/<itemId>/`, `series/…`, `episodes/<id>/` | exactly `item.json` | with `item.json`, once |
+| `sources/<sourceId>/` | exactly `source.json`, the probe and the sidecars | with them, once |
+| `events/<…>/` | exactly `event.json` | with it, once |
+| `versions/<versionId>/` | `version.json` and every package file | by the packager, when the package completes |
+
+A version is the one folder written in two steps: the analyzer writes `version.json`, and the
+packager closes the chain when the package completes — the checksums over `version.json` and every
+package file, then `package.json` with the hash of the checksums file, then `.complete` holding
+`sha256:<hex>` of `package.json`, and nothing else. One hash then proves the whole version:
+
+```mermaid
+flowchart LR
+  DONE[".complete"] -->|"sha256 of"| PKG["package.json"]
+  PKG -->|"checksums.sha256 field"| SUMS["checksums.sha256"]
+  SUMS -->|"sha256 of each"| FILES["version.json · hls/ · subs/ · trickplay/ · trailers/"]
+```
+
+The checksums file therefore never lists `.complete`, `package.json` or itself — each holds the hash
+of the link below it — and it never lists the originals, which their source records' fixity covers
+and which may be deleted later. A version that has no package yet has no checksums file, and its
+`version.json` is covered from the moment its package completes. **Projections are not covered, on
+purpose**: `metadata.json` and `person.json` are replaced whole, so a checksum written with one would
+be wrong after the next, and every image is named by the hash of its own bytes, so its name is its
+check.
 
 ### Applying events
 
@@ -273,8 +312,9 @@ subset of the gate and not necessarily all of it, because someone who measures a
 may accept less.
 
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
-outside a version folder, `package.json` exists exactly when `.complete` does, images are named by
-their own hash, events reference records that exist and a deletion accepts no more than the gate its
+outside a version folder, every write-once folder's checksums cover exactly its records and each
+version's chain holds, `package.json` exists exactly when `.complete` does, images are named by their
+own hash, events reference records that exist and a deletion accepts no more than the gate its
 records compute, episodes do not contradict their own numbering, a person folder holds its record and
 the images it lists):
 
@@ -360,6 +400,25 @@ listed, kept, not a failure — when nothing the database holds credits them.
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-02 (b)** — the records themselves are protected. A version's `checksums.sha256` covered
+  its package files but not `version.json` or `package.json`, the files a rebuild trusts. Now every
+  folder written once carries the checksums of its records, written with them, so `sha256sum -c` in
+  any of them proves it. The item folder gains `checksums.sha256`, listing exactly `item.json`.
+  **Each source becomes a folder**, `sources/<sourceId>/`, holding `source.json` (it was
+  `sources/<sourceId>.json`), the probe, the sidecars and a `checksums.sha256` over all of them; the
+  probe and sidecar paths in the record are unchanged. **Each event becomes a folder**,
+  `events/<YYYYMMDDTHHMMSSZ>-<eventId8>-<kind>/` holding `event.json` and a `checksums.sha256` over it —
+  a checksums file shared by all of an item's events would change with each new one — and the first
+  eight characters of the eventId are now always in the name, so two events never share a folder. A
+  version's `checksums.sha256` additionally lists `version.json` and **no longer lists `.complete`**,
+  which now holds `sha256:<hex>` of `package.json`: one chain, `.complete` → `package.json` →
+  `checksums.sha256` → `version.json` and every package file, in which no link can be listed below
+  itself. `checksums.files` and `checksums.bytes` count `version.json`; the package's `sizeBytes` still
+  counts its own files only. Projections stay uncovered on purpose: they are replaced whole, and an
+  image is named by its own hash. The validator and `library-v2-media-check.py` enforce every link,
+  `library-v2-rebuild.py` still reads the old layout so a backup from before can be restored, and
+  `library-v2-upgrade.py` upgrades a tree in place. Nothing had been adopted as published, so the
+  layout could change.
 - **2026-10-02 (a)** — people are recorded. A credit carried only a `personId` and a name, so a
   database loss took every biography and portrait with it. `person.schema.json` is new:
   `people/<aa>/<personId>/person.json` (`zaentrum.library.person/2`), a category beside `movies/` and

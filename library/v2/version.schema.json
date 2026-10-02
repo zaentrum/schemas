@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v2/version.schema.json",
   "title": "versions/<versionId>/version.json — what this version is",
-  "description": "Written once by the analyzer, when a version is established, and never touched again. A version is one cut or presentation of a movie or episode — theatrical and director's cut, colour and black-and-white, HDR and SDR — and its folder is the one place its media lives: the original files, the package made from them, or both.\n\nEvery version is a folder. There is no version in the item folder itself, and a re-package is a new version folder, never an edit of this one.\n\nThe marks live here rather than in any file, so they survive the original's deletion and apply to every package of the version. What plays by default is not here, and neither is the label a viewer picks between: those are decisions the database holds, projected into metadata.json.\n\nPaths: originalFiles are plain names in THIS folder. sourceIds name records at the item level (sources/<sourceId>.json).",
+  "description": "Written once by the analyzer, when a version is established, and never touched again. A version is one cut or presentation of a movie or episode — theatrical and director's cut, colour and black-and-white, HDR and SDR — and its folder is the one place its media lives: the original files, the package made from them, or both.\n\nEvery version is a folder. There is no version in the item folder itself, and a re-package is a new version folder, never an edit of this one.\n\nThe marks live here rather than in any file, so they survive the original's deletion and apply to every package of the version. What plays by default is not here, and neither is the label a viewer picks between: those are decisions the database holds, projected into metadata.json.\n\nThe package's checksums.sha256 lists this file beside the package's own, so once the package completes the chain .complete -> package.json -> checksums.sha256 covers it too. A version that has no package yet has no checksums file, and nothing covers this record until its package completes.\n\nPaths: originalFiles are plain names in THIS folder. sourceIds name records at the item level (sources/<sourceId>/source.json).",
   "type": "object",
   "required": ["schema", "versionId", "createdAt", "edition", "presentation", "sourceIds", "originalFiles"],
   "additionalProperties": false,
@@ -92,7 +92,7 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "description": "The originals this version was made from — several when it is split into parts. Each names sources/<sourceId>.json at the item level, which stays after the file itself is gone.",
+      "description": "The originals this version was made from — several when it is split into parts. Each names sources/<sourceId>/source.json at the item level, which stays after the file itself is gone.",
       "items": { "$ref": "defs.schema.json#/$defs/uuid" }
     },
     "originalFiles": {

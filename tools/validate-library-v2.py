@@ -12,8 +12,16 @@ bytes beside them, never about a document being up to date.
 
   layout       only movies/, series/ and people/ at the root; shard folders of two characters; itemId
                and personId equal the folder name and its shard; an item folder holds only item.json,
-               metadata.json, metadata/, sources/, versions/, events/ (a series: episodes/ instead of
-               sources/ and versions/) — so no media can sit in the item folder
+               checksums.sha256, metadata.json, metadata/, sources/, versions/, events/ (a series:
+               episodes/ instead of sources/ and versions/) — so no media can sit in the item folder;
+               every source and every event is a folder of its own
+  covered      every write-once folder proves its records: an item folder's checksums.sha256 lists
+               exactly item.json, a source folder's lists exactly source.json, its probe and its
+               sidecars, an event folder's exactly event.json, and each digest matches the file; a
+               version is one chain — .complete holds sha256:<hex> of package.json, package.json the
+               hash of checksums.sha256, and checksums.sha256 lists version.json beside the package
+               files and never .complete, package.json or itself. Projections are not covered: they
+               are replaced whole, and an image's name is its own hash
   people       a person folder holds person.json and the images it lists; a death is not before the
                birth; a credit whose person has no folder is a note, not an error, because the
                person may not have been projected yet
@@ -31,7 +39,7 @@ bytes beside them, never about a document being up to date.
                itself consistently, does not collide with another episode, and sits in a season the
                series' metadata lists; its own numbering does not contradict the numbers item.json
                was created with, and no two episodes claim one place in one ordering
-  events       the file name is the event's own moment and kind; every source, version and package
+  events       the folder name is the event's own moment, eventId and kind; every source, version and package
                it names exists (a version-removed event is the exception — its folder may be gone,
                and a folder it names is ignored altogether); a deletion names a version that had an
                original and one of that version's own sources, and accepts no more than the
@@ -43,7 +51,8 @@ bytes beside them, never about a document being up to date.
                original a version names is there with its size and qh1, unless an original-deleted
                event covers it — in which case it must NOT be there; every rendition folder,
                subtitle and trickplay sheet the package names exists and the cues cover the
-               duration; checksums.sha256 lists exactly the package's files with their total size
+               duration; checksums.sha256 lists exactly version.json and the package's files, with
+               their total size
   --check-checksums  also hash every package file (implies --check-media)
 
 The schemas are loaded from the library/v2 folder next to this tool by default; pass
@@ -62,13 +71,20 @@ BASE = "https://zaentrum.github.io/schemas/library/v2/"
 
 CATEGORIES = (("movies", "movie"), ("series", "series"))
 ROOT_ENTRIES = {"movies", "series", "people"}
-ITEM_ENTRIES = {"item.json", "metadata.json", "metadata", "sources", "versions", "events"}
-SERIES_ENTRIES = {"item.json", "metadata.json", "metadata", "episodes", "events"}
-VERSION_ENTRIES = {"version.json", "package.json", "checksums.sha256", ".complete", "hls", "subs", "trickplay", "trailers"}
+SUMS = "checksums.sha256"
+ITEM_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "sources", "versions", "events"}
+SERIES_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "episodes", "events"}
+VERSION_ENTRIES = {"version.json", "package.json", SUMS, ".complete", "hls", "subs", "trickplay", "trailers"}
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
-PACKAGE_MARKERS = (".complete",)
+# Each link of a version's chain holds the hash of the next one down, so none of them can be listed by
+# the checksums file it sits above.
+CHAIN = (".complete", "package.json", SUMS)
 EVENT_KINDS = ("original-deleted", "version-removed", "package-superseded", "source-removed", "note")
-EVENT_NAME = re.compile(r"^(\d{8}T\d{6}Z)(?:-([0-9a-f]{8}))?-(" + "|".join(EVENT_KINDS) + r")\.json$")
+EVENT_FOLDER = re.compile(r"^(\d{8}T\d{6}Z)-([0-9a-f]{8})-(" + "|".join(EVENT_KINDS) + r")$")
+OLD_EVENT_FILE = re.compile(r"^\d{8}T\d{6}Z(?:-[0-9a-f]{8})?-(" + "|".join(EVENT_KINDS) + r")\.json$")
+SUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")
+COMPLETE = re.compile(r"^sha256:[0-9a-f]{64}$")
+UPGRADE = "library-v2-upgrade.py upgrades a tree from before 2026-10-02 (b) in place"
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 VTT_CUE = re.compile(r"^(\d+):(\d\d):(\d\d)\.(\d{3}) --> (\d+):(\d\d):(\d\d)\.(\d{3})")
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
@@ -184,16 +200,29 @@ def read_checksums(path):
     return entries
 
 
+def read_sums(path):
+    """A sha256sum file as ({name: hex digest}, [lines that are not '<64 hex>  <name>'])."""
+    entries, bad = {}, []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            m = SUM_LINE.match(line)
+            if m:
+                entries[m.group(2)] = m.group(1)
+            elif line:
+                bad.append(line)
+    return entries, bad
+
+
 def package_files(vp):
     """Every file of the package in a version folder, relative to it: the rendition, subtitle,
-    trickplay and trailer folders and the completion marker. The records, the checksums file and the
-    original next to them are not part of the package."""
+    trickplay and trailer folders. The records, the chain above them and the original beside them are
+    not part of the package."""
     out = []
     for d in PACKAGE_DIRS:
         for root, dirs, files in os.walk(os.path.join(vp, d)):
             dirs[:] = sorted(x for x in dirs if not OS_ARTEFACTS.match(x))
             out += [os.path.relpath(os.path.join(root, f), vp) for f in sorted(files) if not OS_ARTEFACTS.match(f)]
-    out += [m for m in PACKAGE_MARKERS if os.path.isfile(os.path.join(vp, m))]
     return sorted(out)
 
 
@@ -306,6 +335,26 @@ class Checker:
             return None, False
         return doc, self.schema_ok(kind, doc, p)
 
+    def covered(self, folder, names, what):
+        """folder/checksums.sha256 lists exactly names — no more, no fewer — and each digest is that of
+        the file now there: the proof a write-once file is still the bytes that were written with it."""
+        sums = os.path.join(folder, SUMS)
+        if not os.path.isfile(sums):
+            self.err(sums, f"missing: {what} is covered by a checksums file written with it "
+                           f"({UPGRADE})")
+            return
+        entries, bad = read_sums(sums)
+        for line in bad[:3]:
+            self.err(sums, f"not a sha256sum line: {line[:80]!r}")
+        for name in sorted(set(names) - set(entries)):
+            self.err(sums, f"does not list {name}")
+        for name in sorted(set(entries) - set(names)):
+            self.err(sums, f"lists {name}, which is not {what}")
+        for name in sorted(set(names) & set(entries)):
+            f = os.path.join(folder, name)
+            if os.path.isfile(f) and sha_file(f).split(":", 1)[1] != entries[name]:
+                self.err(f, f"does not match the checksum {SUMS} recorded for it: changed after it was written")
+
     def schema_ok(self, kind, doc, where):
         errs = list(self.v[kind].iter_errors(doc))
         for e in sorted(errs, key=lambda e: list(map(str, e.absolute_path))):
@@ -338,6 +387,7 @@ class Checker:
         if item.get("type") != expect_type:
             self.err(ip, f"type {item.get('type')} where {expect_type} was expected")
         self.counts[expect_type] += 1
+        self.covered(d, {"item.json"}, "item.json")
 
         allowed = set(SERIES_ENTRIES if expect_type == "series" else ITEM_ENTRIES)
         for name in listdir(d):
@@ -461,61 +511,76 @@ class Checker:
 
     # ------------------------------------------------------------ events/
     def events(self, d):
+        """events/<YYYYMMDDTHHMMSSZ>-<eventId8>-<kind>/, each holding event.json and the checksums
+        written with it."""
         base = os.path.join(d, "events")
         out = []
         if not os.path.isdir(base):
             return out
         for name in listdir(base):
             p = os.path.join(base, name)
-            m = EVENT_NAME.match(name)
-            if not m:
-                self.err(p, "not an events/<YYYYMMDDTHHMMSSZ>[-<8 hex of the eventId>]-<kind>.json record")
+            m = EVENT_FOLDER.match(name)
+            if not m or not os.path.isdir(p):
+                self.err(p, f"an event record in the layout before 2026-10-02 (b): each event is a folder "
+                            f"events/<YYYYMMDDTHHMMSSZ>-<eventId8>-<kind>/ holding event.json ({UPGRADE})"
+                         if OLD_EVENT_FILE.match(name) and os.path.isfile(p) else
+                         "not an events/<YYYYMMDDTHHMMSSZ>-<8 hex of the eventId>-<kind>/ folder")
                 continue
-            ev, valid = self.document("event", p)
+            ep = os.path.join(p, "event.json")
+            for entry in listdir(p):
+                if entry not in ("event.json", SUMS):
+                    self.err(os.path.join(p, entry), "not event.json or the checksums written with it")
+            ev, valid = self.document("event", ep)
             if ev is None or not valid:
                 continue
             self.counts["events"] += 1
+            self.covered(p, {"event.json"}, "event.json")
             if m.group(3) != ev["kind"]:
-                self.err(p, f"file name says {m.group(3)} but the record's kind is {ev['kind']}")
+                self.err(ep, f"folder name says {m.group(3)} but the record's kind is {ev['kind']}")
             if m.group(1) != stamp_of(ev["at"]):
-                self.err(p, f"file name says {m.group(1)} but the record happened at {stamp_of(ev['at'])}")
-            if m.group(2) and not ev["eventId"].startswith(m.group(2)):
-                self.err(p, f"file name says {m.group(2)}, which does not start the eventId {ev['eventId']}")
-            out.append({"where": p, **ev})
+                self.err(ep, f"folder name says {m.group(1)} but the record happened at {stamp_of(ev['at'])}")
+            if not ev["eventId"].startswith(m.group(2)):
+                self.err(ep, f"folder name says {m.group(2)}, which does not start the eventId {ev['eventId']}")
+            out.append({"where": ep, **ev})
         return out
 
     # ------------------------------------------------------------ sources/
     def sources(self, d):
+        """sources/<sourceId>/, each holding source.json, the probe and sidecars it names, and the
+        checksums written with all of them."""
         base = os.path.join(d, "sources")
-        records, folders = {}, set()
+        records = {}
         if not os.path.isdir(base):
             return records
         for name in listdir(base):
             p = os.path.join(base, name)
-            if os.path.isdir(p):
-                folders.add(name)
+            if not os.path.isdir(p):
+                self.err(p, f"a source record in the layout before 2026-10-02 (b): each source is a folder "
+                            f"sources/<sourceId>/ holding source.json ({UPGRADE})"
+                         if name.endswith(".json") and UUID.match(name[:-5]) else "not a sources/<sourceId>/ folder")
                 continue
-            if not (name.endswith(".json") and UUID.match(name[:-5])):
-                self.err(p, "not a sources/<sourceId>.json record")
+            if not UUID.match(name):
+                self.err(p, "a source folder is named by its sourceId")
                 continue
-            src, valid = self.document("source", p)
+            sp = os.path.join(p, "source.json")
+            if not os.path.isfile(sp):
+                self.err(p, "a source folder without its source.json record")
+                continue
+            src, valid = self.document("source", sp)
             if src is None or not valid:
                 continue
             self.counts["sources"] += 1
-            if src["sourceId"] != name[:-5]:
-                self.err(p, f"sourceId {src['sourceId']} does not match the file name")
+            if src["sourceId"] != name:
+                self.err(sp, f"sourceId {src['sourceId']} does not match the folder name")
                 continue
-            records[src["sourceId"]] = src
-            self.source_files(d, p, src)
-        for name in sorted(folders):
-            if name not in records:
-                self.err(os.path.join(base, name), "no sources/<sourceId>.json record names this folder")
-                continue
-            known = {os.path.basename(records[name]["probe"].get("file") or "")} | \
-                    {os.path.basename(x["file"]) for x in records[name].get("sidecars") or []}
-            for entry in listdir(os.path.join(base, name)):
-                if entry not in known:
-                    self.err(os.path.join(base, name, entry), "not the probe or a sidecar of this source")
+            records[name] = src
+            self.source_files(d, sp, src)
+            named = {"source.json"} | {os.path.basename(x["file"]) for x in src.get("sidecars") or []} | \
+                ({os.path.basename(src["probe"]["file"])} if src["probe"].get("file") else set())
+            for entry in listdir(p):
+                if entry not in named and entry != SUMS:
+                    self.err(os.path.join(p, entry), "not the record, the probe, a sidecar or the checksums of this source")
+            self.covered(p, named, "source.json, its probe or one of its sidecars")
         return records
 
     def source_files(self, d, where, src):
@@ -604,6 +669,8 @@ class Checker:
         if pkg is not None:
             self.counts["packages"] += 1
             self.package(vp, v, pkg)
+            if marker:
+                self.chain(vp)
         gate = deletion_gate([sources[s]["essence"] for s in v["sourceIds"] if s in sources],
                              (pkg or {}).get("essence") or {})
         gone, whole = set(), False
@@ -662,6 +729,35 @@ class Checker:
         elif len(read_checksums(f)) != cs["files"]:
             self.err(where, f"checksums file lists {len(read_checksums(f))} files, the record says {cs['files']}")
 
+    def chain(self, vp):
+        """.complete -> package.json -> checksums.sha256 -> version.json and every package file. The
+        records are checked always; the package files, which can be many and large, with
+        --check-media and --check-checksums."""
+        mark = os.path.join(vp, ".complete")
+        with open(mark, "rb") as f:
+            body = f.read().decode("utf-8", "replace").strip()
+        if not COMPLETE.match(body):
+            self.err(mark, f"holds {body[:40]!r}, not sha256:<hex> of package.json, the head of the chain "
+                           f"that covers this version ({UPGRADE})")
+        elif body != sha_file(os.path.join(vp, "package.json")):
+            self.err(mark, "does not name this package.json: package.json changed after the package completed")
+        sums = os.path.join(vp, SUMS)
+        if not os.path.isfile(sums):
+            return  # package() says so
+        listed, bad = read_sums(sums)
+        for line in bad[:3]:
+            self.err(sums, f"not a sha256sum line: {line[:80]!r}")
+        why = {".complete": "which is written after it and holds the hash of package.json",
+               "package.json": "which holds the hash of this file", SUMS: "itself"}
+        for name in CHAIN:
+            if name in listed:
+                self.err(sums, f"lists {name}, {why[name]}: a link of the chain cannot be listed below itself")
+        vj = os.path.join(vp, "version.json")
+        if "version.json" not in listed:
+            self.err(sums, f"does not list version.json, the record its package was made for ({UPGRADE})")
+        elif sha_file(vj).split(":", 1)[1] != listed["version.json"]:
+            self.err(vj, f"does not match the checksum {SUMS} recorded for it: changed after the package completed")
+
     # ------------------------------------------------------------ the bytes
     def media(self, vp, v, pkg, sources, gone, whole):
         """gone: sources an original-deleted event named one by one; whole: an event that named none,
@@ -701,15 +797,15 @@ class Checker:
         cs = pkg["checksums"]
         if os.path.isfile(os.path.join(vp, cs["file"])):
             listed = read_checksums(os.path.join(vp, cs["file"]))
-            on_disk = package_files(vp)
+            on_disk = package_files(vp) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
             for rel in sorted(set(on_disk) - set(listed)):
                 self.err(where, f"package file {rel} is not in {cs['file']}")
-            for rel in sorted(set(listed) - set(on_disk)):
+            for rel in sorted(set(listed) - set(on_disk) - set(CHAIN)):
                 self.err(where, f"{cs['file']} lists {rel}, which is not a file of this package")
             present = [rel for rel in listed if rel in set(on_disk)]
             total = sum(os.path.getsize(os.path.join(vp, rel)) for rel in present)
             if len(present) == len(listed) and total != cs["bytes"]:
-                self.err(where, f"package files total {total} bytes, the record says {cs['bytes']}")
+                self.err(where, f"the files {cs['file']} lists total {total} bytes, the record says {cs['bytes']}")
             if self.check_checksums:
                 for rel in present:
                     if sha_file(os.path.join(vp, rel)).split(":", 1)[1] != listed[rel]:

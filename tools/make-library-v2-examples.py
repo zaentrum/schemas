@@ -14,9 +14,12 @@ every record the format has and the shapes a reader most needs to see:
   people/  the two people the items credit: the movie's director, with only what is known about
            him, and the series' lead, a fictional person with every field a person record has.
 
-Images are named by the hash of their own content. Originals and images are small placeholders and
-rendition folders are empty; hashes, sizes and checksums are computed, never typed. The tree passes
-validate-library-v2.py --check-checksums.
+Images are named by the hash of their own content. Every folder written once carries the
+checksums.sha256 written with it — the item's over item.json, each source's over its record, probe
+and sidecars, each event's over event.json — and each version closes its chain: checksums over
+version.json and the package, package.json with their hash, .complete with the hash of package.json.
+Originals and images are small placeholders and rendition folders are empty; hashes, sizes and
+checksums are computed, never typed. The tree passes validate-library-v2.py --check-checksums.
 """
 import base64, hashlib, json, os, shutil, uuid
 
@@ -73,6 +76,18 @@ def write(path, data):
 def keep(path):
     """An empty rendition folder, kept in git by a .keep file."""
     write(os.path.join(path, ".keep"), b"")
+
+
+def sums(folder, names):
+    """folder/checksums.sha256 over exactly names, in sha256sum -c format, written with them."""
+    lines = [f"{hashlib.sha256(open(os.path.join(folder, n), 'rb').read()).hexdigest()}  {n}" for n in sorted(names)]
+    return write(os.path.join(folder, "checksums.sha256"), ("\n".join(lines) + "\n").encode())
+
+
+def item_record(item_dir, doc):
+    """item.json and the checksums written with it."""
+    write(os.path.join(item_dir, "item.json"), doc)
+    sums(item_dir, ["item.json"])
 
 
 # ---------------------------------------------------------------- metadata images
@@ -152,8 +167,9 @@ def probe_stream(st):
 def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms,
            quality="1080p", medium="disc", fingerprint="h264/high/8bit/sdr/1920x800", size=6300000000,
            part=None, naming=None):
-    """sources/<sid>.json plus the verbatim probe beside it. Written once; it never says where the
-    bytes are or whether they still exist — that is the version's record and the events."""
+    """The record of sources/<sid>/source.json, with the verbatim probe written beside it; the record
+    itself is written by finish_source, once nothing about it changes any more. It never says where
+    the bytes are or whether they still exist — that is the version's record and the events."""
     probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)},
              "streams": [probe_stream(x) for x in streams],
              "chapters": [{"start_time": str(c["startMs"] / 1000), "end_time": str(c["endMs"] / 1000),
@@ -173,7 +189,16 @@ def source(item_dir, sid, name, library_path, streams, chapters, src_essence, du
         "probe": {"tool": "ffprobe", "version": None, "at": TAKEN, "file": f"sources/{sid}/ffprobe.json",
                   "sha256": sha(probe_bytes), "note": None},
     }
-    write(os.path.join(item_dir, "sources", f"{sid}.json"), record)
+    return record
+
+
+def finish_source(item_dir, record):
+    """sources/<sid>/source.json, and the checksums written with it over the record and the probe and
+    sidecars beside it: the folder is complete and never touched again."""
+    folder = os.path.join(item_dir, "sources", record["sourceId"])
+    write(os.path.join(folder, "source.json"), record)
+    sums(folder, ["source.json"] + [os.path.basename(record["probe"]["file"])] * bool(record["probe"]["file"])
+         + [os.path.basename(s["file"]) for s in record["sidecars"]])
     return record
 
 
@@ -206,18 +231,15 @@ PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
 
 
 def checksums(vdir):
-    """checksums.sha256 over the package files of a version folder, and the record for it. The
-    records themselves, the original and this file are not package files."""
-    files = []
+    """checksums.sha256 over version.json and the package files of a version folder, and the record
+    for it. The original is not listed — its source record holds its fixity, and it may be deleted
+    later — and neither is anything above this file in the chain."""
+    files = ["version.json"]
     for d in PACKAGE_DIRS:
         for root, dirs, names in os.walk(os.path.join(vdir, d)):
             dirs.sort()
             files += [os.path.relpath(os.path.join(root, n), vdir) for n in sorted(names)]
-    if os.path.isfile(os.path.join(vdir, ".complete")):
-        files.append(".complete")
-    files.sort()
-    lines = [f"{hashlib.sha256(open(os.path.join(vdir, rel), 'rb').read()).hexdigest()}  {rel}" for rel in files]
-    data = write(os.path.join(vdir, "checksums.sha256"), ("\n".join(lines) + "\n").encode())
+    data = sums(vdir, files)
     return {"file": "checksums.sha256", "algorithm": "sha256", "sha256": sha(data), "files": len(files),
             "bytes": sum(os.path.getsize(os.path.join(vdir, rel)) for rel in files)}
 
@@ -253,7 +275,8 @@ def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, ori
 
 def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, size_bytes,
                    subtitles=(), recipe=None, created=PACKAGED):
-    """The package files must already be written: the checksums cover them."""
+    """version.json and the package files must already be written: the checksums cover them. Closes
+    the chain: checksums, then package.json with their hash, then .complete with package.json's."""
     record = {
         "schema": "zaentrum.library.package/2", "packageId": pid, "createdAt": created,
         "packagedBy": "packager example", "state": "complete", "role": role, "durationMs": duration_ms,
@@ -265,15 +288,19 @@ def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, size_
                                                      if l["kind"].endswith("-dropped") and l["sourceStreamIndex"] is not None})},
         "essence": pkg_essence, "checksums": checksums(vdir),
     }
-    write(os.path.join(vdir, "package.json"), record)
+    data = write(os.path.join(vdir, "package.json"), record)
+    write(os.path.join(vdir, ".complete"), (sha(data) + "\n").encode())
     return record
 
 
 def event(item_dir, at, kind, by="librarian example", **fields):
+    """events/<stamp>-<eventId8>-<kind>/event.json and the checksums written with it."""
     record = {"schema": "zaentrum.library.event/2", "eventId": uid("event", at, kind), "at": at,
               "by": by, "kind": kind, **fields}
     stamp = at.replace("-", "").replace(":", "")
-    write(os.path.join(item_dir, "events", f"{stamp}-{kind}.json"), record)
+    folder = os.path.join(item_dir, "events", f"{stamp}-{record['eventId'][:8]}-{kind}")
+    write(os.path.join(folder, "event.json"), record)
+    sums(folder, ["event.json"])
     return record
 
 
@@ -284,7 +311,7 @@ def movie():
     version was removed from the item altogether, and only the event that says so is left."""
     mid = uid("movie", "tears-of-steel")
     mdir = os.path.join(ROOT, "movies", mid[:2], mid)
-    write(os.path.join(mdir, "item.json"), {
+    item_record(mdir, {
         "schema": "zaentrum.library.item/2", "itemId": mid, "type": "movie", "title": "Tears of Steel",
         "externalIds": {"tmdbMovie": "133701", "imdb": "tt2285752"},
         "createdAt": CREATED, "createdBy": "ingest example",
@@ -305,6 +332,7 @@ def movie():
                   [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)"), subtitle(2, None)],
                   chapters, essence(maxAudioChannels=6, surround=True, chapters=True, maxVideoHeight=800,
                                     subtitleLanguages=["en"], subtitleTracks=1), 734000)
+    finish_source(mdir, src1)
     version_record(v1dir, v1,
                    {"kind": "theatrical", "label": None, "decidedBy": "inferred", "decidedAt": VERSIONED,
                     "confidence": 0.6,
@@ -314,7 +342,6 @@ def movie():
                    734000, [s1], [src1["file"]["name"]], chapters, "original-file", credits_seg,
                    measured=[{"signal": "runtime", "value": {"measuredMs": 734000, "referenceMs": 720000},
                               "note": "runs past the reference runtime, so nothing is missing"}])
-    write(os.path.join(v1dir, ".complete"), b"packager example 2026-09-18\n")
     ren1 = renditions(1920, 800, False, 6, ladder=True)
     for r in ren1["video"] + ren1["audio"]:
         keep(os.path.join(v1dir, r["dir"]))
@@ -343,13 +370,12 @@ def movie():
                      [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=800), 406000,
                      medium="web", part={"index": index, "of": 2})
         parts.append((sid, place_original(v2dir, src)))
-        write(os.path.join(mdir, "sources", f"{sid}.json"), src)
+        finish_source(mdir, src)
     version_record(v2dir, v2,
                    {"kind": "directors-cut", "label": "Director's Cut", "decidedBy": "human", "decidedAt": VERSIONED,
                     "evidence": [{"signal": "folder-name", "value": "Tears of Steel (2012) - Director's Cut"}]},
                    {"colour": "colour", "dynamicRange": "sdr", "stereo3d": "none", "aspectRatio": "12:5"},
                    812000, [s for s, _ in parts], [f for _, f in parts])
-    write(os.path.join(v2dir, ".complete"), b"packager example 2026-09-18\n")
     ren2 = renditions(1920, 800, False, 6)
     for r in ren2["video"] + ren2["audio"]:
         keep(os.path.join(v2dir, r["dir"]))
@@ -404,7 +430,6 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
                    segments=[{"kind": "intro", "startMs": 60000, "endMs": 120000, "detector": "chromaprint",
                               "confidence": 0.85, "label": None}],
                    created=created_at)
-    write(os.path.join(vdir, ".complete"), b"packager example\n")
     ren = renditions(3840, 2160, True, 6, ladder=ladder)
     subs = []
     if tracks:
@@ -440,7 +465,7 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
 def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps_original):
     """One episode folder: identity, projection, one original and the versions made from it."""
     edir = os.path.join(sdir, "episodes", eid)
-    write(os.path.join(edir, "item.json"), {
+    item_record(edir, {
         "schema": "zaentrum.library.item/2", "itemId": eid, "type": "episode", "title": title,
         "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
         "seriesId": series_id, "seasonNumber": 1, "episodeNumber": number, "episodeCode": f"S01E{number:02d}",
@@ -466,12 +491,13 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
         # one version, with the original beside its package
         primary = uid(eid, "version")
         original = place_original(os.path.join(edir, "versions", primary), src)
-        write(os.path.join(edir, "sources", f"{sid}.json"), src)
+        finish_source(edir, src)
         episode_version(edir, primary, uid(eid, "package"), sid, original, tracks, False,
                         VERSIONED, PACKAGED, "derived")
     else:
         # the original was never kept here, so each package is the only copy; the first was
         # re-packaged into a new folder and an event says which one took over.
+        finish_source(edir, src)
         old, old_pkg = uid(eid, "version", "first"), uid(eid, "package", "first")
         primary, new_pkg = uid(eid, "version", "repackaged"), uid(eid, "package", "repackaged")
         episode_version(edir, old, old_pkg, sid, None, tracks, False, VERSIONED, PACKAGED, "canonical")
@@ -508,7 +534,7 @@ def series():
     sid = uid("series", "example-show-us")
     sdir = os.path.join(ROOT, "series", sid[:2], sid)
     ep1, ep2 = uid(sid, "S01E01"), uid(sid, "S01E02")
-    write(os.path.join(sdir, "item.json"), {
+    item_record(sdir, {
         "schema": "zaentrum.library.item/2", "itemId": sid, "type": "series", "title": "Example Show",
         "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
     })

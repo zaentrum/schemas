@@ -175,8 +175,8 @@
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",
-    "sha256": "sha256:6a4e20976ea3ec46756b3e722388dac692f8a61123a202d2cbaf03e2f0d0b287",
+    "sha256": "sha256:1df5256f62b9888c6c57b0d7ab6797ca5ccfb81eb98dabf5549fb996355a786d",
     "files": 11,
-    "bytes": 18945
+    "bytes": 19835
   }
 }

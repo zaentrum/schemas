@@ -100,6 +100,47 @@ def tree_files(root):
     return out
 
 
+def digest(p):
+    return hashlib.sha256(open(p, "rb").read()).hexdigest()
+
+
+def write_sums(folder, names):
+    """folder/checksums.sha256 over exactly names, as a writer would write it."""
+    with open(os.path.join(folder, "checksums.sha256"), "w") as f:
+        f.write("".join(f"{digest(os.path.join(folder, n))}  {n}\n" for n in sorted(names)))
+
+
+def listing(folder):
+    return [line.split("  ", 1)[1].rstrip("\n") for line in open(os.path.join(folder, "checksums.sha256"))]
+
+
+def relist(vp, names):
+    """A version's checksums over exactly names, with package.json's record of them and .complete
+    closed over them again."""
+    write_sums(vp, names)
+    p = os.path.join(vp, "package.json")
+    doc = jload(p)
+    doc["checksums"].update(sha256="sha256:" + digest(os.path.join(vp, "checksums.sha256")), files=len(names),
+                            bytes=sum(os.path.getsize(os.path.join(vp, n)) for n in names))
+    jwrite(p, doc)
+    close(vp)
+
+
+def close(vp):
+    with open(os.path.join(vp, ".complete"), "w") as f:
+        f.write("sha256:" + digest(os.path.join(vp, "package.json")) + "\n")
+
+
+def write_event(item_dir, doc):
+    """events/<stamp>-<eventId8>-<kind>/: the event and the checksums written with it."""
+    stamp = doc["at"].replace("-", "").replace(":", "")
+    folder = os.path.join(item_dir, "events", f"{stamp}-{doc['eventId'][:8]}-{doc['kind']}")
+    jwrite(os.path.join(folder, "event.json"), doc)
+    with open(os.path.join(folder, "checksums.sha256"), "w") as f:
+        f.write(hashlib.sha256(open(os.path.join(folder, "event.json"), "rb").read()).hexdigest() + "  event.json\n")
+    return folder
+
+
 def stamps(root):
     """Every file under root with its size and modification time: a file written again, even with
     the same bytes, has a new time."""
@@ -212,7 +253,7 @@ def test_round_trip(t):
                     glob.glob(os.path.join(EXAMPLES, "series", "*", "*", "episodes", "*"))):
         item = jload(os.path.join(p, "item.json"))
         meta = jload(os.path.join(p, "metadata.json"))
-        events = [jload(x) for x in sorted(glob.glob(os.path.join(p, "events", "*.json")))]
+        events = [jload(x) for x in sorted(glob.glob(os.path.join(p, "events", "*", "event.json")))]
         superseded = {e.get("packageId") for e in events if e["kind"] == "package-superseded"}
         removed = {e.get("versionId") for e in events if e["kind"] == "version-removed"}
         deleted = {e.get("versionId") for e in events if e["kind"] == "original-deleted"}
@@ -262,6 +303,53 @@ def test_round_trip(t):
     t.eq("and every person a credit names is one of them", credited, set(people))
 
 
+def test_proves_itself(t):
+    """Every folder written once carries the checksums of what it holds, in the format the
+    system's own sha256sum checks; a version's chain holds link by link; projections carry none."""
+    folders = sorted(os.path.dirname(p) for p in glob.glob(os.path.join(EXAMPLES, "**", "checksums.sha256"),
+                                                           recursive=True))
+    kinds = {}
+    for f in folders:
+        kind = ("item" if os.path.isfile(os.path.join(f, "item.json")) else
+                "source" if os.path.isfile(os.path.join(f, "source.json")) else
+                "event" if os.path.isfile(os.path.join(f, "event.json")) else
+                "version" if os.path.isfile(os.path.join(f, "version.json")) else "other")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    items = len(glob.glob(os.path.join(EXAMPLES, "**", "item.json"), recursive=True))
+    t.eq("every item, source, event and version folder has its checksums, and nothing else does",
+         kinds, {"item": items, "source": len(glob.glob(os.path.join(EXAMPLES, "**", "source.json"), recursive=True)),
+                 "event": len(glob.glob(os.path.join(EXAMPLES, "**", "event.json"), recursive=True)),
+                 "version": len(glob.glob(os.path.join(EXAMPLES, "**", ".complete"), recursive=True))})
+    tool = shutil.which("sha256sum") and ["sha256sum", "-c", "--quiet"] or \
+        shutil.which("shasum") and ["shasum", "-a", "256", "-c", "--quiet"]
+    if tool:
+        failed = [f for f in folders if subprocess.run(tool + ["checksums.sha256"], cwd=f, capture_output=True).returncode]
+        t.ok(f"`{' '.join(tool[:-1])} checksums.sha256` passes in all {len(folders)} of them", not failed, failed)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "library")
+            shutil.copytree(EXAMPLES, root)
+            vj = glob.glob(os.path.join(root, "movies", "*", "*", "versions", "*", "version.json"))[0]
+            jwrite(vj, dict(jload(vj), runtimeMs=1))
+            t.ok("and fails in a version folder whose version.json changed",
+                 subprocess.run(tool + ["checksums.sha256"], cwd=os.path.dirname(vj), capture_output=True).returncode != 0)
+    else:
+        t.skip("sha256sum -c passes in every one of them", "neither sha256sum nor shasum is on PATH")
+    chain = True
+    for mark in glob.glob(os.path.join(EXAMPLES, "**", ".complete"), recursive=True):
+        vp = os.path.dirname(mark)
+        package = jload(os.path.join(vp, "package.json"))
+        chain &= open(mark).read().strip() == "sha256:" + digest(os.path.join(vp, "package.json"))
+        chain &= package["checksums"]["sha256"] == "sha256:" + digest(os.path.join(vp, "checksums.sha256"))
+        chain &= "version.json" in listing(vp) and not {".complete", "package.json", "checksums.sha256"} & set(listing(vp))
+    t.ok("each version is one chain: .complete names package.json, which names checksums.sha256, which lists "
+         "version.json and never a link above it", chain)
+    listed = [n for f in folders for n in listing(f)]
+    t.ok("and no checksums file covers a projection or an image: those are replaced whole, or named by their hash",
+         not {"metadata.json", "person.json"} & set(listed)
+         and not any(n.startswith("metadata/") or n.endswith((".jpg", ".png", ".webp")) and "trickplay/" not in n
+                     for n in listed), listed)
+
+
 def test_events(t):
     with tempfile.TemporaryDirectory() as tmp:
         base = os.path.join(tmp, "library")
@@ -270,49 +358,47 @@ def test_events(t):
 
         # ---- package-superseded: the successor is the one to use
         ev = glob.glob(os.path.join(base, "series", "*", "*", "episodes", "*", "events",
-                                    "*-package-superseded.json"))[0]
-        kept = jload(ev)
-        os.unlink(ev)
+                                    "*-package-superseded"))[0]
+        aside = os.path.join(tmp, "aside")
+        shutil.move(ev, aside)
         after, _ = rows_of(base)
         t.ok("package-superseded keeps the superseded package out of the rows",
              len(assets(after, "packaged")) == len(assets(before, "packaged")) + 1)
-        jwrite(ev, kept)
+        shutil.move(aside, ev)
         t.eq("and putting the event back takes it out again", assets(rows_of(base)[0]), assets(before))
 
         # ---- version-removed: the folder is ignored even when it is still there
         item = os.path.dirname(os.path.dirname(ev))
         vp = sorted(glob.glob(os.path.join(item, "versions", "*")))[0]
         vid = os.path.basename(vp)
-        jwrite(os.path.join(item, "events", "20260921T100000Z-version-removed.json"),
-               {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
-                "at": "2026-09-21T10:00:00Z", "by": "test", "kind": "version-removed", "versionId": vid})
+        removal = write_event(item, {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
+                                     "at": "2026-09-21T10:00:00Z", "by": "test", "kind": "version-removed",
+                                     "versionId": vid})
         after, doc2 = rows_of(base)
         gone = set(assets(before)) - set(assets(after))
         t.ok("version-removed drops everything the version held", bool(gone))
         t.ok("and the rebuild says the folder was ignored",
              any("was removed by an event" in n for n in doc2["notes"]))
-        os.unlink(os.path.join(item, "events", "20260921T100000Z-version-removed.json"))
+        shutil.rmtree(removal)
         t.eq("and without the event the version is part of the item again", assets(rows_of(base)[0]),
              assets(before))
 
         # ---- original-deleted: the original is not a playback asset any more
-        deletion = glob.glob(os.path.join(base, "movies", "*", "*", "events", "*-original-deleted.json"))[0]
-        kept = jload(deletion)
-        os.unlink(deletion)
+        deletion = glob.glob(os.path.join(base, "movies", "*", "*", "events", "*-original-deleted"))[0]
+        shutil.move(deletion, aside)
         after, _ = rows_of(base)
         t.ok("original-deleted keeps the deleted original out of the rows",
              len(assets(after, "primary")) == len(assets(before, "primary")) + 1)
-        jwrite(deletion, kept)
+        shutil.move(aside, deletion)
         t.eq("and putting it back removes it again", assets(rows_of(base)[0]), assets(before))
         loss = [v for s in rows_of(base)[1]["storage"] for v in s["versions"] if v["permanentLoss"]]
         t.ok("the version it names is canonical and its losses are permanent",
              bool(loss) and loss[0]["canonical"] and "surround" in loss[0]["permanentLoss"])
 
         # ---- note: nothing
-        jwrite(os.path.join(item, "events", "20260921T110000Z-note.json"),
-               {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
-                "at": "2026-09-21T11:00:00Z", "by": "test", "kind": "note",
-                "reason": "something no other record holds"})
+        write_event(item, {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
+                           "at": "2026-09-21T11:00:00Z", "by": "test", "kind": "note",
+                           "reason": "something no other record holds"})
         t.eq("a note changes nothing", assets(rows_of(base)[0]), assets(before))
 
 
@@ -342,6 +428,7 @@ def outlive(tree, iid):
     shutil.copytree(src, d)
     for name in ("item.json", "metadata.json"):
         jwrite(os.path.join(d, name), dict(jload(os.path.join(d, name)), itemId=iid))
+    write_sums(d, ["item.json"])
     return d
 
 
@@ -602,15 +689,16 @@ def test_from_v1(t):
         jwrite(mp, man)
         os.unlink(os.path.join(os.path.dirname(mp), source["file"]["name"]))
         code, text = run(FROM_V1, "--in", src, "--in-place")
-        events = glob.glob(os.path.join(src, "movies", "*", "*", "events", "*-original-deleted.json"))
+        events = glob.glob(os.path.join(src, "movies", "*", "*", "events", "*-original-deleted", "event.json"))
         t.ok("a v1 source that said it was deleted becomes an original-deleted event",
              code == 0 and len(events) == 1, text)
         if events:
             ev = jload(events[0])
             t.ok("the event accepts what the records say the package failed to carry",
                  ev["accepted"] and all(":" in x or x[0].islower() for x in ev["accepted"]))
-            t.eq("and the file is named for the moment it happened", os.path.basename(events[0]),
-                 "20260915T080000Z-original-deleted.json")
+            t.eq("and its folder is named for the moment it happened, its id and its kind",
+                 os.path.basename(os.path.dirname(events[0])),
+                 f"20260915T080000Z-{ev['eventId'][:8]}-original-deleted")
         if have_jsonschema():
             code, text = run(VALIDATOR, "--check-media", src)
             t.ok("a tree with a deletion still validates", code == 0, text)
@@ -723,7 +811,7 @@ def test_from_catalog(t):
                                    a["file"].split(os.sep)[-1]), "rb").read()).hexdigest()
               for a in row["artwork"]], [True])
 
-        source = jload(glob.glob(os.path.join(out, "movies", "*", "*", "sources", "*.json"))[0])
+        source = jload(glob.glob(os.path.join(out, "movies", "*", "*", "sources", "*", "source.json"))[0])
         t.ok("a source that could not be probed says so rather than guessing",
              source["probe"]["at"] is not None or "not available" in (source["probe"].get("note") or ""))
         t.ok("and it still carries the file's size, mtime and fingerprint",
@@ -938,6 +1026,58 @@ def test_media_check(t):
          lambda r: os.unlink(glob.glob(os.path.join(movie(r), "sources", "*", "ffprobe.json"))[0]),
          "probe file a source record names is missing")
     case("a file that is a hard link to another path", False, hard_link, "hard links")
+    # ---- every write-once folder proves its records, and each version is one chain
+    def first(pattern, root):
+        return sorted(glob.glob(os.path.join(root, *pattern.split("/"))))[0]
+
+    def change(path, **fields):
+        jwrite(path, dict(jload(path), **fields))
+
+    case("an item record changed after it was written", False,
+         lambda r: change(os.path.join(movie(r), "item.json"), title="Another"), "item.json: does not match the checksum")
+    case("an item folder without its checksums", False,
+         lambda r: os.unlink(os.path.join(movie(r), "checksums.sha256")), "missing: item.json is covered")
+    case("an item's checksums listing more than item.json", False,
+         lambda r: write_sums(movie(r), ["item.json", "metadata.json"]), "lists metadata.json, which is not item.json")
+    case("a source record changed after it was written", False,
+         lambda r: change(first("sources/*/source.json", movie(r)), takenBy="someone else"),
+         "source.json: does not match the checksum")
+    case("a source's checksums without its probe", False,
+         lambda r: write_sums(os.path.dirname(first("sources/*/ffprobe.json", movie(r))), ["source.json"]),
+         "does not list ffprobe.json")
+    case("a source in the layout before each source was a folder", False,
+         lambda r: shutil.move(first("sources/*/source.json", movie(r)),
+                               os.path.dirname(first("sources/*/source.json", movie(r))) + ".json"),
+         "not a sources/<sourceId>/ folder (library-v2-upgrade.py")
+    case("an event changed after it was written", False,
+         lambda r: change(first("events/*/event.json", movie(r)), reason="changed afterwards"),
+         "event.json: does not match the checksum")
+    case("an event folder without its checksums", False,
+         lambda r: os.unlink(first("events/*/checksums.sha256", movie(r))), "missing: event.json is covered")
+    case("an event in the layout before each event was a folder", False,
+         lambda r: shutil.move(first("events/*/event.json", movie(r)),
+                               os.path.join(movie(r), "events", "20260920T081500Z-original-deleted.json")),
+         "not an events/<YYYYMMDDTHHMMSSZ>-<eventId8>-<kind>/ folder (library-v2-upgrade.py")
+    case("a version record changed after its package completed", False,
+         lambda r: change(os.path.join(kept_version(r), "version.json"), runtimeMs=1),
+         "version.json: does not match the checksum checksums.sha256 recorded for it: changed after the package")
+    case("a version's checksums that do not list version.json", False,
+         lambda r: relist(kept_version(r), [n for n in listing(kept_version(r)) if n != "version.json"]),
+         "does not list version.json")
+    case("a version's checksums listing the marker above them", False,
+         lambda r: relist(kept_version(r), listing(kept_version(r)) + [".complete"]), "lists .complete, a link of the chain")
+    case("a package record changed after it completed", False,
+         lambda r: change(os.path.join(kept_version(r), "package.json"), packagedBy="someone else"),
+         "does not name this package.json")
+    case("a marker that is not a hash", False,
+         lambda r: open(os.path.join(kept_version(r), ".complete"), "w").write("packager example\n"),
+         "not sha256:<hex> of package.json")
+    case("a checksums total that leaves out version.json", False,
+         lambda r: (change(os.path.join(kept_version(r), "package.json"), checksums=dict(
+             jload(os.path.join(kept_version(r), "package.json"))["checksums"],
+             bytes=jload(os.path.join(kept_version(r), "package.json"))["checksums"]["bytes"]
+             - os.path.getsize(os.path.join(kept_version(r), "version.json")))), close(kept_version(r))),
+         "the files it lists total")
     case("a portrait a person record names that is gone", False,
          lambda r: os.unlink(glob.glob(os.path.join(r, "people", "*", "*", "*.jpg"))[0]),
          "image listed in person.json but not there")
@@ -960,7 +1100,7 @@ def rename_image(d):
 
 def restore_deleted(root):
     """Put back an original that an original-deleted event says is gone."""
-    ev = jload(glob.glob(os.path.join(root, "movies", "*", "*", "events", "*-original-deleted.json"))[0])
+    ev = jload(glob.glob(os.path.join(root, "movies", "*", "*", "events", "*-original-deleted", "event.json"))[0])
     vp = os.path.join(glob.glob(os.path.join(root, "movies", "*", "*"))[0], "versions", ev["versionId"])
     version = jload(os.path.join(vp, "version.json"))
     with open(os.path.join(vp, version["originalFiles"][0]), "wb") as f:
@@ -987,6 +1127,7 @@ def main():
     t = Tally()
     wanted = sys.argv[1:]
     for section, fn in (("the pieces", test_pieces), ("the example tree", test_round_trip),
+                        ("a record proves itself", test_proves_itself),
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),

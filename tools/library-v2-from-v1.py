@@ -12,7 +12,7 @@ the v1 documents, and what v1 did not hold stays empty.
 
   manifest.json .identity            -> item.json  (+ provenance: where the item came from)
                 .versions[]          -> versions/<versionId>/version.json
-                .versions[].sources[]-> sources/<sourceId>.json  (+ sources/<sourceId>/ffprobe.json)
+                .versions[].sources[]-> sources/<sourceId>/source.json  (+ ffprobe.json, sidecars)
                 .versions[].package  -> versions/<versionId>/package.json
                 top-level playback    - the package of the version whose path was "."
                 .versions[].label,
@@ -20,8 +20,14 @@ the v1 documents, and what v1 did not hold stays empty.
                  .series.defaultOrdering,
                  .episode.coordinates -> metadata.json under `library`
                 .versions[].sources[].state = deleted
-                                     -> events/<at>-original-deleted.json
+                                     -> events/<at>-<eventId8>-original-deleted/event.json
   metadata/metadata.json             -> metadata.json, its images renamed to their content hash
+
+Every folder written once gets the checksums.sha256 that covers it as it is written — the item's over
+item.json, each source's over its record, probe and sidecars, each event's over event.json — and a
+version closes its chain last: checksums over version.json and the package, package.json with their
+hash, .complete with package.json's. v1's own checksums covered the package and its marker; they are
+not carried across, because the marker now holds the hash of package.json and cannot be listed.
 
 Media moves into the version folder: the package and the original of the version v1 kept in the
 item folder itself, renamed when the target is on the same filesystem and copied when it is not.
@@ -64,6 +70,11 @@ def did(*parts):
 
 def sha_bytes(b):
     return "sha256:" + hashlib.sha256(b).hexdigest()
+
+
+def json_bytes(doc):
+    """A record as it is written: two-space indent, UTF-8, one trailing line break."""
+    return (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def sha_file(p):
@@ -187,7 +198,14 @@ class Writer:
         os.replace(tmp, path)
 
     def write_json(self, path, doc):
-        self.write(path, (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+        self.write(path, json_bytes(doc))
+
+    def covered(self, folder, files):
+        """Write-once files and the checksums.sha256 that lists exactly them, from the bytes written."""
+        for name in sorted(files):
+            self.write(os.path.join(folder, name), files[name])
+        self.write(os.path.join(folder, "checksums.sha256"),
+                   "".join(f"{hashlib.sha256(files[n]).hexdigest()}  {n}\n" for n in sorted(files)).encode())
 
     def move(self, src, dst):
         """Rename when the target is on the same filesystem, copy when it is not. Re-running is
@@ -280,7 +298,7 @@ class Convert:
         if primary is None and len(versions) == 1:
             primary = versions[0]
 
-        self.w.write_json(os.path.join(dst, "item.json"), self.item_json(man, meta_v1))
+        self.w.covered(dst, {"item.json": json_bytes(self.item_json(man, meta_v1))})
         self.w.write_json(os.path.join(dst, "metadata.json"),
                           self.metadata_json(man, meta_v1, src, dst, primary, labels))
         self.counts["items"] += 1
@@ -290,10 +308,9 @@ class Convert:
             if os.path.isfile(mpath):
                 self.w.unlink(mpath)
             self.w.rmdir_empty(os.path.join(src, "source"))
-            for name in ("checksums.sha256", ".complete"):
-                p = os.path.join(src, name)
-                if os.path.isfile(p) and src == dst and not os.path.isdir(os.path.join(dst, "versions")):
-                    self.w.unlink(p)
+            p = os.path.join(src, ".complete")
+            if os.path.isfile(p) and src == dst and not os.path.isdir(os.path.join(dst, "versions")):
+                self.w.unlink(p)
 
     # -------------------------------------------------- item.json
     def item_json(self, man, meta_v1):
@@ -449,7 +466,7 @@ class Convert:
                 deleted.append(s)
             if s.get("file", {}).get("path"):
                 self.w.move(os.path.join(here, s["file"]["path"]), os.path.join(vp, s["file"]["name"]))
-            self.w.write_json(os.path.join(dst, "sources", s["id"] + ".json"), rec)
+            self.write_source(dst, rec)
             self.counts["sources"] += 1
 
         version = {"schema": "zaentrum.library.version/2", "versionId": vid,
@@ -470,11 +487,18 @@ class Convert:
         wrote_package = False
         if state in ("complete", "stale"):
             entries = self.package_files(here, vp)
-            package = self.package(man, v, pkg, state, bool(originals), entries, vp, here)
+            version_bytes = json_bytes(version)
+            listed = sorted(entries + [("version.json", hashlib.sha256(version_bytes).hexdigest(), len(version_bytes))])
+            package = self.package(man, v, pkg, state, bool(originals), entries, listed, vp, here)
             if package is not None:
-                self.w.write_json(os.path.join(vp, "version.json"), version)
-                self.w.write_json(os.path.join(vp, "package.json"), package)
-                self.w.move(os.path.join(here, ".complete"), os.path.join(vp, ".complete"))
+                self.w.write(os.path.join(vp, "version.json"), version_bytes)
+                self.w.write(os.path.join(vp, "checksums.sha256"),
+                             "".join(f"{d}  {r}\n" for r, d, _ in listed).encode())
+                package_bytes = json_bytes(package)
+                self.w.write(os.path.join(vp, "package.json"), package_bytes)
+                self.w.write(os.path.join(vp, ".complete"), (sha_bytes(package_bytes) + "\n").encode())
+                if os.path.abspath(here) != os.path.abspath(vp):
+                    self.w.unlink(os.path.join(here, ".complete"))
                 self.counts["packages"] += 1
                 wrote_package = True
         else:
@@ -560,8 +584,8 @@ class Convert:
         return out
 
     def package_files(self, here, vp):
-        """Every file of the package, moved into the version folder. .complete comes last, so it is
-        listed by its bytes here and written after the records."""
+        """Every file of the package, moved into the version folder, with its digest and size. The
+        marker is not one of them: it is the last link of the chain, written after package.json."""
         entries = []
         for sub in PACKAGE_DIRS:
             base = os.path.join(here, sub)
@@ -574,15 +598,9 @@ class Convert:
                 p = os.path.join(target, rel)
                 entries.append((os.path.join(sub, rel).replace(os.sep, "/"), sha_file(p).split(":", 1)[1],
                                 os.path.getsize(p)))
-        marker = os.path.join(here, ".complete")
-        if not os.path.isfile(marker):
-            marker = os.path.join(vp, ".complete")
-        if os.path.isfile(marker):
-            raw = open(marker, "rb").read()
-            entries.append((".complete", hashlib.sha256(raw).hexdigest(), len(raw)))
         return sorted(entries)
 
-    def package(self, man, v, pkg, state, keep_original, entries, vp, here):
+    def package(self, man, v, pkg, state, keep_original, entries, listed, vp, here):
         playback = pkg.get("playback") or ({"durationMs": man.get("durationMs"), "packagedAt": man.get("packagedAt"),
                                             "packager": man.get("packager"), "renditions": man.get("renditions"),
                                             "subtitles": man.get("subtitles"), "trickplay": man.get("trickplay"),
@@ -606,7 +624,7 @@ class Convert:
             if s.get("default") and (s.get("forced") or s.get("purpose") in ("forced", "signs-songs")):
                 s["default"] = False
                 self.note(man["itemId"], f"subtitle {s['id']} was a forced track flagged default; cleared")
-        checksums = self.checksums(pkg, entries, vp, here, man)
+        checksums = self.checksums(entries, listed, here, man)
         role = "derived" if keep_original else "canonical"
         if pkg.get("role") and pkg["role"] != role:
             self.note(man["itemId"], f"version {v['id']} package role {pkg['role']!r} became {role!r}: a package is "
@@ -630,32 +648,25 @@ class Convert:
                                      f"lossless is true exactly when there are none")
         return doc
 
-    def checksums(self, pkg, entries, vp, here, man):
-        """The v1 file covers exactly the same set, so it is carried across when it does; when it
-        does not, it is written again from the files themselves."""
-        target = os.path.join(vp, "checksums.sha256")
+    def checksums(self, entries, listed, here, man):
+        """The record of the checksums file version() writes over listed: version.json and every
+        package file. v1's own file listed the package and its marker; it is not carried across —
+        the marker now holds the hash of package.json, so it cannot be listed — but where it
+        disagrees with the package's files about what they are, that is said."""
         old = os.path.join(here, "checksums.sha256")
-        listed = {}
-        for p in (old, target):
-            if os.path.isfile(p):
-                for line in open(p, encoding="utf-8"):
-                    digest, _, rel = line.rstrip("\n").partition("  ")
-                    if rel:
-                        listed[rel] = digest
-                break
-        want = {rel: digest for rel, digest, _ in entries}
-        if listed == want and os.path.isfile(old):
-            self.w.move(old, target)
-            raw = open(target, "rb").read() if not self.a.dry_run and os.path.isfile(target) else \
-                "".join(f"{d}  {r}\n" for r, d, _ in entries).encode()
-        else:
-            if listed and listed != want:
-                self.note(man["itemId"], "checksums.sha256 did not cover exactly the package's files; written again")
-            raw = "".join(f"{d}  {r}\n" for r, d, _ in entries).encode()
-            self.w.write(target, raw)
+        if os.path.isfile(old):
+            v1 = {}
+            for line in open(old, encoding="utf-8"):
+                digest, _, rel = line.rstrip("\n").partition("  ")
+                if rel and rel != ".complete":
+                    v1[rel] = digest
+            if v1 != {rel: digest for rel, digest, _ in entries}:
+                self.note(man["itemId"], "v1's checksums.sha256 did not cover exactly the package's files as they "
+                                         "are; written from the files")
             self.w.unlink(old)
+        raw = "".join(f"{d}  {r}\n" for r, d, _ in listed).encode()
         return {"file": "checksums.sha256", "algorithm": "sha256", "sha256": sha_bytes(raw),
-                "files": len(entries), "bytes": sum(size for _, _, size in entries)}
+                "files": len(listed), "bytes": sum(size for _, _, size in listed)}
 
     def event(self, man, v, s, dst, pkg):
         """A v1 source that said it was deleted is a fact that arose after the records: an event."""
@@ -670,8 +681,22 @@ class Convert:
             doc["packageId"] = pkg["id"]
         doc["reason"] = text((s.get("file") or {}).get("deletionReason"))
         doc["accepted"] = gate
-        self.w.write_json(os.path.join(dst, "events", f"{stamp_of(at)}-original-deleted.json"), doc)
+        self.w.covered(os.path.join(dst, "events", f"{stamp_of(at)}-{eid[:8]}-original-deleted"),
+                       {"event.json": json_bytes(doc)})
         self.counts["events"] += 1
+
+    def write_source(self, dst, rec):
+        """sources/<sourceId>/source.json and the checksums over it and the probe and sidecars that
+        source() moved in beside it."""
+        folder = os.path.join(dst, "sources", rec["sourceId"])
+        files = {"source.json": json_bytes(rec)}
+        for rel in [(rec.get("probe") or {}).get("file")] + [x["file"] for x in rec.get("sidecars") or []]:
+            if rel:
+                p = os.path.join(dst, rel)
+                files[os.path.basename(rel)] = open(p, "rb").read() if os.path.isfile(p) else b""
+        self.w.write(os.path.join(folder, "source.json"), files["source.json"])
+        self.w.write(os.path.join(folder, "checksums.sha256"),
+                     "".join(f"{hashlib.sha256(files[n]).hexdigest()}  {n}\n" for n in sorted(files)).encode())
 
     # -------------------------------------------------- the tree
     def run(self):

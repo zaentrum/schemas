@@ -13,14 +13,17 @@ row, holding the identity the row was created with, the texts and images the dat
 original each row points at as the file itself reports it, and one version folder per packaged
 asset with the package moved or copied in — and one folder per person the rows credit.
 
-  <out>/movies/<aa>/<itemId>/          item.json  metadata.json  metadata/<sha256>.jpg
-                                       sources/<sourceId>.json  sources/<sourceId>/ffprobe.json
-                                       versions/<versionId>/version.json  package.json
-                                                             hls/ subs/ trickplay/
-                                                             checksums.sha256  .complete
-  <out>/series/<aa>/<seriesId>/        item.json  metadata.json  metadata/
+  <out>/movies/<aa>/<itemId>/          item.json  checksums.sha256  metadata.json  metadata/<sha256>.jpg
+                                       sources/<sourceId>/source.json  ffprobe.json  checksums.sha256
+                                       versions/<versionId>/version.json  hls/ subs/ trickplay/
+                                                             checksums.sha256  package.json  .complete
+  <out>/series/<aa>/<seriesId>/        item.json  checksums.sha256  metadata.json  metadata/
                                        episodes/<episodeId>/ (as above)
   <out>/people/<aa>/<personId>/        person.json  <sha256>.jpg
+
+Every folder written once gets the checksums.sha256 that covers it in the same step, and a version
+closes its chain last: checksums over version.json and the package, package.json with their hash,
+.complete with package.json's.
 
 People: a catalog without person records knows only what its credits say, a personId and a name, so
 that is what person.json holds and every other field stays empty. When the export carries a
@@ -81,6 +84,11 @@ def did(*parts):
 
 def sha_bytes(b):
     return "sha256:" + hashlib.sha256(b).hexdigest()
+
+
+def json_bytes(doc):
+    """A record as it is written: two-space indent, UTF-8, one trailing line break."""
+    return (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def sha_file(p):
@@ -641,7 +649,15 @@ class Writer:
         os.replace(tmp, path)
 
     def write_json(self, path, doc):
-        self.write(path, (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+        self.write(path, json_bytes(doc))
+
+    def covered(self, folder, files):
+        """Write-once files and, with them, the checksums.sha256 that lists exactly those files: the
+        hashes come from the bytes being written, so a dry run computes the same ones."""
+        for name in sorted(files):
+            self.write(os.path.join(folder, name), files[name])
+        self.write(os.path.join(folder, "checksums.sha256"),
+                   "".join(f"{hashlib.sha256(files[n]).hexdigest()}  {n}\n" for n in sorted(files)).encode())
 
     def place(self, src, dst, mode):
         """Move or copy one file into the library. Re-running is safe: a file already in place with
@@ -941,8 +957,8 @@ class Build:
             rec["covers"] = []
             rec["essence"] = source_essence(streams, chapters)
             pf = f"sources/{sid}/ffprobe.json"
-            raw = (json.dumps(probe, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
-            self.w.write(os.path.join(d, pf), raw)
+            raw = json_bytes(probe)
+            rec["_probe"] = raw  # written with the record, under the checksums of its folder
             rec["probe"] = {"tool": "ffprobe", "version": self.probe_version, "at": self.as_of, "file": pf,
                             "sha256": sha_bytes(raw), "note": None}
             rec["_chapters"] = [{"startMs": int(float(c.get("start_time", 0)) * 1000),
@@ -1040,9 +1056,8 @@ class Build:
                    "runtimeMs": source["container"].get("durationMs"), "chapters": marks, "chaptersFrom": marks_from,
                    "segments": segments, "sourceIds": [source["sourceId"]], "originalFiles": original_files}
 
-        # the package's own files, moved or copied in; .complete is written last, so its bytes are
-        # read here and the checksums file can already cover it.
-        complete = open(os.path.join(pkg_dir, ".complete"), "rb").read()
+        # the package's own files, moved or copied in. The store's .complete only says the package
+        # finished; the version's is written last and holds the hash of package.json.
         entries, missing = [], []
         for sub in PACKAGE_DIRS:
             base = os.path.join(pkg_dir, sub)
@@ -1052,7 +1067,6 @@ class Build:
                 src = os.path.join(base, rel)
                 entries.append((os.path.join(sub, rel).replace(os.sep, "/"), src, sha_file(src).split(":", 1)[1],
                                 os.path.getsize(src)))
-        entries.append((".complete", None, hashlib.sha256(complete).hexdigest(), len(complete)))
         for entry in listdir(pkg_dir):
             if entry not in PACKAGE_DIRS and entry not in (".complete", "manifest.json", ".packaging"):
                 self.note(row["id"], f"package holds {entry!r}, which is not part of a v2 version folder; left behind")
@@ -1069,19 +1083,26 @@ class Build:
             if not self.w.place(source_path, os.path.join(vp, name), self.a.media_mode):
                 return None, f"original {name} could not be placed"
 
-        checksums = "".join(f"{digest}  {rel}\n" for rel, _, digest, _ in entries).encode()
+        # the chain, from the bottom up: the version record, the checksums over it and every package
+        # file, package.json with their hash, and .complete with package.json's.
+        version_bytes = json_bytes(version)
+        self.w.write(os.path.join(vp, "version.json"), version_bytes)
+        listed = sorted(entries + [("version.json", None, hashlib.sha256(version_bytes).hexdigest(), len(version_bytes))])
+        checksums = "".join(f"{digest}  {rel}\n" for rel, _, digest, _ in listed).encode()
         self.w.write(os.path.join(vp, "checksums.sha256"), checksums)
-        package = self.package(row, pid, man, asset, entries, checksums, source, keep_original, pkg_dir)
-        self.w.write_json(os.path.join(vp, "version.json"), version)
-        self.w.write_json(os.path.join(vp, "package.json"), package)
-        self.w.write(os.path.join(vp, ".complete"), complete)
+        package_bytes = json_bytes(self.package(row, pid, man, asset, entries, listed, checksums, source,
+                                                keep_original, pkg_dir))
+        self.w.write(os.path.join(vp, "package.json"), package_bytes)
+        self.w.write(os.path.join(vp, ".complete"), (sha_bytes(package_bytes) + "\n").encode())
         if self.a.media_mode == "move" and not self.a.dry_run and os.path.isfile(os.path.join(pkg_dir, ".complete")):
             os.unlink(os.path.join(pkg_dir, ".complete"))
         self.counts["versions"] += 1
         self.counts["packages"] += 1
         return vid, None
 
-    def package(self, row, pid, man, asset, entries, checksums, source, keep_original, pkg_dir):
+    def package(self, row, pid, man, asset, entries, listed, checksums, source, keep_original, pkg_dir):
+        """entries are the package's own files; listed is what the checksums file lists, version.json
+        among them."""
         ren = man.get("renditions") or {}
         video = [self.video_rendition(v) for v in (ren.get("video") or [])]
         audio = [self.audio_rendition(a, i) for i, a in enumerate(ren.get("audio") or [])]
@@ -1121,7 +1142,7 @@ class Build:
                "fidelity": {"lossless": not losses, "losses": losses, "droppedSourceStreams": []},
                "essence": pkg_essence,
                "checksums": {"file": "checksums.sha256", "algorithm": "sha256", "sha256": sha_bytes(checksums),
-                             "files": len(entries), "bytes": sum(size for _, _, _, size in entries)}}
+                             "files": len(listed), "bytes": sum(size for _, _, _, size in listed)}}
         return doc
 
     def video_rendition(self, v):
@@ -1210,7 +1231,10 @@ class Build:
                                      "a version names a source record, and a source record carries the file's fixity")
             elif source is not None:
                 rec = {k: v for k, v in source.items() if not k.startswith("_")}
-                self.w.write_json(os.path.join(d, "sources", source["sourceId"] + ".json"), rec)
+                files = {"source.json": json_bytes(rec)}
+                if source.get("_probe") is not None:
+                    files["ffprobe.json"] = source["_probe"]
+                self.w.covered(os.path.join(d, "sources", source["sourceId"]), files)
                 self.counts["sources"] += 1
                 for i, asset in enumerate(sorted(packaged, key=lambda a: str(a.get("path")))):
                     vid, why = self.version(row, d, asset, source, source_path, i)
@@ -1218,7 +1242,7 @@ class Build:
                         version_ids.append(vid)
                     else:
                         self.note(row["id"], why)
-        self.w.write_json(os.path.join(d, "item.json"), item)
+        self.w.covered(d, {"item.json": json_bytes(item)})
         self.w.write_json(os.path.join(d, "metadata.json"),
                           self.metadata_json(row, d, version_ids, episodes))
         self.counts["items"] += 1

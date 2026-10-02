@@ -235,11 +235,19 @@ class Rebuild:
                              "versions": storage})
 
     def events(self, d, iid):
+        """events/<…>/event.json — and the events/<…>.json files of a tree from before each event was
+        a folder, so restoring a copy taken before library-v2-upgrade.py ran loses nothing."""
         base = os.path.join(d, "events")
         out = []
         for name in (listdir(base) if os.path.isdir(base) else []):
+            p = os.path.join(base, name, "event.json")
+            if not os.path.isdir(os.path.join(base, name)):
+                if not name.endswith(".json"):
+                    continue
+                p = os.path.join(base, name)
+                self.note(f"{iid}: event {name} is in the layout before 2026-10-02 (b); read as it is")
             try:
-                ev = load(os.path.join(base, name))
+                ev = load(p)
             except (OSError, ValueError) as e:
                 self.note(f"{iid}: event {name} could not be read ({e})")
                 continue
@@ -247,15 +255,23 @@ class Rebuild:
         return [ev for _, _, ev in sorted(out, key=lambda x: (x[0], x[1]))]
 
     def sources(self, d):
+        """sources/<sourceId>/source.json — and the sources/<sourceId>.json of a tree from before each
+        source was a folder."""
         base = os.path.join(d, "sources")
         out = {}
         for name in (listdir(base) if os.path.isdir(base) else []):
-            if name.endswith(".json") and UUID_RE.match(name[:-5]):
-                try:
-                    rec = load(os.path.join(base, name))
-                    out[rec["sourceId"]] = rec
-                except (OSError, ValueError, KeyError):
-                    continue
+            if UUID_RE.match(name) and os.path.isfile(os.path.join(base, name, "source.json")):
+                p = os.path.join(base, name, "source.json")
+            elif name.endswith(".json") and UUID_RE.match(name[:-5]):
+                p = os.path.join(base, name)
+                self.note(f"{os.path.basename(d)}: source {name} is in the layout before 2026-10-02 (b); read as it is")
+            else:
+                continue
+            try:
+                rec = load(p)
+                out[rec["sourceId"]] = rec
+            except (OSError, ValueError, KeyError):
+                continue
         return out
 
     def versions(self, d, item, sources, events):

@@ -11,19 +11,29 @@ mounts the share:
   oc -n <ns> exec -i deploy/packager -- python3 - /var/lib/katalog/library < library-v2-media-check.py
 
 What it checks, for every item folder:
+  * every write-once folder proves its records, and `sha256sum -c checksums.sha256` there would
+    pass: the item folder's checksums list exactly item.json, each sources/<sourceId>/ folder's
+    exactly source.json, its probe and its sidecars, each events/<…>/ folder's exactly event.json,
+    each with the digest of the file that is there;
+  * each version is one chain: .complete holds sha256:<hex> of package.json, package.json the hash
+    of checksums.sha256, which lists version.json and every file of the package — the rendition,
+    subtitle, trickplay and trailer folders — and never .complete, package.json or itself, and
+    matches the count and the total size package.json recorded (--checksums also hashes every
+    package file);
   * every file a record names is there: the probe and the sidecars of each source, every image
     metadata.json lists, each version's originals, and each package's rendition folders, subtitles
     and trickplay sheet;
   * an original an original-deleted event covers is NOT there, and one nothing covers is, with the
     size and the qh1 fingerprint its source record wrote down;
   * a version folder with a package has its .complete marker, and one without has neither;
-  * checksums.sha256 covers exactly the package's files — the rendition, subtitle, trickplay and
-    trailer folders and the marker, nothing else — and matches the count, the total size and the
-    hash of itself that package.json recorded (--checksums also hashes every file);
   * every image in metadata/ is named by the hash of its own content, has the recorded size, and is
     listed exactly once, with nothing unlisted beside it — and the same for the images in a person's
     folder under people/, beside the person.json that lists them;
   * no file is a hard link shared with another path, because a library of links is not portable.
+
+Projections — metadata.json and person.json — carry no checksums: they are replaced whole, and an
+image is named by its own hash. A tree from before 2026-10-02 (b), with sources/<id>.json and
+events/<…>.json files and no item checksums, fails here until library-v2-upgrade.py upgrades it.
 
 It exits non-zero when anything is wrong, and prints one line per problem.
 """
@@ -32,8 +42,13 @@ import argparse, hashlib, json, os, re, sys
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
-PACKAGE_MARKERS = (".complete",)
 EXT_TYPE = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+SUMS = "checksums.sha256"
+CHAIN = (".complete", "package.json", SUMS)
+SUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")
+COMPLETE = re.compile(r"^sha256:[0-9a-f]{64}$")
+EVENT_FOLDER = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}-[a-z-]+$")
+UPGRADE = "library-v2-upgrade.py upgrades a tree from before 2026-10-02 (b) in place"
 
 
 def listdir(d):
@@ -62,15 +77,28 @@ def qh1(p):
 
 
 def package_files(vp):
-    """Every file of the package in a version folder, relative to it. The records, the checksums
-    file and the original beside them are not part of the package."""
+    """Every file of the package in a version folder, relative to it. The records, the chain above
+    them and the original beside them are not part of the package."""
     out = []
     for d in PACKAGE_DIRS:
         for root, dirs, files in os.walk(os.path.join(vp, d)):
             dirs[:] = sorted(x for x in dirs if not OS_ARTEFACTS.match(x))
             out += [os.path.relpath(os.path.join(root, f), vp) for f in sorted(files) if not OS_ARTEFACTS.match(f)]
-    out += [m for m in PACKAGE_MARKERS if os.path.isfile(os.path.join(vp, m))]
     return sorted(out)
+
+
+def read_sums(path):
+    """A sha256sum file as ({name: hex digest}, [lines that are not '<64 hex>  <name>'])."""
+    entries, bad = {}, []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            m = SUM_LINE.match(line)
+            if m:
+                entries[m.group(2)] = m.group(1)
+            elif line:
+                bad.append(line)
+    return entries, bad
 
 
 class Check:
@@ -93,12 +121,31 @@ class Check:
             self.err(p, f"cannot be read: {e}")
         return None
 
+    def covered(self, folder, names, what):
+        """folder/checksums.sha256 lists exactly names, and each digest is that of the file there."""
+        sums = os.path.join(folder, SUMS)
+        if not os.path.isfile(sums):
+            self.err(sums, f"missing: {what} is covered by a checksums file written with it ({UPGRADE})")
+            return
+        entries, bad = read_sums(sums)
+        for line in bad[:3]:
+            self.err(sums, f"not a sha256sum line: {line[:80]!r}")
+        for name in sorted(set(names) - set(entries)):
+            self.err(sums, f"does not list {name}")
+        for name in sorted(set(entries) - set(names)):
+            self.err(sums, f"lists {name}, which is not {what}")
+        for name in sorted(set(names) & set(entries)):
+            f = os.path.join(folder, name)
+            if os.path.isfile(f) and sha_file(f).split(":", 1)[1] != entries[name]:
+                self.err(f, f"does not match the checksum {SUMS} recorded for it: changed after it was written")
+
     # -------------------------------------------------- one item
     def item(self, d):
         item = self.load(os.path.join(d, "item.json"))
         if item is None:
             return
         self.counts["items"] += 1
+        self.covered(d, {"item.json"}, "item.json")
         events = self.events(d)
         removed = {e["versionId"] for e in events if e.get("kind") == "version-removed" and e.get("versionId")}
         sources = self.sources(d)
@@ -114,25 +161,38 @@ class Check:
         self.hard_links(d)
 
     def events(self, d):
+        """events/<stamp>-<eventId8>-<kind>/: event.json and the checksums written with it."""
         base = os.path.join(d, "events")
         out = []
         for name in (listdir(base) if os.path.isdir(base) else []):
-            ev = self.load(os.path.join(base, name))
+            p = os.path.join(base, name)
+            if not os.path.isdir(p) or not EVENT_FOLDER.match(name):
+                self.err(p, f"not an events/<YYYYMMDDTHHMMSSZ>-<eventId8>-<kind>/ folder"
+                            + (f" ({UPGRADE})" if name.endswith(".json") else ""))
+                continue
+            ev = self.load(os.path.join(p, "event.json"))
             if ev:
                 out.append(ev)
+                self.covered(p, {"event.json"}, "event.json")
         return out
 
     def sources(self, d):
+        """sources/<sourceId>/: source.json, the probe and sidecars it names, and the checksums
+        written with all of them."""
         base = os.path.join(d, "sources")
         records = {}
         for name in (listdir(base) if os.path.isdir(base) else []):
             p = os.path.join(base, name)
-            if os.path.isdir(p) or not (name.endswith(".json") and UUID_RE.match(name[:-5])):
+            if not os.path.isdir(p) or not UUID_RE.match(name):
+                self.err(p, "not a sources/<sourceId>/ folder" + (f" ({UPGRADE})" if name.endswith(".json") else ""))
                 continue
-            src = self.load(p)
+            src = self.load(os.path.join(p, "source.json"))
             if not src:
                 continue
-            records[src.get("sourceId") or name[:-5]] = src
+            records[src.get("sourceId") or name] = src
+            self.covered(p, {"source.json"} | {os.path.basename(x.get("file") or "") for x in src.get("sidecars") or []}
+                         | ({os.path.basename((src.get("probe") or {})["file"])} if (src.get("probe") or {}).get("file") else set()),
+                         "source.json, its probe or one of its sidecars")
             probe = src.get("probe") or {}
             if probe.get("file"):
                 f = os.path.join(d, probe["file"])
@@ -236,12 +296,21 @@ class Check:
             elif ((src.get("file") or {}).get("fixity") or {}).get("qh1") and qh1(f) != src["file"]["fixity"]["qh1"]:
                 self.err(f, "original does not match the qh1 fingerprint its source record wrote down")
         if has_package:
-            self.package(vp, self.load(os.path.join(vp, "package.json")))
+            self.package(vp, self.load(os.path.join(vp, "package.json")), marker)
 
-    def package(self, vp, pkg):
+    def package(self, vp, pkg, marker):
         if pkg is None:
             return
         self.counts["packages"] += 1
+        if marker:
+            with open(os.path.join(vp, ".complete"), "rb") as f:
+                body = f.read().decode("utf-8", "replace").strip()
+            if not COMPLETE.match(body):
+                self.err(os.path.join(vp, ".complete"), f"holds {body[:40]!r}, not sha256:<hex> of package.json, "
+                                                        f"the head of the chain that covers this version ({UPGRADE})")
+            elif body != sha_file(os.path.join(vp, "package.json")):
+                self.err(os.path.join(vp, ".complete"),
+                         "does not name this package.json: package.json changed after the package completed")
         ren = pkg.get("renditions") or {}
         for r in (ren.get("video") or []) + (ren.get("audio") or []):
             if not os.path.isdir(os.path.join(vp, r.get("dir") or "")):
@@ -262,15 +331,21 @@ class Check:
             return
         if cs.get("sha256") and sha_file(f) != cs["sha256"]:
             self.err(f, "the checksums file does not match the sha256 package.json wrote down")
-        listed = {}
-        for line in open(f, encoding="utf-8"):
-            digest, _, rel = line.rstrip("\n").partition("  ")
-            if rel:
-                listed[rel] = digest
-        on_disk = package_files(vp)
+        listed, bad = read_sums(f)
+        for line in bad[:3]:
+            self.err(f, f"not a sha256sum line: {line[:80]!r}")
+        for name in CHAIN:
+            if name in listed:
+                self.err(f, f"lists {name}, a link of the chain above it: each link holds the hash of the one below")
+        vj = os.path.join(vp, "version.json")
+        if "version.json" not in listed:
+            self.err(f, f"does not list version.json, the record its package was made for ({UPGRADE})")
+        elif os.path.isfile(vj) and sha_file(vj).split(":", 1)[1] != listed["version.json"]:
+            self.err(vj, f"does not match the checksum {SUMS} recorded for it: changed after the package completed")
+        on_disk = package_files(vp) + (["version.json"] if os.path.isfile(vj) else [])
         for rel in sorted(set(on_disk) - set(listed)):
             self.err(os.path.join(vp, rel), "is a file of this package that checksums.sha256 does not list")
-        for rel in sorted(set(listed) - set(on_disk)):
+        for rel in sorted(set(listed) - set(on_disk) - set(CHAIN)):
             self.err(f, f"lists {rel}, which is not a file of this package")
         if cs.get("files") is not None and len(listed) != cs["files"]:
             self.err(f, f"lists {len(listed)} files, package.json says {cs['files']}")
@@ -279,7 +354,7 @@ class Check:
         self.counts["files"] += len(present)
         self.counts["bytes"] += total
         if len(present) == len(listed) and cs.get("bytes") is not None and total != cs["bytes"]:
-            self.err(f, f"the package's files total {total} bytes, package.json says {cs['bytes']}")
+            self.err(f, f"the files it lists total {total} bytes, package.json says {cs['bytes']}")
         if self.hash_everything:
             for rel in present:
                 if sha_file(os.path.join(vp, rel)).split(":", 1)[1] != listed[rel]:

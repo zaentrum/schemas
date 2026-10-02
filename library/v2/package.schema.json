@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v2/package.schema.json",
   "title": "versions/<versionId>/package.json — what the packager produced",
-  "description": "Written once by the packager, when the package completes, and never touched again. It sits next to the bytes it describes, so it can never end up describing a different package, and it is the record a rebuild reads to restore the playback rows: everything the v1 manifest's playback section carried is here, under the same names.\n\nBecause it is written only on completion, there is no 'building' or 'failed' state to record — an unfinished package has no package.json and no .complete marker, and neither the database nor a rebuild will use it. A package that falls out of date later is not rewritten either: a new version folder holds the new package, and an events/…-package-superseded.json record says this one was replaced.\n\nPaths: renditions[].dir, subtitles[].path, trickplay.vttPath, trailers[].manifestPath and checksums.file are relative to THIS version folder.",
+  "description": "Written once by the packager, when the package completes, and never touched again. It sits next to the bytes it describes, so it can never end up describing a different package, and it is the record a rebuild reads to restore the playback rows: everything the v1 manifest's playback section carried is here, under the same names.\n\nBecause it is written only on completion, there is no 'building' or 'failed' state to record — an unfinished package has no package.json and no .complete marker, and neither the database nor a rebuild will use it. A package that falls out of date later is not rewritten either: a new version folder holds the new package, and an events/…-package-superseded.json record says this one was replaced.\n\nThe records a rebuild trusts are covered by one chain, each link written after the one it covers:\n  .complete         written last; holds 'sha256:<hex>' of this file, and nothing else\n  package.json      this file; checksums.sha256 records the hash of the checksums file\n  checksums.sha256  version.json and every file of the package, sha256sum -c format\nso `sha256sum -c checksums.sha256` proves version.json and the package, the hash here proves the checksums file, and .complete proves this file. The checksums file cannot list .complete, this file or itself — each holds the hash of the next link down — and it does not list the originals, which are covered by their source records' fixity and may be deleted later.\n\nPaths: renditions[].dir, subtitles[].path, trickplay.vttPath, trailers[].manifestPath and checksums.file are relative to THIS version folder.",
   "type": "object",
   "required": ["schema", "packageId", "createdAt", "packagedBy", "state", "role", "durationMs", "renditions", "fidelity", "essence", "checksums"],
   "additionalProperties": false,
@@ -13,7 +13,7 @@
     "packagedBy": { "type": "string", "description": "The v1 playback field packager." },
     "state": {
       "enum": ["complete", "stale"],
-      "description": "'complete': finished and playable, and the version folder carries its .complete marker. 'stale' exists only for a record migrated from a v1 manifest that already said the package was outdated; nothing writes it now, because a package that goes out of date gets a package-superseded event instead of a new state here."
+      "description": "'complete': finished and playable, and the version folder carries its .complete marker, which names this file's hash. 'stale' exists only for a record migrated from a v1 manifest that already said the package was outdated; nothing writes it now, because a package that goes out of date gets a package-superseded event instead of a new state here."
     },
     "role": {
       "enum": ["derived", "canonical"],
@@ -46,7 +46,7 @@
     "trickplay": { "oneOf": [{ "$ref": "#/$defs/trickplay" }, { "type": "null" }], "description": "v1 playback field." },
     "trailers": { "type": "array", "items": { "$ref": "#/$defs/trailer" }, "description": "v1 playback field: trailers packaged into this folder. Trailers published elsewhere are listed by reference in metadata.json." },
 
-    "sizeBytes": { "type": ["integer", "null"], "minimum": 0, "description": "Total size of the package's files." },
+    "sizeBytes": { "type": ["integer", "null"], "minimum": 0, "description": "Total size of the package's files: its rendition, subtitle, trickplay and trailer folders, not the records beside them." },
     "peakBandwidthBps": { "type": ["integer", "null"], "minimum": 0, "description": "The highest BANDWIDTH in the package's master playlist, audio included: a peak, not an average. The rendition field bitrateBps is often 0." },
 
     "fidelity": {
@@ -76,15 +76,15 @@
 
     "checksums": {
       "type": "object",
-      "description": "A sha256sum-style file listing every file of the package, so a copy can be verified file by file. It is written with the package, not later: once the original is gone the package is the truth, and this is its fixity.",
+      "description": "A sha256sum-style file listing version.json and every file of the package — the rendition, subtitle, trickplay and trailer folders — so a copy can be verified file by file. It is written with the package, not later: once the original is gone the package is the truth, and this is its fixity.",
       "required": ["file", "algorithm", "sha256", "files", "bytes"],
       "additionalProperties": false,
       "properties": {
         "file": { "const": "checksums.sha256", "description": "In this version folder: lines of '<hex digest>  <path>', paths relative to this folder." },
         "algorithm": { "const": "sha256" },
-        "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "Hash of the checksums file itself." },
-        "files": { "type": "integer", "minimum": 0 },
-        "bytes": { "type": "integer", "minimum": 0 }
+        "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "Hash of the checksums file itself: the link from this record down to the files it lists." },
+        "files": { "type": "integer", "minimum": 0, "description": "How many files it lists, version.json included." },
+        "bytes": { "type": "integer", "minimum": 0, "description": "Their total size, version.json included." }
       }
     }
   },
