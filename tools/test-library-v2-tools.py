@@ -2046,8 +2046,28 @@ def test_media_check(t):
                checksums=dict(jload(os.path.join(xp, "package.json"))["checksums"], **fields))
         close(xp)
 
+    def changed_in_place(p):
+        """The same number of bytes, one of them different: only a fingerprint tells."""
+        data = open(p, "rb").read()
+        with open(p, "wb") as f:
+            f.write(data[:-1] + (b"X" if data[-1:] != b"X" else b"Y"))
+
+    def recorded_sha(r):
+        """extra.json saying another sha256 of its original, with the checksums written again over it."""
+        xp = bts(r)
+        doc = jload(os.path.join(xp, "extra.json"))
+        doc["originals"][0]["fixity"]["sha256"] = "sha256:" + "0" * 64
+        jwrite(os.path.join(xp, "extra.json"), doc)
+        write_sums(xp, listing(xp))
+
     case("an extra's original that is not there", False, lambda r: os.unlink(x_original(bts(r))),
          "an original extra.json names is missing")
+    case("an original-only extra's original that grew, without --checksums", False,
+         lambda r: open(x_original(bts(r)), "ab").write(b"x"), "bytes, extra.json says")
+    case("an original-only extra's original changed in place, by its qh1 and without --checksums", False,
+         lambda r: changed_in_place(x_original(bts(r))), "does not match the qh1 fingerprint extra.json wrote down")
+    case("an extra's original that is not the sha256 extra.json wrote down", False, recorded_sha,
+         "does not match the sha256 extra.json wrote down", ("--checksums",))
     case("an extra's original whose bytes changed", False, lambda r: open(x_original(featurette(r)), "ab").write(b"x"),
          "On Location in Amsterdam.mkv: does not match its checksum", ("--checksums",))
     case("a file of an extra that its checksums do not list", False,

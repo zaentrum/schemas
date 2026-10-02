@@ -34,7 +34,9 @@ What it checks, for every item folder:
     rendition folders, subtitles and trickplay are there; one that keeps only its original has its
     checksums.sha256. Either way the checksums list exactly extra.json, the originals it names and
     every file of its package, never a link of the chain above them, with extra.json's digest
-    always and every other with --checksums; an extra that never finished is a note;
+    always and every other with --checksums; each original has the size and the qh1 fingerprint
+    extra.json wrote down, as a version's has its source record's; an extra that never finished is
+    a note;
   * no file is a hard link shared with another path, because a library of links is not portable.
 
 Projections — metadata.json and person.json — carry no checksums: they are replaced whole, and an
@@ -437,6 +439,25 @@ class Check:
         elif not originals:
             self.err(xp, "an extra that holds neither an original nor a package")
         self.extra_covered(xp, originals, None if pkg is None else (pkg.get("checksums") or {}))
+        self.extra_originals(xp, x)
+
+    def extra_originals(self, xp, x):
+        """Each original an extra keeps against what extra.json says of it: its size and its qh1, two
+        reads however big the file is — the check a version's original gets from its source record —
+        and with --checksums its sha256 when recorded."""
+        for o in x.get("originals") or []:
+            name = o.get("name") if isinstance(o, dict) else None
+            f = os.path.join(xp, name or "")
+            if not name or not os.path.isfile(f):
+                continue  # extra_covered says it is missing
+            self.counts["originals"] += 1
+            size, fixity = o.get("sizeBytes"), o.get("fixity") or {}
+            if size is not None and os.path.getsize(f) != size:
+                self.err(f, f"original is {os.path.getsize(f)} bytes, extra.json says {size}")
+            elif fixity.get("qh1") and qh1(f) != fixity["qh1"]:
+                self.err(f, "original does not match the qh1 fingerprint extra.json wrote down")
+            elif self.hash_everything and fixity.get("sha256") and sha_file(f) != fixity["sha256"]:
+                self.err(f, "original does not match the sha256 extra.json wrote down")
 
     def extra_covered(self, xp, originals, cs):
         """checksums.sha256 lists exactly extra.json, the originals and every file of the package —
