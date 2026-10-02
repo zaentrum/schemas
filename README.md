@@ -46,7 +46,8 @@ tools/
   library-v2-from-v1.py            convert v1 item folders into v2 records
   library-v2-rebuild.py            the catalog contents a v2 tree implies
   library-v2-media-check.py        check a v2 tree against the bytes, without jsonschema
-  test-library-v2-tools.py         prove the four tools above do what they say
+  library-v2-upgrade.py            upgrade a v2 tree in place to the layout in which every record proves itself
+  test-library-v2-tools.py         prove the v2 tools do what they say
 ```
 
 The top-level `stube/` directory mirrors the Avro namespace and Kafka topic
@@ -329,7 +330,7 @@ python tools/make-library-v2-examples.py                      # regenerate libra
 
 ### Writing and reading a tree
 
-Four tools put the record on storage and read it back. They are plain standard-library Python 3.11
+These tools put the record on storage, read it back and keep it. They are plain standard-library Python 3.11
 and need no network, so they run where the share is mounted — piped into a pod if that is the only
 place it is reachable (`oc exec -i deploy/packager -- python3 - <args> < tool.py`). The database
 export they read is produced on the client side, so nothing needs a driver or a credential.
@@ -351,8 +352,19 @@ python tools/library-v2-rebuild.py /…/library --out rows.json [--compare catal
 # the checks that must run where the files are: they need no jsonschema
 python tools/library-v2-media-check.py /…/library [--checksums]
 
-python tools/test-library-v2-tools.py   # prove all four do what they say
+# a tree written before 2026-10-02 (b), brought to the layout in which every record proves itself
+python tools/library-v2-upgrade.py /…/library [--dry-run] [--verbose]
+
+python tools/test-library-v2-tools.py   # prove every one of them does what it says
 ```
+
+`library-v2-upgrade.py` moves each `sources/<id>.json` and `events/<…>.json` into a folder of its own,
+writes every write-once folder's checksums, and closes each finished version's chain; it changes no
+record's content, reads no media — a package file's digest is carried forward from the checksums the
+packager wrote, so a file that changed since stays caught — and leaves anything that contradicts its
+records exactly as it was, as a conflict it reports. A run stopped anywhere is finished by the next,
+and a second run changes nothing. It writes no `people/`: `library-v2-from-catalog.py --people-only`
+adds those to an upgraded tree.
 
 A rebuilt catalog is only as complete as the record: the tree holds no per-user state and no row
 modification times, the paths it hands back are the version folders the bytes moved into, and what

@@ -23,6 +23,11 @@ rule and checks the tool notices:
   people         a credited person gets a record that holds what the credit knows; a people list in
                  the export fills every field it carries; --people-only touches no item record; a
                  projection that drops a portrait removes it
+  upgrade        a tree in the layout before 2026-10-02 (b) upgrades, piped into the pod's Python,
+                 to one that validates, with every record the same record and no media read; a dry
+                 run changes nothing, a stopped run is finished by the next, a second run does
+                 nothing, and whatever contradicts its records is refused and left as it was
+  proves itself  sha256sum -c passes in every write-once folder, and each version is one chain
   v1 -> v2       the v1 example tree converts, the result passes validate-library-v2.py and the
                  media check, the texts and the packages survive, and a second run does nothing
   catalog -> v2  an export, a package store and source files become a tree that validates; the
@@ -40,6 +45,7 @@ FROM_CATALOG = os.path.join(TOOLS, "library-v2-from-catalog.py")
 FROM_V1 = os.path.join(TOOLS, "library-v2-from-v1.py")
 REBUILD = os.path.join(TOOLS, "library-v2-rebuild.py")
 MEDIA_CHECK = os.path.join(TOOLS, "library-v2-media-check.py")
+UPGRADE = os.path.join(TOOLS, "library-v2-upgrade.py")
 VALIDATOR = os.path.join(TOOLS, "validate-library-v2.py")
 
 
@@ -76,6 +82,13 @@ def load_tool(path):
 def run(*args):
     r = subprocess.run([sys.executable, *[str(a) for a in args]], capture_output=True, text=True)
     return r.returncode, r.stdout + r.stderr
+
+
+def run_piped(tool, *args):
+    """A tool the way a pod runs it: python3 - <args> < tool.py, with no file of its own to find."""
+    with open(tool, "rb") as f:
+        r = subprocess.run([sys.executable, "-", *[str(a) for a in args]], stdin=f, capture_output=True)
+    return r.returncode, (r.stdout + r.stderr).decode("utf-8", "replace")
 
 
 def jload(p):
@@ -963,6 +976,219 @@ def test_people(t):
              code != 0 and "--packages and --media are needed" in text, text)
 
 
+# ---------------------------------------------------------------- upgrading a tree in place
+def downgrade(root):
+    """Turn a tree in today's layout into the one before 2026-10-02 (b), as the live trees are:
+    no item checksums, sources/<id>.json beside sources/<id>/ffprobe.json, events/<stamp>-<kind>.json,
+    each version's checksums over the package and its marker, a marker that holds anything, and no
+    people/."""
+    shutil.rmtree(os.path.join(root, "people"), ignore_errors=True)
+    for d in glob.glob(os.path.join(root, "movies", "*", "*")) + glob.glob(os.path.join(root, "series", "*", "*")) + \
+            glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*")):
+        os.unlink(os.path.join(d, "checksums.sha256"))
+        for sp in glob.glob(os.path.join(d, "sources", "*", "source.json")):
+            folder = os.path.dirname(sp)
+            shutil.move(sp, folder + ".json")
+            os.unlink(os.path.join(folder, "checksums.sha256"))
+            if not os.listdir(folder):
+                os.rmdir(folder)
+        for ep in glob.glob(os.path.join(d, "events", "*", "event.json")):
+            folder = os.path.dirname(ep)
+            stamp, _, kind = os.path.basename(folder).split("-", 2)
+            shutil.move(ep, os.path.join(d, "events", f"{stamp}-{kind}.json"))
+            shutil.rmtree(folder)
+        for vp in glob.glob(os.path.join(d, "versions", "*")):
+            if not os.path.isfile(os.path.join(vp, ".complete")):
+                continue
+            with open(os.path.join(vp, ".complete"), "w") as f:
+                f.write("packager example 2026-09-18\n")
+            relisted = [n for n in listing(vp) if n != "version.json"] + [".complete"]
+            write_sums(vp, relisted)
+            p = os.path.join(vp, "package.json")
+            jwrite(p, dict(jload(p), checksums=dict(jload(p)["checksums"],
+                                                    sha256="sha256:" + digest(os.path.join(vp, "checksums.sha256")),
+                                                    files=len(relisted),
+                                                    bytes=sum(os.path.getsize(os.path.join(vp, n)) for n in relisted))))
+
+
+def test_upgrade(t):
+    def records(root):
+        """Every JSON record by where it belongs, whichever layout keeps it there, with its content:
+        sources/<id>.json and sources/<id>/source.json are one place, and so are
+        events/<stamp>-<kind>.json and events/<stamp>-<eventId8>-<kind>/event.json."""
+        out = {}
+        for p in glob.glob(os.path.join(root, "**", "*.json"), recursive=True):
+            parts = os.path.relpath(p, root).split(os.sep)
+            if parts[-1] == "source.json":
+                parts = parts[:-1]
+            elif parts[-1] == "event.json":
+                stamp, _, kind = parts[-2].split("-", 2)
+                parts = parts[:-2] + [f"{stamp}-{kind}"]
+            elif len(parts) > 1 and parts[-2] in ("sources", "events"):
+                parts = parts[:-1] + [parts[-1][:-5]]
+            out["/".join(parts)] = jload(p)
+        return out
+
+    def fresh(tmp, name="library"):
+        root = os.path.join(tmp, name)
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.copytree(EXAMPLES, root)
+        downgrade(root)
+        return root
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = fresh(tmp)
+        code, text = run(MEDIA_CHECK, root)
+        t.ok("a tree in the layout before fails the media check, which names the upgrade",
+             code == 1 and "library-v2-upgrade.py" in text, text)
+        before, files_before = records(root), stamps(root)
+        code, dry = run(UPGRADE, root, "--dry-run")
+        t.ok("a dry run says what it would do and changes nothing",
+             code == 0 and "would upgrade" in dry and stamps(root) == files_before, dry)
+        code, text = run_piped(UPGRADE, root)
+        t.ok("the upgrade runs piped into a pod's Python, as the pod runs it", code == 0 and "upgraded" in text, text)
+        t.eq("and does what its dry run said it would", [l for l in text.splitlines()[1:] if not l.startswith("  note")],
+             [l for l in dry.splitlines()[1:] if not l.startswith("  note")])
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", root)
+            t.ok("the upgraded tree passes validate-library-v2.py --check-checksums", code == 0, vtext)
+        else:
+            t.skip("the upgraded tree passes validate-library-v2.py", "jsonschema is not importable here")
+        code, mtext = run(MEDIA_CHECK, "--checksums", root)
+        t.ok("and the media check", code == 0, mtext)
+        after, files_after = records(root), stamps(root)
+        t.eq("every record is where it belongs and is the record it was: item, source, event, version, metadata",
+             sorted(k for k, v in before.items() if after.get(k) != v and not k.endswith("package.json")), [])
+        t.ok("and package.json differs only in what it records of its checksums",
+             all({**v, "checksums": None} == {**after[k], "checksums": None}
+                 for k, v in before.items() if k.endswith("package.json")))
+        t.ok("no package file and no original was written again",
+             all(files_before[k] == files_after[k] for k in files_before
+                 if "/hls/" in k or "/subs/" in k or "/trickplay/" in k or k.endswith(".mkv")))
+        code, text = run(UPGRADE, root)
+        t.ok("a second run changes nothing", code == 0 and "nothing to do" in text and stamps(root) == files_after, text)
+
+        # ---- an interrupted run is finished by the next one, from wherever it stopped
+        done = root
+        for stopped, written in (("after package.json", ("package.json",)),
+                                 ("after the checksums", ("package.json", "checksums.sha256"))):
+            half = fresh(tmp, "half")
+            vp = sorted(glob.glob(os.path.join(half, "movies", "*", "*", "versions", "*")))[0]
+            ref = os.path.join(done, os.path.relpath(vp, half))
+            for name in written:
+                shutil.copy2(os.path.join(ref, name), os.path.join(vp, name))
+            code, text = run(UPGRADE, half)
+            t.ok(f"a run stopped {stopped} is finished by the next, to the same bytes",
+                 code == 0 and tree_files(vp) == tree_files(ref), text)
+        half = fresh(tmp, "half")
+        src = sorted(glob.glob(os.path.join(half, "movies", "*", "*", "sources", "*.json")))[0]
+        os.makedirs(src[:-5], exist_ok=True)
+        shutil.move(src, os.path.join(src[:-5], "source.json"))
+        ev = sorted(glob.glob(os.path.join(half, "movies", "*", "*", "events", "*.json")))[0]
+        doc = jload(ev)
+        folder = os.path.join(os.path.dirname(ev), f"{os.path.basename(ev)[:16]}-{doc['eventId'][:8]}-{doc['kind']}")
+        os.makedirs(folder)
+        shutil.move(ev, os.path.join(folder, "event.json"))
+        code, text = run(UPGRADE, half)
+        t.ok("a source and an event a stopped run moved, but did not cover, are covered by the next",
+             code == 0 and os.path.isfile(os.path.join(src[:-5], "checksums.sha256"))
+             and os.path.isfile(os.path.join(folder, "checksums.sha256")), text)
+
+    # ---- what contradicts the records is reported, and left exactly as it was
+    def movie_dir(r):
+        return glob.glob(os.path.join(r, "movies", "*", "*"))[0]
+
+    def first_version(r):
+        return sorted(glob.glob(os.path.join(movie_dir(r), "versions", "*")))[0]
+
+    def snapshot(paths):
+        return {p: (stamps(p) if os.path.isdir(p) else os.stat(p).st_mtime_ns) for p in paths}
+
+    def refused(name, change, phrase):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fresh(tmp)
+            paths = change(root)
+            before = snapshot(paths)
+            code, text = run(UPGRADE, root)
+            t.ok(f"the upgrade refuses {name}, and leaves it as it was",
+                 code == 1 and phrase in text and snapshot(paths) == before, text)
+
+    def unlisted(r):
+        vp = first_version(r)
+        open(os.path.join(vp, "hls", "v0", "seg-9999.m4s"), "wb").write(b"x")
+        return [vp]
+
+    def recorded_otherwise(r):
+        vp = first_version(r)
+        open(os.path.join(vp, "checksums.sha256"), "a").write(f"{'0' * 64}  hls/extra\n")
+        return [vp]
+
+    def version_changed(r):
+        vp = first_version(r)
+        jwrite(os.path.join(vp, "version.json"), dict(jload(os.path.join(vp, "version.json")), runtimeMs=1))
+        relist(vp, [n for n in listing(vp) if n != ".complete"] + ["version.json"])  # the new form, with a stale digest
+        jwrite(os.path.join(vp, "version.json"), dict(jload(os.path.join(vp, "version.json")), runtimeMs=2))
+        return [vp]
+
+    def probe_contradicted(r):
+        probe = sorted(glob.glob(os.path.join(movie_dir(r), "sources", "*", "ffprobe.json")))[0]
+        open(probe, "a").write(" ")
+        return [os.path.dirname(probe), os.path.dirname(probe) + ".json"]
+
+    def not_its_folder(r):
+        jwrite(os.path.join(movie_dir(r), "item.json"), dict(jload(os.path.join(movie_dir(r), "item.json")),
+                                                            itemId="00000000-0000-4000-8000-000000000000"))
+        return [movie_dir(r)]
+
+    def misnamed_event(r):
+        ev = sorted(glob.glob(os.path.join(movie_dir(r), "events", "*-original-deleted.json")))[0]
+        shutil.move(ev, ev.replace("20260920T081500Z", "20261231T235959Z"))
+        return [ev.replace("20260920T081500Z", "20261231T235959Z")]
+
+    def taken_folder(r):
+        src = sorted(glob.glob(os.path.join(movie_dir(r), "sources", "*.json")))[0]
+        os.makedirs(src[:-5], exist_ok=True)
+        jwrite(os.path.join(src[:-5], "source.json"), dict(jload(src), takenBy="someone else"))
+        return [src, src[:-5]]
+
+    def v1_folder(r):
+        jwrite(os.path.join(movie_dir(r), "manifest.json"), {"version": 3})
+        return [movie_dir(r)]
+
+    refused("a package file its checksums do not list", unlisted, "does not list exactly the package's files")
+    refused("checksums that do not match what package.json recorded", recorded_otherwise,
+            "matches neither the hash package.json records")
+    refused("a version.json changed after its checksums were written", version_changed,
+            "does not match the checksum checksums.sha256 recorded for it")
+    refused("a probe that contradicts its source record", probe_contradicted, "not the probe its source record hashed")
+    refused("an item.json that does not name its folder", not_its_folder, "does not name its folder")
+    refused("an event whose name contradicts its moment", misnamed_event, "its name contradicts its moment")
+    refused("a source whose folder already holds another record", taken_folder, "already holds another record")
+    refused("a v1 item folder", v1_folder, "library-v2-from-v1.py converts it")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = fresh(tmp)
+        rotted = os.path.join(first_version(root), "trickplay", "thumbnails.vtt")
+        data = open(rotted, "rb").read()
+        with open(rotted, "wb") as f:
+            f.write(data[:-1] + (b"X" if data[-1:] != b"X" else b"Y"))
+        code, text = run(UPGRADE, root)
+        code, mtext = run(MEDIA_CHECK, "--checksums", root)
+        t.ok("a package file that changed after it was packaged keeps the digest it was packaged with, "
+             "so the media check still catches it", code == 1 and "thumbnails.vtt: does not match its checksum" in mtext,
+             mtext)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = fresh(tmp)
+        removed = jload(sorted(glob.glob(os.path.join(movie_dir(root), "events", "*-version-removed.json")))[0])
+        vp = os.path.join(movie_dir(root), "versions", removed["versionId"])
+        shutil.copytree(first_version(root), vp)
+        before = stamps(vp)
+        code, text = run(UPGRADE, root)
+        t.ok("a version an event removed is not upgraded: its folder is ignored, and the run says so",
+             code == 0 and stamps(vp) == before and "removed by an event" in text, text)
+
+
 # ---------------------------------------------------------------- the media check
 def test_media_check(t):
     def case(name, expect_ok, change, phrase="", extra=()):
@@ -1132,6 +1358,7 @@ def main():
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog), ("people", test_people),
+                        ("upgrading a tree in place", test_upgrade),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):
             continue
