@@ -7,6 +7,7 @@ Usage:
                              [--items id,id,...] [--media-mode copy|move|none]
                              [--as-of TIMESTAMP] [--text-language LANG] [--dry-run]
   library-v2-from-catalog.py --export CATALOG.json --out LIBRARY --people-only [--items …] [--dry-run]
+  library-v2-from-catalog.py --export CATALOG.json --out LIBRARY --projections-only [--items …] [--dry-run]
 
 The catalog is the working copy and this writes the record beside the bytes: one item folder per
 row, holding the identity the row was created with, the texts and images the database held, the
@@ -39,6 +40,19 @@ items credit. person.json is a projection: it is replaced whole, and an image it
 removed with it. --people-only writes people/ and touches no item folder, so a tree written earlier
 gains its people without rewriting a record; run again after the database changed, it is how a
 person record that went stale is projected again.
+
+--projections-only is how a tree is projected again after the database changed — a stale projection
+--compare reports is gone after one run. It rewrites the projections of what the tree already holds,
+and nothing else: every item's metadata.json and the images it lists in metadata/, every person's
+person.json and their portraits, each replaced whole from the export through a temporary file and a
+rename. It never writes, rewrites or touches a record written once — item.json, a source, a version,
+a package, an extra, an event, a checksums.sha256 — and an item or a person the export holds and the
+tree does not is skipped with a note: creating them is the full build's job, or --people-only's. An
+image is written once, by the name of its content, so one already there is left as it is, and one
+the new projection no longer lists is left for library-v2-sweep.py, past its grace — where the full
+build and --people-only remove it at once. Which version plays when the viewer does not choose is a
+decision the export does not carry: it stays the one the projection on storage names while that
+version is there, and is otherwise derived as the full build derives it.
 
 Every projection says how fresh it is. A row's modifiedAt — an item's or a person's — is the
 databaseUpdatedAt of its projection, the state of the row it reflects, and a row that carries
@@ -769,6 +783,8 @@ class Build:
         self.a = args
         self.export = export
         self.w = Writer(args.dry_run)
+        # --projections-only: write the projections of what the tree holds, and nothing that is written once
+        self.projecting = bool(getattr(args, "projections_only", False))
         self.as_of = ts(args.as_of or export.get("exportedAt")) or ts(datetime.datetime.now(
             datetime.timezone.utc).replace(microsecond=0).isoformat())
         self.probe_version = ffprobe_version() if have_ffprobe() else None
@@ -907,7 +923,8 @@ class Build:
         md = os.path.join(d, "metadata")
         out, names = self.artwork(row["id"], row.get("artwork") or [], md, IMAGE_KINDS, "artwork", "a v2 record",
                                   series=row["type"] == "series")
-        self.w.prune(md, names)
+        if not self.projecting:  # a projection run leaves an image it dropped to the sweep
+            self.w.prune(md, names)
         return out
 
     def artwork(self, owner, entries, folder, kinds, label, holder, series=False):
@@ -953,8 +970,10 @@ class Build:
                 self.note(owner, f"{kind} artwork says " + ", ".join(f"{k} {v!r}" for k, v, _ in said)
                                  + " where its bytes say " + ", ".join(repr(got) for _, _, got in said)
                                  + "; the record says what the bytes say")
-            self.w.write(os.path.join(folder, name), raw)
-            self.counts["images"] += 1
+            if not (self.projecting and os.path.isfile(os.path.join(folder, name))):
+                # an image is written once: a projection run leaves one already there as it is
+                self.w.write(os.path.join(folder, name), raw)
+                self.counts["images"] += 1
             fetched = self.moment(owner, f"the {kind} artwork's fetchedAt", art.get("fetchedAt"))
             ref = text(art.get("sourcePath"))
             entry = {"kind": kind, **({"primary": True} if primary else {}), "file": name,
@@ -1426,6 +1445,76 @@ class Build:
                           self.metadata_json(row, d, version_ids, episodes))
         self.counts["items"] += 1
 
+    # -------------------------------------------------- only the projection of an item the tree holds
+    def project(self, row, by_id, episodes):
+        """The projection of an item the tree already holds — metadata.json and the images it lists —
+        replaced whole from the export, and nothing else: no record is written, rewritten or touched.
+        An item the tree does not hold is skipped with a note: creating one is the full build's job."""
+        if row.get("type") not in ("movie", "series", "episode") or (row["type"] == "episode" and not row.get("parentId")):
+            self.note(row["id"], "is not an item a tree can hold, so it has no projection to write")
+            return
+        d = self.item_dir(row, by_id)
+        record = os.path.join(d, "item.json")
+        if not os.path.isfile(record):
+            self.note(row["id"], "has no folder on storage, so no projection of it is written: creating an item is "
+                                 "the full build's job")
+            return
+        try:
+            held = json.load(open(record, encoding="utf-8")).get("itemId")
+        except (OSError, ValueError, AttributeError) as e:
+            self.note(row["id"], f"its item.json cannot be read ({e}), so no projection of it is written")
+            return
+        if held != row["id"]:
+            self.note(row["id"], f"its folder's item.json names {held}, so no projection of it is written")
+            return
+        self.w.write_json(os.path.join(d, "metadata.json"),
+                          self.metadata_json(row, d, self.stored_versions(row, d), episodes))
+        self.counts["items"] += 1
+
+    def stored_versions(self, row, d):
+        """The versions of an item on storage, for its projection's primaryVersionId. Which version plays
+        when the viewer does not choose is a decision the export does not carry, so it stays the one
+        the projection on storage names while that version is there; otherwise it is the first the
+        export's packaged assets name, as the full build named its versions — of those on storage."""
+        live = self.live_versions(d)
+        try:
+            current = (json.load(open(os.path.join(d, "metadata.json"), encoding="utf-8")).get("library") or {}) \
+                .get("primaryVersionId")
+        except (OSError, ValueError, AttributeError):
+            current = None
+        if current in live:
+            return [current]
+        packaged = sorted((a for a in row.get("playbackAssets") or [] if a.get("kind") == "packaged"),
+                          key=lambda a: str(a.get("path")))
+        return [v for v in (did(row["id"], "version", self.store_path(a.get("path") or "")) for a in packaged)
+                if v in live]
+
+    def live_versions(self, d):
+        """The version folders of an item on storage that hold their record and that no version-removed
+        event retired: the versions a projection may name."""
+        base, events = os.path.join(d, "versions"), os.path.join(d, "events")
+        found = {n for n in (listdir(base) if os.path.isdir(base) else [])
+                 if os.path.isfile(os.path.join(base, n, "version.json"))}
+        for name in (listdir(events) if os.path.isdir(events) else []):
+            try:
+                ev = json.load(open(os.path.join(events, name, "event.json"), encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(ev, dict) and ev.get("kind") == "version-removed":
+                found.discard(ev.get("versionId"))
+        return found
+
+    def store_path(self, path):
+        """A packaged asset's package folder relative to the store root, the name the full build
+        derives a version's id from. With --packages it is found as the build finds it; without, it is
+        the part of the catalog's path after /packages/, which is what the build finds wherever the
+        store is mounted."""
+        if getattr(self.a, "packages_given", True):
+            return os.path.relpath(os.path.dirname(self.under(self.a.packages, path, "packages")), self.a.packages)
+        p = str(path).replace("\\", "/")
+        i = p.rfind("/packages/")
+        return os.path.dirname(p[i + len("/packages/"):] if i >= 0 else os.path.basename(p)) or "."
+
     # -------------------------------------------------- people
     def people(self, rows, everyone):
         """One person.json per person the rows credit — and, when the export lists its people and
@@ -1441,6 +1530,10 @@ class Build:
                         names[pid].append(text(c["name"]))
         wanted = sorted(set(names) | ({pid for pid in listed if UUID_RE.match(pid)} if everyone else set()))
         for pid in wanted:
+            if self.projecting and not os.path.isfile(os.path.join(self.a.out, "people", pid[:2], pid, "person.json")):
+                self.note(pid, "has no folder on storage, so no projection of them is written: --people-only writes "
+                               "a person who is new")
+                continue
             try:
                 self.person(pid, listed.get(pid) or {}, names.get(pid) or [])
             except Exception as e:  # one unreadable person must not stop the run
@@ -1539,7 +1632,8 @@ class Build:
         where each came from. person.json is replaced whole, so an image the new one does not name is
         removed with it."""
         out, names = self.artwork(pid, artwork, d, PERSON_IMAGE_KINDS, "person artwork", "a person record")
-        self.w.prune(d, names | {"person.json"})
+        if not self.projecting:  # a projection run leaves a portrait it dropped to the sweep
+            self.w.prune(d, names | {"person.json"})
         return out
 
 
@@ -1553,6 +1647,10 @@ def main():
     ap.add_argument("--people-only", action="store_true",
                     help="write people/ and nothing else, so a tree written earlier gains its people "
                          "without a record being rewritten; needs neither --packages nor --media")
+    ap.add_argument("--projections-only", action="store_true",
+                    help="rewrite only the projections of what the tree already holds — every item's metadata.json "
+                         "and its images, every person's person.json and portraits — and no record; an item or a "
+                         "person the tree does not hold is skipped with a note; needs neither --packages nor --media")
     ap.add_argument("--items", default="", help="comma-separated item ids; a selected episode brings its series, "
                                                 "a selected series brings its episodes")
     ap.add_argument("--media-mode", choices=("copy", "move", "none"), default="copy",
@@ -1564,8 +1662,11 @@ def main():
                          "because the catalog does not record what language its texts are in")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    if not args.people_only and not (args.packages and args.media):
-        ap.error("--packages and --media are needed, unless --people-only")
+    if args.people_only and args.projections_only:
+        ap.error("--people-only and --projections-only exclude each other: --projections-only rewrites people too")
+    if not (args.people_only or args.projections_only) and not (args.packages and args.media):
+        ap.error("--packages and --media are needed, unless --people-only or --projections-only")
+    args.packages_given = bool(args.packages)
     args.out = os.path.abspath(args.out)
     args.media = os.path.abspath(args.media or ".")
     args.packages = os.path.abspath(args.packages or ".")
@@ -1589,14 +1690,14 @@ def main():
         rows = [r for r in rows if r["id"] in chosen]
 
     b = Build(args, export)
-    if not b.probe_version and not args.people_only:
+    if not b.probe_version and not (args.people_only or args.projections_only):
         print("note: ffprobe is not on PATH; source records will carry size, mtime and qh1 only")
     order = {"series": 0, "movie": 1, "episode": 2}
     for row in ([] if args.people_only else sorted(rows, key=lambda r: (order.get(r["type"], 3), r["id"]))):
         episodes = [r for r in (export.get("items") or []) if r.get("parentId") == row["id"]] \
             if row["type"] == "series" else []
         try:
-            b.build(row, by_id, episodes)
+            (b.project if args.projections_only else b.build)(row, by_id, episodes)
         except Exception as e:  # one unreadable item must not stop the run
             b.skipped.append((row["id"], f"{type(e).__name__}: {e}"))
     b.people(rows, everyone=not wanted)

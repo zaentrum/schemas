@@ -33,6 +33,11 @@ rule and checks the tool notices:
                  row, --compare catches a change to each one, and a person who died and got a new
                  portrait after being projected is stale until projected again; an entry of only an
                  id and a name is a valid record, and what a record cannot hold stays out of it
+  projections    --projections-only writes, from the export the tree was built from, the projections
+                 the build wrote, byte for byte, and changes no byte of any record nor touches one —
+                 every record hashed before and after; a stale projection is gone after one run, an
+                 image it drops is left for the sweep, what the tree does not hold is not created, and
+                 a person a stale title still credits is swept once the title is projected again
   upgrade        a tree in the layout before 2026-10-02 (b) upgrades, piped into the pod's Python,
                  to one that validates, with every record the same record and no media read; a dry
                  run changes nothing, a stopped run is finished by the next, a second run does
@@ -1499,10 +1504,10 @@ def full_person(**changes):
     return entry
 
 
-def full_export(share, **changes):
+def full_export(share, trailer=False, **changes):
     """fake_export's catalog with its people list in full, the item's own freshness with it, and an
-    export taken after all of it."""
-    export, media, packages, iid, _ = fake_export(share)
+    export taken after all of it; with trailer, the downloaded trailer too."""
+    export, media, packages, iid, _ = fake_export(share, trailer=trailer)
     e = jload(export)
     e["exportedAt"] = "2026-10-01T12:00:00Z"
     e["items"][0].update(tmdbFetchedAt="2026-08-01T08:59:00Z", tmdbChangedAt="2026-07-30")
@@ -1712,6 +1717,220 @@ def test_people_in_full(t):
         t.ok("projected again, it is current: the compare agrees, and no item record was written",
              code == 0 and "the tree and the database agree" in text and stamps(os.path.join(out, "movies")) == items_before,
              text)
+
+
+# ---------------------------------------------------------------- projecting again, and nothing else
+def is_projection(rel):
+    """Whether a path under a library root is a projection or an image one lists — a metadata.json, a
+    file in an item's metadata/, anything under people/ — rather than a record written once or the
+    bytes one describes."""
+    parts = rel.split(os.sep)
+    return parts[0] == "people" or parts[-1] == "metadata.json" or (len(parts) > 1 and parts[-2] == "metadata")
+
+
+def records_of(root):
+    """Every file under root that is not a projection — every record written once, every checksums
+    file, every byte a record describes — by its hash, size and modification time: a file written
+    again, even with the same bytes, has a new time."""
+    out = {}
+    for base, dirs, files in os.walk(root):
+        for f in files:
+            p = os.path.join(base, f)
+            if not is_projection(os.path.relpath(p, root)):
+                st = os.stat(p)
+                out[os.path.relpath(p, root)] = (digest(p), st.st_size, st.st_mtime_ns)
+    return out
+
+
+def projections_of(root):
+    """Every projection and every image one lists under root, by its bytes and modification time."""
+    out = {}
+    for base, dirs, files in os.walk(root):
+        for f in files:
+            p = os.path.join(base, f)
+            if is_projection(os.path.relpath(p, root)):
+                out[os.path.relpath(p, root)] = (open(p, "rb").read(), os.stat(p).st_mtime_ns)
+    return out
+
+
+def export_of(tree):
+    """The export of a database whose rows are the ones a tree rebuilds to, as the catalog prints it:
+    every image with its bytes."""
+    _, doc = rows_of(tree)
+    folders = {jload(p)["itemId"]: os.path.dirname(p) for p in glob.glob(os.path.join(tree, "**", "item.json"), recursive=True)}
+    for row in doc["items"]:
+        for a in row["artwork"]:
+            a["base64"] = base64.b64encode(open(os.path.join(folders[row["id"]], a["file"]), "rb").read()).decode()
+    for p in doc["people"]:
+        for a in p["artwork"]:
+            a["base64"] = base64.b64encode(open(os.path.join(tree, "people", p["id"][:2], p["id"], a["file"]), "rb")
+                                           .read()).decode()
+    return {"exportedAt": "2026-10-02T08:00:00Z", "items": doc["items"], "people": doc["people"], "deletedItems": []}
+
+
+def test_projections_only(t):
+    """--projections-only writes the projections of what a tree holds from the export, and touches no
+    record: a stale projection --compare reports is gone after one run, and every record keeps the
+    bytes and the time it had."""
+    ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid = full_export(os.path.join(tmp, "share"), trailer=True)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        records, built = records_of(out), projections_of(out)
+        t.ok("a tree built in full holds records of every kind beside its projections",
+             code == 0 and all(any(k in r for r in records) for k in ("item.json", "/sources/", "/versions/", "/extras/",
+                                                                       "checksums.sha256", ".complete"))
+             and any(r.endswith("metadata.json") for r in built) and any(r.endswith("person.json") for r in built), text)
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out, "--projections-only")
+        t.ok("--projections-only needs neither the package store nor the originals", code == 0, text)
+        t.eq("and changes no byte of any record, nor touches one: each has the hash, size and time it had",
+             records_of(out), records)
+        t.eq("from the export the tree was built from, it writes the projections the build wrote, byte for byte",
+             {k: v[0] for k, v in projections_of(out).items()}, {k: v[0] for k, v in built.items()})
+        t.ok("and leaves every image already there as it is: an image is written once",
+             all(projections_of(out)[k][1] == v[1] for k, v in built.items() if not k.endswith(".json")))
+        t.ok("each projection goes through a temporary file and a rename, and none is left behind",
+             not glob.glob(os.path.join(out, "**", "*.tmp"), recursive=True))
+
+        # ---- the database changes, the projections go stale, and one run makes them current
+        e = jload(export)
+        e["exportedAt"] = "2026-10-02T08:00:00Z"
+        e["items"][0].update(modifiedAt="2026-10-01T09:00:00Z", title="Example Film (Restored)", tagline="Restored.",
+                             artwork=[{"kind": "poster", "contentType": "image/png", "fetchedAt": "2026-10-01T08:59:00Z",
+                                       "base64": base64.b64encode(png(5, 5)).decode()}])
+        e["people"][0] = full_person(modifiedAt="2026-10-01T09:00:00Z", biography={"en": "Directed examples."},
+                                     artwork=[full_person()["artwork"][1]])
+        changed = os.path.join(tmp, "changed.json")
+        jwrite(changed, e)
+        code, text = run(REBUILD, out, "--compare", changed, "--ignore-fields", ignore)
+        t.ok("after the database changed, --compare reports the item's projection and the person's stale",
+             code == 1 and report_section(text, "stale projection") == [iid]
+             and report_section(text, "people: stale projection") == [DIRECTOR], text)
+        dropped = os.path.join(out, "people", DIRECTOR[:2], DIRECTOR, hashlib.sha256(OLD_PORTRAIT).hexdigest() + ".png")
+        poster = os.path.join(out, "movies", iid[:2], iid, "metadata", hashlib.sha256(png(2, 3)).hexdigest() + ".png")
+        t.ok("(the item's poster before the change is in its metadata/)", os.path.isfile(poster))
+        code, text = run_piped(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only")
+        t.ok("--projections-only runs piped into a pod's Python", code == 0, text)
+        code, ctext = run(REBUILD, out, "--compare", changed, "--ignore-fields", ignore)
+        t.ok("one run later no projection is stale, and the tree agrees with the database",
+             code == 0 and "the tree and the database agree" in ctext and "stale projection" not in ctext, ctext)
+        t.eq("and still no record has changed", records_of(out), records)
+        t.ok("a portrait the new projection no longer lists is left where it was, for the sweep, and so is a poster",
+             os.path.isfile(dropped) and os.path.isfile(poster))
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", out)
+            t.ok("the tree it leaves is a valid record, the image and the portrait it dropped notes",
+                 code == 0 and "person.json no longer lists" in vtext and "metadata.json no longer lists" in vtext, vtext)
+        else:
+            t.skip("the tree it leaves is a valid record", "jsonschema is not importable here")
+        code, stext = run(SWEEP, out, "--export", changed, "--grace", "0")
+        t.ok("and the sweep is what collects them", dropped in swept(stext, out) and poster in swept(stext, out), stext)
+
+        # ---- a projection is replaced whole, a second run writes the same, a dry run writes nothing
+        meta = os.path.join(out, "movies", iid[:2], iid, "metadata.json")
+        jwrite(meta, dict(jload(meta), junk="a key no export holds"))
+        run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only")
+        t.ok("a projection is replaced whole, never merged: what the export does not hold is gone", "junk" not in jload(meta))
+        before = projections_of(out)
+        run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only")
+        t.eq("a second run writes the same projections", {k: v[0] for k, v in projections_of(out).items()},
+             {k: v[0] for k, v in before.items()})
+        e["items"][0].update(title="Example Film (Dry)")
+        jwrite(changed, e)
+        snapshot = stamps(out)
+        code, text = run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only", "--dry-run")
+        t.ok("a dry run writes nothing", code == 0 and stamps(out) == snapshot, text)
+
+        # ---- what the tree does not hold is not created
+        e["items"].append({"id": "22222222-3333-4444-8555-666666666666", "type": "movie", "title": "Not On Storage",
+                           "createdAt": "2026-10-01T09:00:00Z"})
+        e["people"].append({"id": "33333333-4444-4555-8666-777777777777", "name": "Not On Storage Either"})
+        jwrite(changed, e)
+        code, text = run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only")
+        t.ok("an item the tree does not hold is skipped with a note, and no folder is made for it",
+             code == 0 and "22222222-3333-4444-8555-666666666666: has no folder on storage" in text
+             and not os.path.exists(os.path.join(out, "movies", "22")), text)
+        t.ok("and so is a person", "33333333-4444-4555-8666-777777777777: has no folder on storage" in text
+             and not os.path.exists(os.path.join(out, "people", "33")), text)
+
+        # ---- the version that plays by default: the projection's, while it is there; else the build's
+        primary = jload(meta)["library"]["primaryVersionId"]
+        undecided = lambda: jwrite(meta, dict(jload(meta), library={k: v for k, v in jload(meta)["library"].items()
+                                                                     if k != "primaryVersionId"}))
+        for given in ((), ("--packages", packages)):
+            undecided()
+            run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only", *given)
+            t.eq("a projection that names no default version gets the one the build derived from the export's packages"
+                 + (", the store given" if given else ", the store not given"),
+                 jload(meta)["library"].get("primaryVersionId"), primary)
+        e["items"][0]["playbackAssets"][1]["path"] = "/elsewhere/stores/manifest.json"
+        jwrite(changed, e)
+        run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only")
+        t.eq("and one whose packages the export now names otherwise keeps the one the projection named",
+             jload(meta)["library"].get("primaryVersionId"), primary)
+        write_event(os.path.dirname(meta), {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
+                                           "at": "2026-10-01T10:00:00Z", "by": "test", "kind": "version-removed",
+                                           "versionId": primary})
+        records = records_of(out)
+        run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only")
+        t.ok("a version an event removed is not one a projection names", "primaryVersionId" not in jload(meta)["library"])
+        t.eq("and the event, a record like any other, is left as it is", records_of(out), records)
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, out)
+            t.ok("so the projection is valid", code == 0, vtext)
+
+        code, text = run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only", "--people-only")
+        t.ok("--projections-only and --people-only exclude each other", code != 0 and "exclude each other" in text, text)
+
+    # ---- the example tree: every kind of record there is, and none of them touched
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, tree)
+        export = os.path.join(tmp, "catalog.json")
+        jwrite(export, export_of(tree))
+        records = records_of(tree)
+        code, text = run(FROM_CATALOG, "--export", export, "--out", tree, "--projections-only", "--text-language", "en")
+        t.ok("on the example tree — removed versions, a deleted original, a superseded package, extras, a retired "
+             "extra, episodes — it projects every item and person", code == 0 and "'items': 4" in text and "'people': 2" in text,
+             text)
+        t.eq("and changes no byte of any of its records, nor touches one", records_of(tree), records)
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", tree)
+            t.ok("and leaves a valid record", code == 0, vtext)
+
+    # ---- the catalog corrects a mismatched title: a person credited wrongly is deleted, and swept once the
+    # title is projected again
+    with tempfile.TemporaryDirectory() as tmp:
+        wrong = "44444444-5555-4666-8777-888888888888"
+        export, media, packages, iid = full_export(os.path.join(tmp, "share"))
+        e = jload(export)
+        e["items"][0]["people"].append({"personId": wrong, "name": "Wrongly Credited", "role": "actor"})
+        e["people"].append({"id": wrong, "name": "Wrongly Credited", "modifiedAt": "2026-09-01T10:00:00Z"})
+        jwrite(export, e)
+        out = os.path.join(tmp, "library")
+        run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        folder = os.path.join(out, "people", wrong[:2], wrong)
+        e["exportedAt"] = "2026-10-02T08:00:00Z"
+        e["items"][0]["people"] = [c for c in e["items"][0]["people"] if c["personId"] != wrong]
+        e["items"][0]["modifiedAt"] = "2026-10-02T05:00:00Z"
+        e["people"] = [p for p in e["people"] if p["id"] != wrong]
+        e["deletedItems"] = [{"id": wrong, "type": "person", "deletedAt": "2026-10-02T06:00:00Z", "deletedBy": "catalog"}]
+        fixed = os.path.join(tmp, "fixed.json")
+        jwrite(fixed, e)
+        aged(out)
+        code, text = run(SWEEP, out, "--export", fixed, "--grace", "0")
+        t.ok("a deleted person the title's stale projection still credits is kept by the sweep",
+             folder not in swept(text, out) and "still credits them" in text, text)
+        code, text = run(REBUILD, out, "--compare", fixed, "--ignore-fields", ignore)
+        t.ok("and --compare says why: they are an orphan, the title's projection stale",
+             report_section(text, "people: orphan") == [wrong] and report_section(text, "stale projection") == [iid]
+             and "still credits them" in text, text)
+        run(FROM_CATALOG, "--export", fixed, "--out", out, "--projections-only")
+        code, text = run(SWEEP, out, "--export", fixed, "--grace", "0", "--apply")
+        t.ok("once the title is projected again, the sweep takes them", code == 0 and not os.path.exists(folder), text)
+        code, text = run(REBUILD, out, "--compare", fixed, "--ignore-fields", ignore)
+        t.ok("and the tree agrees with the database", code == 0 and "the tree and the database agree" in text, text)
 
 
 # ---------------------------------------------------------------- upgrading a tree in place
@@ -2867,6 +3086,7 @@ def main():
                         ("catalog -> v2", test_from_catalog),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras), ("people", test_people),
                         ("the people list in full", test_people_in_full),
+                        ("projecting again, and nothing else", test_projections_only),
                         ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("the media check", test_media_check)):

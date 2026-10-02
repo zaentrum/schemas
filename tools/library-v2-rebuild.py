@@ -79,7 +79,8 @@ state of its database row it reflects — databaseUpdatedAt, the row's modifiedA
 projected — so against the export's modifiedAt, to the second, an item or a person is one of:
 
   stale projection  the row was modified after the state the projection reflects: the database
-                    changed since. It is fixed by projecting again, never by editing the file.
+                    changed since. It is fixed by projecting again — library-v2-from-catalog.py
+                    --projections-only does, touching no record — never by editing the file.
   projection ahead  the projection reflects a later state than the export holds: an export older
                     than the tree, or a database restored from before it.
 

@@ -514,8 +514,8 @@ class Sweep:
         gone = [t["path"] for t in self.targets if t["class"] == "deleted item"]
         holders = [c for c in refs.credits.get(pid, []) if not any(c == g or c.startswith(g + os.sep) for g in gone)]
         if holders:
-            self.leave(d, f"a deleted person, but {holders[0]}/metadata.json still credits them: projected again, it "
-                          f"will not")
+            self.leave(d, f"a deleted person, but {holders[0]}/metadata.json still credits them: projected again "
+                          f"(library-v2-from-catalog.py --projections-only), it will not")
             return False
         if refs.unreadable:
             self.leave(d, f"a deleted person, but {refs.unreadable[0]} cannot be read, so it may credit them")
