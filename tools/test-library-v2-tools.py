@@ -320,6 +320,69 @@ def test_round_trip(t):
     credited = {c["personId"] for r in rows.values() for c in r["people"]}
     t.eq("and every person a credit names is one of them", credited, set(people))
 
+    # ---- bonus material: rows of its own, as extra.json and the projection state them
+    stated = {}
+    for xj in sorted(glob.glob(os.path.join(EXAMPLES, "*", "*", "*", "extras", "*", "extra.json"))):
+        xp, x = os.path.dirname(xj), jload(xj)
+        item_dir = os.path.dirname(os.path.dirname(xp))
+        decision = (jload(os.path.join(item_dir, "metadata.json"))["library"].get("extras") or {}).get(x["extraId"]) or {}
+        packaged = os.path.isfile(os.path.join(xp, ".complete"))
+        stated[x["extraId"]] = {
+            "itemId": jload(os.path.join(item_dir, "item.json"))["itemId"], "kind": x["kind"], "title": x["title"],
+            "seasonNumber": x.get("seasonNumber"), "order": decision.get("order"),
+            "hidden": bool(decision.get("hidden")), "label": decision.get("label"),
+            "assets": sorted(["primary"] * len(x["originalFiles"]) + ["packaged"] * packaged),
+            "subtitles": len(jload(os.path.join(xp, "package.json"))["subtitles"]) if packaged else 0}
+    got = {r["id"]: {"itemId": r["itemId"], "kind": r["kind"], "title": r["title"], "seasonNumber": r["seasonNumber"],
+                     "order": r["order"], "hidden": r["hidden"], "label": r["label"],
+                     "assets": sorted(a["kind"] for a in r["playbackAssets"]), "subtitles": len(r["subtitleAssets"])}
+           for r in doc["extras"]}
+    t.eq("the rebuild finds exactly the extras the example set holds, as their records and the projection state them",
+         got, stated)
+    t.ok("and each one's original is played from its own folder",
+         all(a["path"].startswith(os.path.join(os.path.abspath(EXAMPLES), "")) and "/extras/" + r["id"] + "/" in a["path"]
+             for r in doc["extras"] for a in r["playbackAssets"]), doc["extras"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, tree)
+        movie_dir = glob.glob(os.path.join(tree, "movies", "*", "*"))[0]
+        featurette = glob.glob(os.path.join(movie_dir, "extras", "*"))[0]
+        early, late = "00000000-0000-4000-8000-0000000000e1", "00000000-0000-4000-8000-0000000000e2"
+        for xid, at in ((late, "2026-09-19T09:00:00Z"), (early, "2026-09-19T07:00:00Z")):
+            shutil.copytree(featurette, os.path.join(movie_dir, "extras", xid))
+            jwrite(os.path.join(movie_dir, "extras", xid, "extra.json"),
+                   dict(jload(os.path.join(featurette, "extra.json")), extraId=xid, createdAt=at))
+        meta = os.path.join(movie_dir, "metadata.json")
+        projected = jload(meta)
+        projected["library"]["extras"][late] = {"hidden": True}
+        jwrite(meta, projected)
+        extras = rows_of(tree)[1]["extras"]
+        t.eq("an item's extras are listed as a viewer sees them: by the order a person gave, then as they were taken in",
+             [r["id"] for r in extras if r["itemId"] == os.path.basename(movie_dir)],
+             [os.path.basename(featurette), early, late])
+        t.ok("and one a person hid is still a row, marked hidden",
+             next(r for r in extras if r["id"] == late)["hidden"] is True)
+
+        bts = glob.glob(os.path.join(tree, "series", "*", "*", "extras", "*"))[0]
+        os.unlink(os.path.join(bts, "checksums.sha256"))
+        os.unlink(os.path.join(featurette, ".complete"))
+        _, built = rows_of(tree)
+        ids = {r["id"] for r in built["extras"]}
+        t.ok("an extra that never finished is left out — one with no checksums, a packaged one without its .complete — "
+             "and the rebuild says so",
+             not ids & {os.path.basename(bts), os.path.basename(featurette)} and ids == {early, late}
+             and sum("never finished, so it is left out" in n for n in built["notes"]) == 2, built["notes"])
+
+        episode = glob.glob(os.path.join(tree, "series", "*", "*", "episodes", "*"))[0]
+        shutil.copytree(bts, os.path.join(episode, "extras", os.path.basename(bts)))
+        write_sums(os.path.join(episode, "extras", os.path.basename(bts)), ["extra.json", jload(
+            os.path.join(bts, "extra.json"))["originalFiles"][0]])
+        _, built = rows_of(tree)
+        t.ok("an episode's extras/ folder is ignored, and the rebuild says so",
+             os.path.basename(bts) not in {r["id"] for r in built["extras"]}
+             and any("an episode has no extras" in n for n in built["notes"]), built["notes"])
+
 
 def test_proves_itself(t):
     """Every folder written once carries the checksums of what it holds, in the format the
@@ -540,6 +603,8 @@ def test_compare(t):
 
     code, text = compare(lambda e: None)
     t.ok("a tree and the export it rebuilds to agree", code == 0 and "the tree and the database agree" in text, text)
+    t.ok("and its extras are counted, not compared: the catalog has no table for them yet",
+         "extras: 2 on storage, not compared" in text, text)
 
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
     t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",
@@ -595,6 +660,13 @@ def test_compare(t):
         t.ok("an episode's newer record keeps its deleted series, and every episode in it, from being an orphan",
              code == 1 and sorted(section(text, "lost —")) == sorted([series["id"], *episodes])
              and not section(text, "orphan"), text)
+
+        extra = glob.glob(os.path.join(tree, "movies", movie["id"][:2], movie["id"], "extras", "*", "extra.json"))[0]
+        jwrite(extra, dict(jload(extra), createdAt="2026-10-01T08:00:00Z"))
+        code, text = compare(both(drop(movie["id"]), deleted(movie["id"])), tree=tree)
+        t.ok("an extra taken in after the deletion keeps its item from being an orphan",
+             code == 1 and section(text, "lost —") == [movie["id"]] and "holds a record of 2026-10-01T08:00:00Z" in text, text)
+        jwrite(extra, dict(jload(extra), createdAt="2026-09-19T08:00:00Z"))
 
         meta = os.path.join(tree, "movies", movie["id"][:2], movie["id"], "metadata.json")
         doc = jload(meta)

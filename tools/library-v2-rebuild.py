@@ -12,6 +12,14 @@ asset per package and one per original that is still there, the subtitles the pa
 the people under people/ with their biographies, dates, reference ids and portraits. It needs no
 network and no other service, it can run against a copy, and running it twice gives the same answer.
 
+The bonus material beside a movie or series becomes rows of its own, under extras in the rows
+JSON: kind, title, language, runtime and season as extra.json recorded them, the order, hidden
+flag and label the item's metadata.json decided, and the original and package to play, in the shape
+an item's playback rows have, listed in the order a viewer sees them. Only a finished extra counts —
+a packaged one by its .complete, one that keeps only its original by its checksums file. The
+catalog has no table for extras yet, so they are in the rows JSON only, and --compare counts them
+without comparing them.
+
 Applying events, earliest first:
   original-deleted    the originals it names are gone, so they are not playback assets any more,
                       and the version's package is the only copy of it — canonical whatever its
@@ -36,9 +44,9 @@ lost the item or deleted it:
   missing record  in the database, not on storage: the tree cannot restore it
 
 "Nothing newer" is the newest moment any record in the folder states — item.json's createdAt and
-migratedAt, metadata.json's asOf, every source's takenAt, version's and package's createdAt and
-event's at, the episodes' too for a series — and a record that states none counts with its file's
-modification time. An id that is both in the log and in the database is present: the item that
+migratedAt, metadata.json's asOf, every source's takenAt, version's and package's createdAt,
+event's at and extra's createdAt, the episodes' too for a series — and a record that states none
+counts with its file's modification time. An id that is both in the log and in the database is present: the item that
 exists wins. deletedItems null (a catalog that keeps no log yet) or absent means there is no log, and
 then nothing can be called deleted: every item only on storage is lost.
 
@@ -124,7 +132,10 @@ RECORD_MOMENTS = (
     ("versions/*/package.json", ("createdAt",)),
     ("events/*.json", ("at",)),
     ("events/*/event.json", ("at",)),
+    ("extras/*/extra.json", ("createdAt",)),
+    ("extras/*/package.json", ("createdAt",)),
 )
+EXTRA_DIRS = ("hls", "subs", "trickplay")
 
 
 def utc(t):
@@ -162,6 +173,7 @@ class Rebuild:
         self.text_language = text_language
         self.items = []
         self.people = []
+        self.extras = []
         self.storage = []
         self.notes = []
         self.newest = {}
@@ -195,6 +207,9 @@ class Rebuild:
                     self.person(os.path.join(sd, pid))
         self.items.sort(key=lambda r: r["id"])
         self.people.sort(key=lambda r: r["id"])
+        # an item's extras in the order a viewer sees them: by the order a person gave, then the rest
+        # in the order they were taken in
+        self.extras.sort(key=lambda r: (r["itemId"], r["order"] is None, r["order"] or 0, r["createdAt"] or "", r["id"]))
         self.storage.sort(key=lambda r: r["itemId"])
 
     def person(self, d):
@@ -230,6 +245,10 @@ class Rebuild:
         sources = self.sources(d)
         versions, storage = self.versions(d, item, sources, events)
         self.items.append(self.row(d, item, meta, versions, sources))
+        if item.get("type") in ("movie", "series"):
+            self.extras += self.extra_rows(d, item, meta)
+        elif os.path.isdir(os.path.join(d, "extras")):
+            self.note(f"{item['itemId']}: an episode has no extras, so its extras/ folder is ignored")
         self.newest[item["itemId"]] = newest_record(d)
         self.storage.append({"itemId": item["itemId"], "newestRecordAt": self.newest[item["itemId"]],
                              "versions": storage})
@@ -438,6 +457,55 @@ class Rebuild:
                  "language": s.get("language"), "label": s.get("title") or "",
                  "isDefault": bool(s.get("default"))} for s in v["package"].get("subtitles") or []]
 
+    # -------------------------------------------------- bonus material
+    def extra_rows(self, d, item, meta):
+        """One row per finished extra beside a movie or series: what extra.json recorded, what the
+        projection decided about showing it, and what there is to play — the original kept beside it
+        and the package, in the shape an item's playback rows have. An extra that never finished is
+        left out: a packaged one is finished by its .complete, one that keeps only its original by its
+        checksums file."""
+        iid = item["itemId"]
+        decided = ((meta or {}).get("library") or {}).get("extras") or {}
+        base = os.path.join(d, "extras")
+        rows = []
+        for xid in (listdir(base) if os.path.isdir(base) else []):
+            xp = os.path.join(base, xid)
+            if not os.path.isdir(xp) or not UUID_RE.match(xid):
+                continue
+            try:
+                x = load(os.path.join(xp, "extra.json"))
+            except (OSError, ValueError) as e:
+                self.note(f"{iid}: extra {xid} has no extra.json to rebuild from ({e})")
+                continue
+            marker = os.path.isfile(os.path.join(xp, ".complete"))
+            has_package = os.path.isfile(os.path.join(xp, "package.json"))
+            packaged = marker and has_package
+            original_only = not marker and not has_package and os.path.isfile(os.path.join(xp, "checksums.sha256")) \
+                and not any(os.path.exists(os.path.join(xp, n)) for n in EXTRA_DIRS)
+            if not (packaged or original_only):
+                self.note(f"{iid}: extra {xid} never finished, so it is left out")
+                continue
+            package = None
+            if marker:
+                try:
+                    package = load(os.path.join(xp, "package.json"))
+                except (OSError, ValueError) as e:
+                    self.note(f"{iid}: the package of extra {xid} could not be read ({e})")
+            kept = [n for n in x.get("originalFiles") or [] if isinstance(n, str)]
+            facts = {n: {"file": {"name": n}, "streams": x.get("streams") or [], "container": x.get("container") or {}}
+                     for n in kept}
+            v = {"id": xid, "dir": xp, "kept": kept, "package": package, "superseded": False}
+            decision = decided.get(xid) or {}
+            rows.append({
+                "id": xid, "itemId": iid, "kind": x.get("kind"), "title": x.get("title"),
+                "localizedTitles": dict(x.get("localizedTitles") or {}), "language": x.get("language"),
+                "runtimeMs": x.get("runtimeMs"), "seasonNumber": x.get("seasonNumber"),
+                "createdAt": x.get("createdAt"), "createdBy": x.get("createdBy"),
+                "order": decision.get("order"), "hidden": bool(decision.get("hidden")), "label": decision.get("label"),
+                "playbackAssets": self.assets(item, v, facts, False),
+                "subtitleAssets": self.subtitles(item, v) if package else []})
+        return rows
+
 
 # ---------------------------------------------------------------- comparing with a database
 LIST_KEYS = {
@@ -638,9 +706,10 @@ def people_existence(tree_people, db_people, tree, item_classes):
     return out, credited
 
 
-def compare(tree_rows, tree_people, export, ignore, subset=False, text_language="und", newest=None):
+def compare(tree_rows, tree_people, export, ignore, subset=False, text_language="und", newest=None, extras=()):
     """Both directions, field by field. Returns (lines, number of differences, number of orphans).
-    newest is the newest moment each item folder's records state, by item id."""
+    newest is the newest moment each item folder's records state, by item id. extras are the tree's
+    bonus material, which the catalog has no table for yet: they are counted, never compared."""
     tree = {r["id"]: normalise(r) for r in tree_rows}
     db = {r["id"]: normalise(r) for r in export.get("items") or []}
     log = deletion_log(export)
@@ -649,6 +718,8 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
         lines.append("  the export carries no deletion log (deletedItems is "
                      + ("null" if "deletedItems" in export else "absent")
                      + "), so nothing on storage can be called deleted")
+    if extras:
+        lines.append(f"  extras: {len(extras)} on storage, not compared: the catalog has no table for them yet")
     classes = existence(tree, db, log, newest or {})
     stale = sorted(iid for iid in set(log or {}) & set(db))
     n = report_existence(lines, classes, CLASSES, lambda iid: tree.get(iid) or db.get(iid), "item(s)",
@@ -742,7 +813,8 @@ def main():
     r.run()
     out = {"generatedAt": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
            .isoformat().replace("+00:00", "Z"),
-           "root": r.root, "items": r.items, "people": r.people, "storage": r.storage, "notes": r.notes}
+           "root": r.root, "items": r.items, "people": r.people, "extras": r.extras, "storage": r.storage,
+           "notes": r.notes}
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=2, ensure_ascii=False)
@@ -750,7 +822,7 @@ def main():
     kinds = {}
     for row in r.items:
         kinds[row["type"]] = kinds.get(row["type"], 0) + 1
-    print(f"rebuilt: {kinds}, people: {len(r.people)}, "
+    print(f"rebuilt: {kinds}, people: {len(r.people)}, extras: {len(r.extras)}, "
           f"playback assets: {sum(len(x['playbackAssets']) for x in r.items)}, "
           f"subtitles: {sum(len(x['subtitleAssets']) for x in r.items)}, "
           f"images: {sum(len(x['artwork']) for x in r.items) + sum(len(p['artwork']) for p in r.people)}")
@@ -761,7 +833,8 @@ def main():
     ignore = {x.strip() for x in args.ignore_fields.split(",") if x.strip()}
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
-    lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest)
+    lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest,
+                                extras=r.extras)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     for line in lines:
         print(line)
