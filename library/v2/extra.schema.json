@@ -73,6 +73,20 @@
       }
     },
 
+    "origin": {
+      "type": "object",
+      "description": "Where the file came from, when that is something a record can name. 'link': a video published online that was downloaded — the video metadata.json's videos[] lists under the same site and, as its key, the same externalId — so a rebuild can give that link its local copy back. Written once like the rest: a link the database later drops is still named here.",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["link"] },
+        "site": { "type": ["string", "null"], "description": "The hosting site, as videos[] names it." },
+        "externalId": { "type": ["string", "null"], "description": "The site's id for the video: what videos[] lists as its key." },
+        "url": { "type": ["string", "null"] },
+        "fetchedAt": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }], "description": "When the file was downloaded." }
+      }
+    },
+
     "container": {
       "$ref": "source.schema.json#/properties/container",
       "description": "As a source record carries it for its original. This and the four below are present together, exactly when the original was probed; an extra in several parts is one encode split into files, and they describe its first part, the essence all of them."

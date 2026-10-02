@@ -8,8 +8,9 @@ every record the format has and the shapes a reader most needs to see:
            version.json still names the file, the folder no longer holds it, and an
            events/<timestamp>-original-deleted.json record says what was accepted as lost. The
            second keeps its original next to its package, and carries a quality ladder. Beside
-           them, a featurette in extras/, kept as its original and a package of its own, which the
-           projection puts first and labels.
+           them, in extras/, a featurette kept as its original and a package of its own, which the
+           projection puts first and labels, and the trailer videos[] links to, downloaded, whose
+           origin names that link.
   series/  one series with a season and two episodes. The first episode keeps its original and
            carries forced, full and SDH subtitles and a commentary track; the second was packaged
            from an original that was never kept here, so its package is canonical. Beside the
@@ -42,6 +43,8 @@ REMOVED = "2026-09-20T09:30:00Z"      # a version was removed from the item
 PROJECTED = "2026-09-20T12:00:00Z"    # the database was projected into metadata.json
 EXTRA_TAKEN = "2026-09-19T08:00:00Z"  # bonus material was taken in beside its movie or series
 EXTRA_PACKAGED = "2026-09-19T08:40:00Z"  # and the featurette's package completed
+TRAILER_FETCHED = "2026-09-19T07:30:00Z"  # the trailer link was downloaded
+TRAILER_PACKAGED = "2026-09-19T10:00:00Z"  # and the trailer taken in with a package of its own
 
 # A fixed 1x1 JPEG and a fixed 1x1 transparent PNG, as bytes rather than generated, so the fixture
 # hashes do not depend on the library build that happens to run the generator.
@@ -315,7 +318,7 @@ def event(item_dir, at, kind, by="librarian example", **fields):
 
 
 def extra(item_dir, xid, kind, title, original, runtime_ms, streams, src_essence, fingerprint,
-          localized=None, season=None, package=None):
+          localized=None, season=None, package=None, origin=None, created=EXTRA_TAKEN):
     """extras/<xid>/: extra.json and its original beside it, as the probe found it, and with package
     a package of its own. An extra is written whole, in one step: the checksums over extra.json and
     every file beside it come last — the completion signal of an extra that keeps only its original —
@@ -324,17 +327,18 @@ def extra(item_dir, xid, kind, title, original, runtime_ms, streams, src_essence
     xdir = os.path.join(item_dir, "extras", xid)
     data = write(os.path.join(xdir, original), b"placeholder for the original file of " + original.encode() + b"\n")
     record = {
-        "schema": "zaentrum.library.extra/2", "extraId": xid, "createdAt": EXTRA_TAKEN, "createdBy": "ingest example",
+        "schema": "zaentrum.library.extra/2", "extraId": xid, "createdAt": created, "createdBy": "ingest example",
         "kind": kind, "title": title, "localizedTitles": dict(localized or {}), "language": "en",
         "runtimeMs": runtime_ms, **({"seasonNumber": season} if season is not None else {}),
         "originalFiles": [original],
         # what a source record says of its file, said here of each original: there is no source record
         "originals": [{"name": original, "sizeBytes": len(data),
-                       "fixity": {"qh1": qh1(data), "sha256": sha(data), "sha256At": EXTRA_TAKEN}}],
+                       "fixity": {"qh1": qh1(data), "sha256": sha(data), "sha256At": created}}],
+        **({"origin": origin} if origin else {}),
         "container": {"format": "matroska,webm", "durationMs": runtime_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
         "streams": streams, "fidelity": {"class": "original", "fingerprint": fingerprint, "evidence": []},
-        "essence": src_essence, "probe": {"tool": "ffprobe", "version": None, "at": EXTRA_TAKEN, "note": None},
+        "essence": src_essence, "probe": {"tool": "ffprobe", "version": None, "at": created, "note": None},
     }
     write(os.path.join(xdir, "extra.json"), record)
     if package is None:
@@ -453,6 +457,23 @@ def movie():
           [video(0, "h264", 1920, 800), audio(1, "aac", 2, "stereo"), subtitle(2, None, events=120)],
           essence(maxVideoHeight=800, subtitleLanguages=["en"], subtitleTracks=1), "h264/high/8bit/sdr/1920x800",
           localized={"de": "Drehort Amsterdam", "nl": "Op locatie in Amsterdam"}, package=featurette_package)
+
+    # --- the trailer metadata.json lists as a link was downloaded too: a local file of its own is an
+    # extra of kind trailer, whose origin names the link, so a rebuild gives the link its copy back.
+    def trailer_package(xdir, record):
+        ren = renditions(1920, 800, False, 2)
+        for r in ren["video"] + ren["audio"]:
+            keep(os.path.join(xdir, r["dir"]))
+        trickplay_files(xdir, record["runtimeMs"])
+        package_record(xdir, uid(mid, "package", "trailer"), "derived", record["runtimeMs"], ren,
+                       essence(maxVideoHeight=800), [], 30000000, created=TRAILER_PACKAGED, record="extra.json",
+                       originals=record["originalFiles"], folders=EXTRA_DIRS)
+
+    extra(mdir, uid(mid, "extra", "trailer"), "trailer", "Trailer", "Tears of Steel (2012) - Trailer.mkv", 60000,
+          [video(0, "h264", 1920, 800), audio(1, "aac", 2, "stereo")], essence(maxVideoHeight=800),
+          "h264/high/8bit/sdr/1920x800", package=trailer_package, created=TRAILER_PACKAGED,
+          origin={"kind": "link", "site": "example.org", "externalId": "tears-of-steel-trailer", "url": None,
+                  "fetchedAt": TRAILER_FETCHED})
 
     write(os.path.join(mdir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": mid, "type": "movie",

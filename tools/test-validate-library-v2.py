@@ -151,14 +151,27 @@ def move_person(root, p, new_id, shard=None):
     shutil.move(p, target)
 
 
+def extra_of(root, kind):
+    """The folder of the one example extra of this kind."""
+    hits = [os.path.dirname(p) for p in glob.glob(os.path.join(root, "*", "*", "*", "extras", "*", "extra.json"))
+            if json.load(open(p))["kind"] == kind]
+    assert len(hits) == 1, (kind, hits)
+    return hits[0]
+
+
 def featurette(root):
     """The movie's featurette: an extra kept as its original and as a package of its own."""
-    return only("movies/*/*/extras/*", root)
+    return extra_of(root, "featurette")
+
+
+def trailer(root):
+    """The movie's trailer, downloaded from the link its videos[] lists: kept with a package too."""
+    return extra_of(root, "trailer")
 
 
 def bts(root):
     """The series' behind-the-scenes extra of season 1: kept only as its original."""
-    return only("series/*/*/extras/*", root)
+    return extra_of(root, "behind-the-scenes")
 
 
 def xjson(xp):
@@ -616,6 +629,13 @@ CASES = [
     ("a probe without what it found", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("essence")), "'essence' is a dependency of 'probe'", []),
     ("an extra's title in something that is not a language", False, lambda r: edit(xjson(featurette(r)), lambda d: d["localizedTitles"].update(Dutch="x")), "$.localizedTitles", []),
     ("an original named like a record of its folder", False, lambda r: edit(xjson(bts(r)), lambda d: d.update(originalFiles=["checksums.sha256"])), "should not be valid under", []),
+
+    # ---- where an extra's file came from: a link it was downloaded from
+    ("an extra's origin of a kind the format does not know", False, lambda r: edit(xjson(trailer(r)), lambda d: d["origin"].update(kind="scan")), "'scan' is not one of", []),
+    ("an origin that does not say what kind it is", False, lambda r: edit(xjson(trailer(r)), lambda d: d["origin"].pop("kind")), "'kind' is a required property", []),
+    ("an origin the format does not model", False, lambda r: edit(xjson(trailer(r)), lambda d: d["origin"].update(seenBy="someone")), "'seenBy' was unexpected", []),
+    ("an origin fetched at something that is not a moment", False, lambda r: edit(xjson(trailer(r)), lambda d: d["origin"].update(fetchedAt="yesterday")), "$.origin.fetchedAt", []),
+    ("an origin that knows only its kind", True, lambda r: edit(xjson(trailer(r)), lambda d: d.update(origin={"kind": "link"})), "OK", ["--check-checksums"]),
 
     # ---- an extra describes each original as a source record describes its file: size and fixity
     ("an extra without its originals' fixity", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("originals")), "'originals' is a required property", []),

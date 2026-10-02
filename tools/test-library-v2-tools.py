@@ -194,6 +194,12 @@ def have_jsonschema():
     return importlib.util.find_spec("jsonschema") is not None
 
 
+def extra_of(root, kind):
+    """The folder of the example extra of this kind."""
+    return next(os.path.dirname(p) for p in sorted(glob.glob(os.path.join(root, "*", "*", "*", "extras", "*", "extra.json")))
+                if jload(p).get("kind") == kind)
+
+
 # ---------------------------------------------------------------- the pieces
 def test_pieces(t):
     cat = load_tool(FROM_CATALOG)
@@ -352,7 +358,7 @@ def test_round_trip(t):
         tree = os.path.join(tmp, "library")
         shutil.copytree(EXAMPLES, tree)
         movie_dir = glob.glob(os.path.join(tree, "movies", "*", "*"))[0]
-        featurette = glob.glob(os.path.join(movie_dir, "extras", "*"))[0]
+        featurette, trailer = extra_of(tree, "featurette"), extra_of(tree, "trailer")
         early, late = "00000000-0000-4000-8000-0000000000e1", "00000000-0000-4000-8000-0000000000e2"
         for xid, at in ((late, "2026-09-19T09:00:00Z"), (early, "2026-09-19T07:00:00Z")):
             shutil.copytree(featurette, os.path.join(movie_dir, "extras", xid))
@@ -365,7 +371,7 @@ def test_round_trip(t):
         extras = rows_of(tree)[1]["extras"]
         t.eq("an item's extras are listed as a viewer sees them: by the order a person gave, then as they were taken in",
              [r["id"] for r in extras if r["itemId"] == os.path.basename(movie_dir)],
-             [os.path.basename(featurette), early, late])
+             [os.path.basename(featurette), early, late, os.path.basename(trailer)])
         t.ok("and one a person hid is still a row, marked hidden",
              next(r for r in extras if r["id"] == late)["hidden"] is True)
 
@@ -376,7 +382,8 @@ def test_round_trip(t):
         ids = {r["id"] for r in built["extras"]}
         t.ok("an extra that never finished is left out — one with no checksums, a packaged one without its .complete — "
              "and the rebuild says so",
-             not ids & {os.path.basename(bts), os.path.basename(featurette)} and ids == {early, late}
+             not ids & {os.path.basename(bts), os.path.basename(featurette)}
+             and ids == {early, late, os.path.basename(trailer)}
              and sum("never finished, so it is left out" in n for n in built["notes"]) == 2, built["notes"])
 
         episode = glob.glob(os.path.join(tree, "series", "*", "*", "episodes", "*"))[0]
@@ -609,7 +616,7 @@ def test_compare(t):
     code, text = compare(lambda e: None)
     t.ok("a tree and the export it rebuilds to agree", code == 0 and "the tree and the database agree" in text, text)
     t.ok("and its extras are counted, not compared: the catalog has no table for them yet",
-         "extras: 2 on storage, not compared" in text, text)
+         "extras: 3 on storage, not compared" in text, text)
 
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
     t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",
@@ -666,7 +673,7 @@ def test_compare(t):
              code == 1 and sorted(section(text, "lost —")) == sorted([series["id"], *episodes])
              and not section(text, "orphan"), text)
 
-        extra = glob.glob(os.path.join(tree, "movies", movie["id"][:2], movie["id"], "extras", "*", "extra.json"))[0]
+        extra = os.path.join(extra_of(tree, "featurette"), "extra.json")
         jwrite(extra, dict(jload(extra), createdAt="2026-10-01T08:00:00Z"))
         code, text = compare(both(drop(movie["id"]), deleted(movie["id"])), tree=tree)
         t.ok("an extra taken in after the deletion keeps its item from being an orphan",
@@ -1755,7 +1762,7 @@ def extra_garbage(tmp, age=True):
     root = os.path.join(tmp, "library")
     shutil.copytree(EXAMPLES, root)
     movie = glob.glob(os.path.join(root, "movies", "*", "*"))[0]
-    featurette = glob.glob(os.path.join(movie, "extras", "*"))[0]
+    featurette = extra_of(root, "featurette")
     record = jload(os.path.join(featurette, "extra.json"))
     original = record["originalFiles"][0]
 
@@ -2018,12 +2025,12 @@ def test_media_check(t):
 
     # ---- bonus material: finished or saying it is not, its files there and every one of them covered
     def featurette(root):
-        """The movie's extra, kept as its original and as a package of its own."""
-        return glob.glob(os.path.join(movie(root), "extras", "*"))[0]
+        """The movie's featurette, kept as its original and as a package of its own."""
+        return extra_of(root, "featurette")
 
     def bts(root):
         """The series' extra, kept only as its original."""
-        return glob.glob(os.path.join(root, "series", "*", "*", "extras", "*"))[0]
+        return extra_of(root, "behind-the-scenes")
 
     def x_original(xp):
         return os.path.join(xp, jload(os.path.join(xp, "extra.json"))["originalFiles"][0])
