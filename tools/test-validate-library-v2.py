@@ -549,6 +549,25 @@ CASES = [
     ("a source that never reported a change", True, lambda r: edit(meta(movie(r)), lambda d: d["sources"]["tmdb"].pop("changedAt")), "OK", []),
     ("a projection never taken from a reference source", True, lambda r: edit(meta(movie(r)), lambda d: d.pop("sources")), "OK", []),
 
+    # ---- the image a reader shows for its kind, and where an image's bytes came from
+    ("two primary posters", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][1].update(kind="poster", primary=True)), "2 poster images are primary", []),
+    ("a primary poster and a primary backdrop", True, lambda r: edit(meta(movie(r)), lambda d: d["images"][1].update(primary=True)), "OK", []),
+    ("two primary posters for one season", False, lambda r: edit(meta(series(r)), lambda d: d["images"][0].update(season=1)), "2 poster images for season 1 are primary", []),
+    ("two primary posters for the series itself", False, lambda r: edit(meta(series(r)), lambda d: d["images"][1].update(season=None)), "2 poster images for the series itself are primary", []),
+    ("a primary poster for the series and another for its season", True, lambda r: edit(meta(series(r)), lambda d: [i.update(primary=True) for i in d["images"]]), "OK", []),
+    ("two primary portraits", False, lambda r: edit(pjson(lead(r)), lambda d: [i.update(primary=True) for i in d["images"]]), "2 profile images are primary", []),
+    ("a primary that is not a yes or a no", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(primary="yes")), "is not of type 'boolean'", []),
+    ("a projection that marks no image primary", True, lambda r: edit(pjson(lead(r)), lambda d: [i.pop("primary", None) for i in d["images"]]), "OK", []),
+    ("an image origin that does not name its source", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0]["origin"].pop("source")), "'source' is a required property", []),
+    ("an image origin of a source the format does not know", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0]["origin"].update(source="scan")), "'scan' is not one of", []),
+    ("an image origin the format does not model", False, lambda r: edit(pjson(lead(r)), lambda d: d["images"][1]["origin"].update(by="someone")), "'by' was unexpected", []),
+    ("an image origin fetched at something that is not a moment", False, lambda r: edit(pjson(lead(r)), lambda d: d["images"][1]["origin"].update(fetchedAt="yesterday")), "origin.fetchedAt", []),
+    ("an image origin with an empty ref", False, lambda r: edit(pjson(lead(r)), lambda d: d["images"][1]["origin"].update(ref="")), "should be non-empty", []),
+    ("an image origin whose ref holds a line break", False, lambda r: edit(pjson(lead(r)), lambda d: d["images"][1]["origin"].update(ref="/a\n.jpg")), "ref contains a line break", []),
+    ("an image origin that knows only its source", True, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(origin={"source": "manual"})), "OK", []),
+    ("an image origin in the form before 2026-10-02 (f), the source alone", True, lambda r: edit(meta(movie(r)), lambda d: [i.update(origin="legacy-catalog") for i in d["images"]]), "OK", ["--check-media"]),
+    ("an image origin in that form naming a source it never had", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(origin="file")), "'file' is not one of", []),
+
     # ---- sources
     ("a probe whose hash is wrong", False, lambda r: open(probe(r), "a").write(" "), "probe sha256 does not match", []),
     ("a probe missing", False, lambda r: os.remove(probe(r)), "probe file missing", []),

@@ -69,7 +69,10 @@
       "language": null,
       "sourceUrl": null,
       "fetchedAt": "2026-09-20T12:00:00Z",
-      "origin": "manual"
+      "origin": {
+        "source": "manual",
+        "fetchedAt": "2026-09-20T12:00:00Z"
+      }
     }
   ],
   "curation": {

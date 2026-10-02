@@ -69,6 +69,7 @@
   "images": [
     {
       "kind": "poster",
+      "primary": true,
       "file": "47bfa9f38417346388389c24309057b6252f6326e742ba5d9eca8ff59f0fefe7.jpg",
       "sha256": "sha256:47bfa9f38417346388389c24309057b6252f6326e742ba5d9eca8ff59f0fefe7",
       "contentType": "image/jpeg",
@@ -78,11 +79,15 @@
       "language": null,
       "sourceUrl": null,
       "fetchedAt": "2026-09-20T12:00:00Z",
-      "origin": "manual",
+      "origin": {
+        "source": "manual",
+        "fetchedAt": "2026-09-20T12:00:00Z"
+      },
       "season": null
     },
     {
       "kind": "poster",
+      "primary": true,
       "file": "5467670ed712a099d14cde1cdd7b82d167b27d42279384f33f8e1be089fe79c1.jpg",
       "sha256": "sha256:5467670ed712a099d14cde1cdd7b82d167b27d42279384f33f8e1be089fe79c1",
       "contentType": "image/jpeg",
@@ -92,7 +97,10 @@
       "language": null,
       "sourceUrl": null,
       "fetchedAt": "2026-09-20T12:00:00Z",
-      "origin": "manual",
+      "origin": {
+        "source": "manual",
+        "fetchedAt": "2026-09-20T12:00:00Z"
+      },
       "season": 1
     }
   ],

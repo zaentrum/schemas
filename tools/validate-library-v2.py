@@ -22,9 +22,9 @@ with the bytes beside them, never about a document being up to date.
                hash of checksums.sha256, and checksums.sha256 lists version.json beside the package
                files and never .complete, package.json or itself. Projections are not covered: they
                are replaced whole, and an image's name is its own hash
-  people       a person folder holds person.json and the images it lists; a death is not before the
-               birth; a credit whose person has no folder is a note, not an error, because the
-               person may not have been projected yet
+  people       a person folder holds person.json and the images it lists, at most one portrait of them
+               primary; a death is not before the birth; a credit whose person has no folder is a
+               note, not an error, because the person may not have been projected yet
   versions     every version is a folder under versions/ whose name is its versionId; its sourceIds
                name source records that exist and its originalFiles are those sources' file names;
                package.json exists exactly when .complete does; a package is canonical exactly when
@@ -34,6 +34,7 @@ with the bytes beside them, never about a document being up to date.
   metadata     same item and type as item.json; every image exists with the recorded hash, size,
                content type and dimensions, is named by its own content hash, is listed once, and
                nothing unlisted sits in metadata/ (the same for a person's images beside person.json);
+               at most one image of a kind is primary, in a series one per kind and season;
                library.primaryVersionId and library.versionLabels name versions that are really there
   series       an episode names its enclosing series, agrees with it on the reference id, numbers
                itself consistently, does not collide with another episode, and sits in a season the
@@ -109,7 +110,7 @@ SWEEP = "library-v2-sweep.py collects it once it is older than the grace period"
 ID_KEYS = {"schema", "itemId", "seriesId", "sourceId", "versionId", "packageId", "eventId", "personId", "file",
            "path", "dir", "vttPath", "manifestPath", "originalFile", "name", "language", "type", "kind",
            "tmdbMovie", "tmdbTv", "tmdbSeason", "tmdbEpisode", "tmdbCollection", "imdb", "tvdb", "tmdbPerson",
-           "sha256", "qh1"}
+           "sha256", "qh1", "ref"}
 FREE_TEXT = {"overview", "tagline", "notes", "note", "detail", "reason"}
 INT64 = (-(1 << 63), (1 << 63) - 1)
 # What an original carries that a package can fail to carry, in the terms an original-deleted event
@@ -472,6 +473,7 @@ class Checker:
         if len(numbers) != len(set(numbers)):
             self.err(where, "series.seasons lists a season number twice")
         listed = self.images(md, meta["images"], "metadata.json")
+        self.primaries(where, meta["images"], series=item.get("type") == "series")
         for img in meta["images"]:
             f = os.path.join(md, img["file"])
             if item.get("type") != "series" and img.get("season") is not None:
@@ -519,6 +521,21 @@ class Checker:
                 elif recorded is not None and actual != recorded:
                     self.err(f, f"{label} is {actual} but recorded as {recorded}")
         return listed
+
+    def primaries(self, where, entries, series=False):
+        """At most one image of a kind is primary in a projection: the one a reader shows. In a series'
+        metadata.json that is one per kind and season, since a season's poster stands for the season,
+        not the series. A schema cannot count, so the rule is here."""
+        marked = {}
+        for img in entries:
+            if img.get("primary") is True:
+                marked.setdefault((img["kind"], img.get("season")), []).append(img["file"])
+        for (kind, season), files in sorted(marked.items(), key=lambda x: (x[0][0], x[0][1] is not None, x[0][1] or 0)):
+            if len(files) > 1:
+                scope = "" if not series else " for the series itself" if season is None else f" for season {season}"
+                self.err(where, f"{len(files)} {kind} images{scope} are primary ({', '.join(f[:12] + '…' for f in files)}): "
+                                f"at most one image of a kind may be"
+                                + (", for the series itself and for each season" if series else ""))
 
     def unlisted(self, f, owner):
         """A file beside a projection that the projection does not list. An image named by the hash of
@@ -1152,6 +1169,7 @@ class Checker:
         if not valid:
             return
         listed = self.images(d, doc["images"], "person.json")
+        self.primaries(where, doc["images"])
         for name in listdir(d):
             if name != "person.json" and name not in listed:
                 self.unlisted(os.path.join(d, name), "person.json")

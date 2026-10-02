@@ -146,11 +146,15 @@
     },
     "image": {
       "type": "object",
-      "description": "One image file of a projection, named by the hash of its own content: it is written once and never replaced in place, so a new image is a new file and a projection that stops naming an old one leaves it to be swept. metadata.json lists the images in metadata/, person.json the images beside it, both with this one object, so the two cannot drift apart; each narrows kind to its own kinds. An image needs no checksum file: its name is its checksum.",
+      "description": "One image file of a projection, named by the hash of its own content: it is written once and never replaced in place, so a new image is a new file and a projection that stops naming an old one leaves it to be swept. metadata.json lists the images in metadata/, person.json the images beside it, both with this one object, so the two cannot drift apart; each narrows kind to its own kinds. An image needs no checksum file: its name is its checksum. Which image of a kind a reader shows is primary, and where its bytes came from is its origin, so a refresh from the reference source can tell the source replacing an image from a person picking another.",
       "required": ["kind", "file", "sha256", "contentType", "sizeBytes"],
       "additionalProperties": false,
       "properties": {
         "kind": { "type": "string", "description": "Narrowed by the document that lists the image." },
+        "primary": {
+          "type": "boolean",
+          "description": "The image a reader shows for its kind when it shows one: a movie's poster, the portrait on a person page. At most one image of a kind is primary in a projection — in a series' metadata.json at most one per kind and season, because a season's poster stands for the season — a rule the validator holds, since a schema cannot count. A projection that marks none leaves the choice to the reader; false and absent say the same."
+        },
         "season": { "type": ["integer", "null"], "minimum": 0, "description": "Only in a series' metadata.json: the season this image belongs to; null for the series itself. person.json forbids it." },
         "file": {
           "type": "string",
@@ -164,8 +168,27 @@
         "width": { "type": ["integer", "null"] },
         "height": { "type": ["integer", "null"] },
         "sourceUrl": { "type": ["string", "null"], "description": "Where the image came from, so the exact chosen image can be fetched again." },
-        "fetchedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
-        "origin": { "enum": ["legacy-catalog", "tmdb", "manual"] }
+        "fetchedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }], "description": "When the bytes were fetched." },
+        "origin": {
+          "description": "Where the bytes came from: the source, the source's own name for the image and when it was taken. When a refresh finds the reference source naming another image for this kind than the ref an origin from that source holds, the source replaced the image; an image whose origin is manual is one a person picked, and a refresh leaves it as it is, primary or not. A projection written before 2026-10-02 (f) names the source alone, as a string: a reader takes it as {source: <it>}, and the next projection writes the object.",
+          "if": { "type": "string" },
+          "then": { "enum": ["legacy-catalog", "tmdb", "manual"], "deprecated": true },
+          "else": { "$ref": "#/$defs/imageOrigin" }
+        }
+      }
+    },
+    "imageOrigin": {
+      "type": "object",
+      "description": "Where an image's bytes came from.",
+      "required": ["source"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": ["tmdb", "manual", "file", "legacy-catalog"],
+          "description": "'tmdb': fetched from the reference database. 'manual': a person provided or picked it. 'file': found as a file beside an original, a folder.jpg an old library kept. 'legacy-catalog': taken over from a catalog that did not record where it came from. A source the database comes to use is a new value here."
+        },
+        "ref": { "type": "string", "minLength": 1, "description": "The source's own name for the image: for tmdb the file path it lists the image under, for file the path the file was found at. What a refresh compares with what the source names now." },
+        "fetchedAt": { "$ref": "#/$defs/timestamp", "description": "When the bytes were taken from the source — the moment the image's own fetchedAt names, kept with the reference it was taken from." }
       }
     },
     "curation": {

@@ -75,6 +75,7 @@
   "images": [
     {
       "kind": "poster",
+      "primary": true,
       "file": "85ac133235bb2fe1e0013f23d250b52199a9ea2e57dedff8faef2dc55a8a28d8.jpg",
       "sha256": "sha256:85ac133235bb2fe1e0013f23d250b52199a9ea2e57dedff8faef2dc55a8a28d8",
       "contentType": "image/jpeg",
@@ -84,7 +85,10 @@
       "language": null,
       "sourceUrl": null,
       "fetchedAt": "2026-09-20T12:00:00Z",
-      "origin": "manual"
+      "origin": {
+        "source": "manual",
+        "fetchedAt": "2026-09-20T12:00:00Z"
+      }
     },
     {
       "kind": "backdrop",
@@ -97,7 +101,10 @@
       "language": null,
       "sourceUrl": null,
       "fetchedAt": "2026-09-20T12:00:00Z",
-      "origin": "manual"
+      "origin": {
+        "source": "manual",
+        "fetchedAt": "2026-09-20T12:00:00Z"
+      }
     },
     {
       "kind": "logo",
@@ -109,8 +116,12 @@
       "height": 1,
       "language": "en",
       "sourceUrl": null,
-      "fetchedAt": "2026-09-20T12:00:00Z",
-      "origin": "manual"
+      "fetchedAt": "2026-09-18T09:05:00Z",
+      "origin": {
+        "source": "file",
+        "ref": "movies/Tears of Steel (2012)/logo.png",
+        "fetchedAt": "2026-09-18T09:05:00Z"
+      }
     }
   ],
   "videos": [

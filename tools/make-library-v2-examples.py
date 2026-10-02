@@ -18,11 +18,14 @@ every record the format has and the shapes a reader most needs to see:
            episodes, a behind-the-scenes extra of season 1, kept only as its original, which the
            projection says nothing about.
   people/  the two people the items credit: the movie's director, with only what is known about
-           him, and the series' lead, a fictional person with every field a person record has.
+           him, and the series' lead, a fictional person with every field a person record has —
+           her primary portrait one a person picked, beside the one the reference source has.
 
 Every projection says which state of its database row it reflects (databaseUpdatedAt), and the two
 that were taken from the reference source — the movie and the lead — say when and how fresh that is
-(sources). Images are named by the hash of their own content. Every folder written once carries the
+(sources). Each image says where its bytes came from, and the one a reader shows for its kind is
+primary: the movie's poster, the series' poster and its season's, each person's portrait. Images
+are named by the hash of their own content. Every folder written once carries the
 checksums.sha256 written with it — the item's over item.json, each source's over its record, probe
 and sidecars, each event's over event.json, each extra's over extra.json and every file beside it —
 and each version and packaged extra closes its chain: checksums over the record and the package,
@@ -108,16 +111,20 @@ def item_record(item_dir, doc):
 
 
 # ---------------------------------------------------------------- metadata images
-def image(item_dir, kind, data, ctype, folder="metadata", **extra):
+def image(item_dir, kind, data, ctype, folder="metadata", primary=None, source="manual", ref=None,
+          fetched=PROJECTED, **extra):
     """Write <folder>/<content hash>.<ext> and return the entry that names it: metadata/ for an
-    item, the person's own folder for a person."""
+    item, the person's own folder for a person. primary marks the image a reader shows for its kind;
+    the origin says where the bytes came from — a person, unless source names another — and ref is
+    that source's own name for them."""
     ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[ctype]
     digest = hashlib.sha256(data).hexdigest()
     name = f"{digest}.{ext}"
     write(os.path.join(item_dir, folder, name), data)
-    entry = {"kind": kind, "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
-             "sizeBytes": len(data), "width": 1, "height": 1, "language": None,
-             "sourceUrl": None, "fetchedAt": PROJECTED, "origin": "manual"}
+    entry = {"kind": kind, **({"primary": primary} if primary is not None else {}), "file": name,
+             "sha256": "sha256:" + digest, "contentType": ctype, "sizeBytes": len(data), "width": 1, "height": 1,
+             "language": None, "sourceUrl": None, "fetchedAt": fetched,
+             "origin": {"source": source, **({"ref": ref} if ref else {}), "fetchedAt": fetched}}
     entry.update(extra)
     return entry
 
@@ -511,9 +518,12 @@ def movie():
             # the featurette is listed first, under a shorter label than the title it came with.
             "extras": {featurette: {"order": 1, "hidden": False, "label": "On Location"}},
         },
-        "images": [image(mdir, "poster", jpeg("poster"), "image/jpeg"),
+        # the poster is the one a reader shows; the logo was a file beside the original in the old
+        # library, copied when the original was taken in
+        "images": [image(mdir, "poster", jpeg("poster"), "image/jpeg", primary=True),
                    image(mdir, "backdrop", jpeg("backdrop"), "image/jpeg"),
-                   image(mdir, "logo", PNG, "image/png", language="en")],
+                   image(mdir, "logo", PNG, "image/png", source="file", ref="movies/Tears of Steel (2012)/logo.png",
+                         fetched=TAKEN, language="en")],
         "videos": [{"site": "example.org", "key": "tears-of-steel-trailer", "url": None, "name": "Trailer",
                     "kind": "trailer", "language": "en", "durationMs": 60000,
                     "publishedAt": "2012-09-26T00:00:00Z", "origin": "manual"}],
@@ -664,8 +674,9 @@ def series():
             # episodes' own numbering, so adding an episode never rewrites this file's list of them.
             "defaultOrdering": "aired",
         },
-        "images": [image(sdir, "poster", jpeg("series poster"), "image/jpeg", season=None),
-                   image(sdir, "poster", jpeg("season 1 poster"), "image/jpeg", season=1)],
+        # one primary poster for the series itself, and one for its season, which stands for the season
+        "images": [image(sdir, "poster", jpeg("series poster"), "image/jpeg", primary=True, season=None),
+                   image(sdir, "poster", jpeg("season 1 poster"), "image/jpeg", primary=True, season=1)],
         "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
         "fieldOrigins": {"titles.primary": "manual", "titles.qualifier": "filename", "series": "manual",
                          "credits": "manual", "images": "manual"},
@@ -686,11 +697,13 @@ def series():
                   "dvd": {"season": 1, "episode": 1, "episodeEnd": None}}, keeps_original=False)
 
 
-def person(pid, **fields):
+def person(pid, portraits=(), **fields):
     """people/<aa>/<personId>/person.json and the images beside it: a projection, like metadata.json.
-    Nothing lists the person's credits — those are the items' own credits, by personId."""
+    Nothing lists the person's credits — those are the items' own credits, by personId. The first
+    portrait is the primary one, and a person picked it; portraits adds more, each a (label, origin)."""
     pdir = os.path.join(ROOT, "people", pid[:2], pid)
-    images = [image(pdir, "profile", jpeg(f"profile {fields['name']}"), "image/jpeg", folder="")]
+    images = [image(pdir, "profile", jpeg(f"profile {fields['name']}"), "image/jpeg", folder="", primary=True)] + \
+             [image(pdir, "profile", jpeg(label), "image/jpeg", folder="", **origin) for label, origin in portraits]
     doc = {"schema": "zaentrum.library.person/2", "personId": pid, "asOf": PROJECTED, "projectedBy": "catalog example",
            "databaseUpdatedAt": ROW_UPDATED, **({"sources": fields.pop("sources")} if "sources" in fields else {}),
            "name": fields.pop("name"), "sortName": None, "alsoKnownAs": [], "birthDate": None, "deathDate": None,
@@ -710,7 +723,11 @@ def people():
     person(uid("person", "ian-hubert"), name="Ian Hubert", sortName="Hubert, Ian",
            biography={"en": "Director of the open movie Tears of Steel (2012)."},
            fieldOrigins={"name": "manual", "sortName": "manual", "biography": "manual", "images": "manual"})
+    # Her primary portrait is one a person picked; the reference source's own is kept beside it, so a
+    # refresh can tell the source replacing its portrait from the person's choice, which it leaves be.
     person(uid("person", "mara-example"), name="Mara Example", sortName="Example, Mara",
+           portraits=[("profile Mara Example, from the reference source",
+                       {"source": "tmdb", "ref": "/example-profile-mara.jpg", "fetched": TMDB_FETCHED})],
            sources={"tmdb": {"fetchedAt": TMDB_FETCHED, "changedAt": TMDB_CHANGED}},
            alsoKnownAs=["M. Example"], birthDate="1985-04", birthPlace="Example City",
            biography={"en": "A fictional actor who plays the lead in Example Show.",
