@@ -419,6 +419,9 @@ python tools/library-v2-from-catalog.py --export catalog.json --packages /…/pa
 # only the people, into a tree written earlier: no item record is touched
 python tools/library-v2-from-catalog.py --export catalog.json --out /…/library --people-only [--dry-run]
 
+# only the projections of what the tree holds, after the database changed: no record is touched
+python tools/library-v2-from-catalog.py --export catalog.json --out /…/library --projections-only [--dry-run]
+
 # v1 item folders (manifest.json + metadata/) become v2 records, in place or into a new tree
 python tools/library-v2-from-v1.py --in /…/library --in-place [--dry-run]
 
@@ -470,8 +473,22 @@ no path. An item's images are mapped the same way. An item row's `modifiedAt`
 becomes its `metadata.json`'s `databaseUpdatedAt`, and `sources.tmdb` is written when the row carries
 `tmdbFetchedAt`, which items do not yet. A person the list holds by id and name alone — or whom only
 a credit names, in a catalog without the list — is a valid record with nothing else in it, and what
-the export does not carry, or holds wrongly, is left out with a note rather than guessed. After the
-database changes, `--people-only` is how person records are projected again.
+the export does not carry, or holds wrongly, is left out with a note rather than guessed.
+
+**`--projections-only` projects a tree again** after the database changed, which is what a stale
+projection asks for. It rewrites the projections of what the tree already holds and nothing else:
+every item's `metadata.json` and the images it lists in `metadata/`, every person's `person.json`
+and their portraits, each replaced whole from the export through a temporary file and a rename. It
+never writes, rewrites or touches a record written once — `item.json`, a source, a version, a
+package, an extra, an event, any `checksums.sha256` — and an item or a person the export holds and
+the tree does not is skipped with a note: creating one stays the full build's job, or
+`--people-only`'s. An image is written once, under the name of its content, so one already there is
+left as it is, and one a new projection no longer lists is left for the sweep, past its grace, where
+the full build and `--people-only` remove it at once. What it writes is what the full build writes
+from the same export, byte for byte; the one decision the build takes from the versions it creates —
+which plays when the viewer does not choose — stays the one the projection on storage names while
+that version is there, and is otherwise derived from the export's packaged assets as the build
+derives it, with or without `--packages`.
 
 A rebuilt catalog is only as complete as the record: the tree holds no per-user state, of a row's
 modification times only the one its projection reflects, the paths it hands back are the version
@@ -552,7 +569,7 @@ every person both sides hold by it: the projection's `databaseUpdatedAt` against
 
 | Class | What it means | Fails the compare |
 |---|---|---|
-| stale projection | The row was modified after the state its projection reflects: the database changed since. It is fixed by projecting again — `library-v2-from-catalog.py --people-only` does for people — never by editing the file. | yes |
+| stale projection | The row was modified after the state its projection reflects: the database changed since. It is fixed by projecting again — `library-v2-from-catalog.py --projections-only` does, for items and people, and touches no record — never by editing the file. | yes |
 | projection ahead of the database | The projection reflects a later state of the row than the export holds: an export older than the tree, or a database restored from before it. | yes |
 
 The field differences of a stale projection are listed as well, marked as its, so a verification can
@@ -573,7 +590,7 @@ reason, and with `--apply` removes it:
 | What | Proved by |
 |---|---|
 | a deleted item's folder | the export's deletion log names the id as an item's, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
-| a deleted person's folder | the export's deletion log names the id as a person's (`type: person`), the database does not hold them again — not in its people list, not credited by any of its items — nothing in the folder is newer than the deletion, the deletion is older than the grace, and no item record on storage still credits them: one that does keeps the folder until it is projected again, unless the same sweep removes that item's folder as a deleted item. It is checked last in the quarantine, against the credits on storage once every other target is settled |
+| a deleted person's folder | the export's deletion log names the id as a person's (`type: person`), the database does not hold them again — not in its people list, not credited by any of its items — nothing in the folder is newer than the deletion, the deletion is older than the grace, and no item record on storage still credits them: one that does keeps the folder until it is projected again (`--projections-only`), unless the same sweep removes that item's folder as a deleted item. It is checked last in the quarantine, against the credits on storage once every other target is settled |
 | an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it |
 | an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not another event, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
 | a removed extra's folder | an `extra-removed` event names it and is older than the grace, and nothing else names the extra — not `library.extras`, not another event, not the export: the whole folder, whatever it holds |
@@ -600,6 +617,16 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-02 (h)** — projecting a tree again. A stale projection is fixed by projecting again, and
+  nothing could do that without writing the records too. `library-v2-from-catalog.py
+  --projections-only` rewrites the projections of the items and people the tree already holds —
+  `metadata.json` and the images in `metadata/`, `person.json` and its portraits — from the export,
+  each replaced whole through a temporary file and a rename, and never writes or touches a record
+  written once or a checksums file; an item or a person the tree does not hold is skipped with a
+  note. Images already there are left as they are, and one a projection drops is left for the sweep.
+  Which version plays by default stays the one the projection on storage names while that version is
+  there. A stale projection `--compare` reports is gone after one run; `--people-only` is unchanged.
+  No schema changes.
 - **2026-10-02 (g)** — the catalog deletes a person no title credits any more, and logs them. This
   replaces "a person is never an orphan and never swept". Entries of the export's `deletedItems` gain
   `type`: an item's own (`movie`, `series`, `episode`), or `person`; an entry without one is an
