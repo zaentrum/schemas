@@ -178,7 +178,7 @@ def package_only(root):
     """The featurette with its original gone and its package the only copy, written that way."""
     xp = featurette(root)
     os.remove(x_original(xp))
-    edit(xjson(xp), lambda d: d.update(originalFiles=[]))
+    edit(xjson(xp), lambda d: d.update(originalFiles=[], originals=[]))
     edit(pkg(xp), lambda d: d.update(role="canonical"))
 
 
@@ -186,7 +186,7 @@ def nothing_kept(root):
     """The series' extra with its original gone and its checksums written again over its record alone."""
     xp = bts(root)
     os.remove(x_original(xp))
-    edit_raw(xjson(xp), lambda d: d.update(originalFiles=[]))
+    edit_raw(xjson(xp), lambda d: d.update(originalFiles=[], originals=[]))
     write_sums(xp, ["extra.json"])
 
 
@@ -616,6 +616,15 @@ CASES = [
     ("a probe without what it found", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("essence")), "'essence' is a dependency of 'probe'", []),
     ("an extra's title in something that is not a language", False, lambda r: edit(xjson(featurette(r)), lambda d: d["localizedTitles"].update(Dutch="x")), "$.localizedTitles", []),
     ("an original named like a record of its folder", False, lambda r: edit(xjson(bts(r)), lambda d: d.update(originalFiles=["checksums.sha256"])), "should not be valid under", []),
+
+    # ---- an extra describes each original as a source record describes its file: size and fixity
+    ("an extra without its originals' fixity", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("originals")), "'originals' is a required property", []),
+    ("an original described without its fixity", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0].pop("fixity")), "'fixity' is a required property", []),
+    ("originals describing another file than originalFiles names", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0].update(name="other.mkv")), "originals describes other files than originalFiles names", []),
+    ("an extra's original of another size than recorded", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0].update(sizeBytes=d["originals"][0]["sizeBytes"] + 1)), "bytes, extra.json says", ["--check-media"]),
+    ("an extra's original that does not match its recorded qh1", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0]["fixity"].update(qh1="sha256:" + "0" * 64)), "does not match the qh1 fixity extra.json records", ["--check-media"]),
+    ("an extra's original that does not match its recorded sha256", False, lambda r: edit(xjson(featurette(r)), lambda d: d["originals"][0]["fixity"].update(sha256="sha256:" + "0" * 64)), "does not match the sha256 extra.json records", ["--check-checksums"]),
+    ("an original whose sha256 nobody computed", True, lambda r: edit(xjson(featurette(r)), lambda d: [d["originals"][0]["fixity"].pop(k) for k in ("sha256", "sha256At")]), "OK", ["--check-checksums"]),
     ("extras in an episode", False, lambda r: os.makedirs(os.path.join(episode(r, 1), "extras")), "an episode has no extras", []),
     ("an extra that is a file", False, lambda r: open(os.path.join(series(r), "extras", "loose.json"), "w").write("{}"), "every extra is a folder under extras/", []),
     ("an extra folder not named by its id", False, lambda r: shutil.move(bts(r), os.path.join(series(r), "extras", "behind-the-scenes")), "an extra folder is named by its extraId", []),

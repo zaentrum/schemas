@@ -322,12 +322,15 @@ def extra(item_dir, xid, kind, title, original, runtime_ms, streams, src_essence
     or, for a packaged one, the chain closes over them. package(xdir, record) writes the package files
     and closes the chain."""
     xdir = os.path.join(item_dir, "extras", xid)
-    write(os.path.join(xdir, original), b"placeholder for the original file of " + original.encode() + b"\n")
+    data = write(os.path.join(xdir, original), b"placeholder for the original file of " + original.encode() + b"\n")
     record = {
         "schema": "zaentrum.library.extra/2", "extraId": xid, "createdAt": EXTRA_TAKEN, "createdBy": "ingest example",
         "kind": kind, "title": title, "localizedTitles": dict(localized or {}), "language": "en",
         "runtimeMs": runtime_ms, **({"seasonNumber": season} if season is not None else {}),
         "originalFiles": [original],
+        # what a source record says of its file, said here of each original: there is no source record
+        "originals": [{"name": original, "sizeBytes": len(data),
+                       "fixity": {"qh1": qh1(data), "sha256": sha(data), "sha256At": EXTRA_TAKEN}}],
         "container": {"format": "matroska,webm", "durationMs": runtime_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
         "streams": streams, "fidelity": {"class": "original", "fingerprint": fingerprint, "evidence": []},

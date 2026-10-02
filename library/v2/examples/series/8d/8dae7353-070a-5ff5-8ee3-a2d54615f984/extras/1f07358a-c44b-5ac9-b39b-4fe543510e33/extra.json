@@ -12,6 +12,17 @@
   "originalFiles": [
     "Example Show (US) - Season 1 - Behind the Scenes.mkv"
   ],
+  "originals": [
+    {
+      "name": "Example Show (US) - Season 1 - Behind the Scenes.mkv",
+      "sizeBytes": 90,
+      "fixity": {
+        "qh1": "sha256:68f3221db9728288475d9946073f13e51c01123817a41e3b4e33780b9dce7bc5",
+        "sha256": "sha256:2ba0ada3910e2586a4c6736a3c16ba39534f131c82c0eb387008ad4de2303fd8",
+        "sha256At": "2026-09-19T08:00:00Z"
+      }
+    }
+  ],
   "container": {
     "format": "matroska,webm",
     "durationMs": 1260000,

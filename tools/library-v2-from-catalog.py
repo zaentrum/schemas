@@ -1250,10 +1250,13 @@ class Build:
             names.add(name)
             xid = did(row["id"], "extra", name)
             xp = os.path.join(d, "extras", xid)
+            digest = sha_file(path)
             doc = {"schema": "zaentrum.library.extra/2", "extraId": xid, "createdAt": self.as_of,
                    "createdBy": "library-v2-from-catalog", "kind": "trailer",
                    "title": text(t.get("title")) or os.path.splitext(name)[0], "localizedTitles": {},
-                   "language": None, "runtimeMs": None, "originalFiles": [name]}
+                   "language": None, "runtimeMs": None, "originalFiles": [name],
+                   "originals": [{"name": name, "sizeBytes": os.path.getsize(path),
+                                  "fixity": {"qh1": qh1(path), "sha256": digest, "sha256At": self.as_of}}]}
             probe = ffprobe(path) if self.probe_version else None
             if probe:
                 self.counts["probed"] += 1
@@ -1263,7 +1266,7 @@ class Build:
                            probe={"tool": "ffprobe", "version": self.probe_version, "at": self.as_of, "note": None})
             else:
                 self.note(row["id"], f"trailer {name} was not probed: its streams, fidelity and essence stay empty")
-            digest = sha_file(path).split(":", 1)[1]
+            digest = digest.split(":", 1)[1]
             record = json_bytes(doc)
             self.w.write(os.path.join(xp, "extra.json"), record)
             if not self.w.place(path, os.path.join(xp, name), self.a.media_mode):

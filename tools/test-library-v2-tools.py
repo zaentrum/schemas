@@ -1047,6 +1047,12 @@ def test_from_catalog_extras(t):
         t.ok("copied in, so the share keeps its own",
              os.path.isfile(os.path.join(xp, TRAILER)) and open(os.path.join(xp, TRAILER), "rb").read()
              == open(os.path.join(media, "trailers", TRAILER), "rb").read())
+        kept, mc = os.path.join(xp, TRAILER), load_tool(MEDIA_CHECK)
+        t.eq("and described as a source record describes its file: its size, its qh1 and its sha256",
+             x.get("originals"), [{"name": TRAILER, "sizeBytes": os.path.getsize(kept) if found else None,
+                                   "fixity": {"qh1": mc.qh1(kept) if found else None,
+                                              "sha256": mc.sha_file(kept) if found else None,
+                                              "sha256At": "2026-09-21T17:00:00Z"}}])
         t.eq("and finished by the checksums written last, over the record and the file",
              sorted(listing(xp)) if os.path.isfile(os.path.join(xp, "checksums.sha256")) else None,
              sorted(["extra.json", TRAILER]))
@@ -1766,7 +1772,8 @@ def extra_garbage(tmp, age=True):
     where = {"featurette": featurette, "bts": glob.glob(os.path.join(root, "series", "*", "*", "extras", "*"))[0],
              "movie": movie, "original": original,
              "beside": copy(X_BESIDE, (".complete", "package.json")),
-             "recorded": copy(X_RECORDED, (".complete", "package.json", "checksums.sha256", original), originalFiles=[]),
+             "recorded": copy(X_RECORDED, (".complete", "package.json", "checksums.sha256", original), originalFiles=[],
+                              originals=[]),
              "nothing wrote": copy(X_NOTHING_WROTE, (".complete", "package.json", "checksums.sha256", original,
                                                      "extra.json", "subs", "trickplay")),
              "unpackaged": copy(X_UNPACKAGED, (".complete", "package.json", "checksums.sha256", "hls", "subs", "trickplay"))}
@@ -2024,13 +2031,13 @@ def test_media_check(t):
     def package_only(r):
         xp = featurette(r)
         os.unlink(x_original(xp))
-        change(os.path.join(xp, "extra.json"), originalFiles=[])
+        change(os.path.join(xp, "extra.json"), originalFiles=[], originals=[])
         relist(xp, [n for n in listing(xp) if os.path.isfile(os.path.join(xp, n))])
 
     def nothing_kept(r):
         xp = bts(r)
         os.unlink(x_original(xp))
-        change(os.path.join(xp, "extra.json"), originalFiles=[])
+        change(os.path.join(xp, "extra.json"), originalFiles=[], originals=[])
         write_sums(xp, ["extra.json"])
 
     def recorded_as(r, **fields):

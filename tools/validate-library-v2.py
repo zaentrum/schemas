@@ -48,21 +48,23 @@ with the bytes beside them, never about a document being up to date.
                successor that exists in another version folder
   extras       bonus material sits in extras/<extraId>/ inside its movie or series, never an
                episode; each folder is named by its extraId and holds extra.json, the originals it
-               names and/or a package (hls/ subs/ trickplay/); its checksums.sha256 lists extra.json
-               and every file beside it, the originals included, and never itself, package.json or
-               .complete; a packaged extra closes the chain a version does and carries no trailers,
-               one that keeps only its original is finished by its checksums file, and one that never
-               finished is a note; only a series' extra names a season, and only one the series'
-               metadata lists; library.extras names extras that are there
+               names and/or a package (hls/ subs/ trickplay/); originals describes exactly the files
+               originalFiles names; its checksums.sha256 lists extra.json and every file beside it,
+               the originals included, and never itself, package.json or .complete; a packaged extra
+               closes the chain a version does and carries no trailers, one that keeps only its
+               original is finished by its checksums file, and one that never finished is a note;
+               only a series' extra names a season, and only one the series' metadata lists;
+               library.extras names extras that are there
   checksums    the checksums file matches its recorded hash and file count
   --check-media  no file under an item folder is a hard link shared with another path; every
                original a version names is there with its size and qh1, unless an original-deleted
                event covers it — in which case it must NOT be there; every rendition folder,
                subtitle and trickplay sheet a package names exists and the cues cover the duration;
                checksums.sha256 lists exactly version.json and the package's files, with their total
-               size, and an extra's lists files of that total
-  --check-checksums  also hash every package file and every file an extra's checksums list
-               (implies --check-media)
+               size, and an extra's lists files of that total; an extra's every original has the
+               size and qh1 extra.json records
+  --check-checksums  also hash every package file and every file an extra's checksums list, and
+               an extra's originals against the sha256 extra.json records (implies --check-media)
 
 The schemas are loaded from the library/v2 folder next to this tool by default; pass
 --schemas https://zaentrum.github.io/schemas/library/v2 to use the published copies.
@@ -942,6 +944,9 @@ class Checker:
         for name in listdir(xp):
             if name not in EXTRA_ENTRIES and name not in x["originalFiles"]:
                 self.err(os.path.join(xp, name), "not a record, the package or an original this extra names")
+        if [o["name"] for o in x["originals"]] != x["originalFiles"]:
+            self.err(os.path.join(xp, "extra.json"), "originals describes other files than originalFiles names: "
+                                                     "each original has one entry, in the same order")
         marker = os.path.isfile(os.path.join(xp, ".complete"))
         has_package = os.path.isfile(os.path.join(xp, "package.json"))
         if has_package != marker:
@@ -969,9 +974,11 @@ class Checker:
                                                                "that is a file of its own is an extra of kind trailer")
             self.head(xp, "extra")
         self.extra_covered(xp, x)
-        if self.check_media and pkg is not None:
-            self.playable(xp, pkg)
-            self.extra_total(xp, pkg)
+        if self.check_media:
+            self.extra_originals(xp, x)
+            if pkg is not None:
+                self.playable(xp, pkg)
+                self.extra_total(xp, pkg)
 
     def extra_covered(self, xp, x):
         """checksums.sha256 lists extra.json and every file beside it — the originals and every file of
@@ -998,6 +1005,21 @@ class Checker:
             for rel in sorted(set(present) & set(listed) - {"extra.json"}):
                 if sha_file(os.path.join(xp, rel)).split(":", 1)[1] != listed[rel]:
                     self.err(os.path.join(xp, rel), "does not match its checksum")
+
+    def extra_originals(self, xp, x):
+        """Each original against the fixity extra.json records: its size and qh1, and with
+        --check-checksums its sha256 when recorded — the checks a version's original gets from its
+        source record."""
+        for o in x["originals"]:
+            f = os.path.join(xp, o["name"])
+            if not os.path.isfile(f):
+                continue  # extra_covered says so
+            if os.path.getsize(f) != o["sizeBytes"]:
+                self.err(f, f"original is {os.path.getsize(f)} bytes, extra.json says {o['sizeBytes']}")
+            elif qh1(f) != o["fixity"]["qh1"]:
+                self.err(f, "original does not match the qh1 fixity extra.json records")
+            elif self.check_checksums and o["fixity"].get("sha256") and sha_file(f) != o["fixity"]["sha256"]:
+                self.err(f, "original does not match the sha256 extra.json records")
 
     def extra_total(self, xp, pkg):
         """The files an extra's checksums list add up to the size its package record says."""

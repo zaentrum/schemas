@@ -14,6 +14,17 @@
   "originalFiles": [
     "Tears of Steel (2012) - On Location in Amsterdam.mkv"
   ],
+  "originals": [
+    {
+      "name": "Tears of Steel (2012) - On Location in Amsterdam.mkv",
+      "sizeBytes": 90,
+      "fixity": {
+        "qh1": "sha256:1230dc2746c92025f671f4558fb7a03132b6d772d34c3cb361c50c6d1cbdecad",
+        "sha256": "sha256:289ad230f595f54b9e4201c7a38ae1c973252aa6d493d0ff13da2ebfada90e3a",
+        "sha256At": "2026-09-19T08:00:00Z"
+      }
+    }
+  ],
   "container": {
     "format": "matroska,webm",
     "durationMs": 300000,
