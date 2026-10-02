@@ -580,11 +580,11 @@ def test_export_sample(t):
              code == 0 and os.path.isfile(os.path.join(out, "movies", kept[:2], kept, "item.json")), text)
         for iid in deleted:
             outlive(out, iid)
-        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", "id,path,hash,modifiedAt")
+        code, text = run(REBUILD, out, "--compare", export)
         t.ok("every folder its deletion log names is an orphan, and the item it keeps agrees",
              code == 0 and sorted(report_section(text, "orphan")) == deleted
              and not report_section(text, "lost") and "4 orphan(s) on storage are safe to remove" in text, text)
-        code, text = run(REBUILD, out, "--compare", before, "--ignore-fields", "id,path,hash,modifiedAt")
+        code, text = run(REBUILD, out, "--compare", before)
         t.ok("against a catalog from before the log, every folder is lost and none an orphan",
              code == 1 and sorted(report_section(text, "lost")) == sorted(deleted + [kept])
              and not report_section(text, "orphan") and "deletedItems is null" in text, text)
@@ -785,6 +785,69 @@ def test_compare(t):
          code == 0 and section(text, "people: missing record") == ["00000000-0000-4000-8000-0000000000cc"]
          and "1 of which a subset is expected to lack" in text, text)
 
+    # ---- how fresh a projection is: the state of its row it reflects, against the row the export holds
+    def modified(iid, at):
+        return lambda e: [r.update(modifiedAt=at) for r in e["items"] if r["id"] == iid]
+
+    code, text = compare(modified(movie["id"], "2026-09-25T00:00:00Z"))
+    t.ok("a projection whose row the database modified since is stale, and fails though no field it holds differs",
+         code == 1 and section(text, "stale projection") == [movie["id"]] and "1 difference(s)" in text
+         and "project it again, never edit the file" in text, text)
+    code, text = compare(both(modified(movie["id"], "2026-09-25T00:00:00Z"),
+                              lambda e: [r.update(title="Tears of Steel (Remastered)") for r in e["items"] if r["id"] == movie["id"]]))
+    t.ok("and the differences a stale projection explains are marked as its",
+         code == 1 and f"{movie['id']}: storage 'Tears of Steel' != database 'Tears of Steel (Remastered)' — stale projection"
+         in text, text)
+    code, text = compare(modified(movie["id"], "2026-09-01T00:00:00Z"))
+    t.ok("a projection that reflects a later state of its row than the export holds is ahead of it, and fails",
+         code == 1 and section(text, "projection ahead of the database") == [movie["id"]]
+         and not section(text, "stale projection"), text)
+    code, text = compare(modified(movie["id"], "2026-09-20T11:55:00.400Z"))
+    t.ok("to the second: a row modified within the second its projection reflects is not stale",
+         code == 0 and not section(text, "stale projection"), text)
+    code, text = compare(modified(movie["id"], "2026-09-20T13:55:00+02:00"))
+    t.ok("and one moment written in another zone is the same moment", code == 0, text)
+    code, text = compare(lambda e: [r.pop("modifiedAt") for r in e["items"]])
+    t.ok("a row the export gives no modification time is not judged",
+         code == 0 and "the tree and the database agree" in text, text)
+    code, text = compare(modified(movie["id"], "2026-09-25T00:00:00Z"), "--ignore-fields", "id,path,hash,modifiedAt")
+    t.ok("and with modifiedAt ignored, no projection is", code == 0 and not section(text, "stale projection"), text)
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, tree)
+        meta = os.path.join(tree, "movies", movie["id"][:2], movie["id"], "metadata.json")
+        jwrite(meta, {k: v for k, v in jload(meta).items() if k != "databaseUpdatedAt"})
+        code, text = compare(modified(movie["id"], "2026-09-25T00:00:00Z"), tree=tree)
+        t.ok("a projection that does not say which state it reflects is of unknown freshness: said, and not a failure",
+             code == 0 and "freshness unknown: 1 projection(s)" in text and not section(text, "stale projection"), text)
+
+    _, built = rows_of(EXAMPLES)
+
+    def people_list(**lead_changes):
+        """The export's people list as the tree's own people rows, the lead's changed."""
+        return lambda e: e.update(people=[dict(p, **(lead_changes if p["id"] == lead else {}))
+                                          for p in json.loads(json.dumps(built["people"]))])
+
+    code, text = compare(people_list())
+    t.ok("an export whose people list is the tree's own people agrees: every field of it compared, portraits included",
+         code == 0 and "the tree and the database agree" in text, text)
+    code, text = compare(people_list(modifiedAt="2026-09-25T00:00:00Z"))
+    t.ok("a person whose row changed after their projection is a stale projection, and fails",
+         code == 1 and section(text, "people: stale projection") == [lead] and not section(text, "stale projection"), text)
+
+    code, text = compare(lambda e: [r.update(tmdbFetchedAt="2026-09-21T00:00:00Z") for r in e["items"] if r["id"] == movie["id"]])
+    t.ok("an item row's TMDB freshness is compared where the export carries it",
+         code == 1 and "tmdbFetchedAt: 1 difference(s)" in text, text)
+    code, text = compare(lambda e: [[r.pop(k) for k in ("tmdbFetchedAt", "tmdbChangedAt")] for r in e["items"]])
+    t.ok("and an export that does not carry it, as the catalog's items do not yet, makes no difference", code == 0, text)
+    code, text = compare(lambda e: [a.update(isPrimary=False) for r in e["items"] if r["id"] == movie["id"] for a in r["artwork"]])
+    t.ok("an image row's primary flag is compared where the export carries it",
+         code == 1 and "artwork.isPrimary: 1 difference(s)" in text, text)
+    code, text = compare(lambda e: [[a.pop(k) for k in ("isPrimary", "sourcePath", "width", "height")]
+                                    for r in e["items"] for a in r["artwork"]])
+    t.ok("and an export from before image rows carried it, its dimensions or its TMDB path makes no difference",
+         code == 0, text)
+
 
 # ---------------------------------------------------------------- v1 -> v2
 def test_from_v1(t):
@@ -953,7 +1016,7 @@ def test_from_catalog(t):
         t.ok("the tree passes the media check", code == 0, text)
 
         code, text = run(REBUILD, out, "--compare", export, "--text-language", "und",
-                         "--ignore-fields", "id,path,hash,modifiedAt,codec,resolution,bitrateKbps,"
+                         "--ignore-fields", "id,path,hash,codec,resolution,bitrateKbps,"
                                             "durationMs,sizeBytes")
         t.ok("the rebuilt rows agree with the export they came from",
              code == 0 and "the tree and the database agree" in text, text)
@@ -1109,7 +1172,7 @@ def test_from_catalog_extras(t):
         t.eq("and gives the link its local copy back: the trailer the extra keeps",
              [v["localPath"] for v in rows[iid]["trailers"]], [os.path.join(xp, TRAILER)])
         code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und",
-                          "--ignore-fields", "id,path,hash,modifiedAt,codec,resolution,bitrateKbps,durationMs,sizeBytes")
+                          "--ignore-fields", "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes")
         t.ok("so it agrees with the export it came from, the link's localPath included: the same file, in its extra",
              code == 0 and "the tree and the database agree" in ctext and "localPath" not in ctext, ctext)
         again = os.path.join(tmp, "library-again")
@@ -1385,6 +1448,80 @@ def test_people_in_full(t):
         code, mtext = run(MEDIA_CHECK, "--checksums", out)
         t.ok("and the media check", code == 0 and "'people': 2" in mtext, mtext)
 
+        # ---- the rebuild gives all of it back, and --compare compares all of it
+        _, built = rows_of(out, "--text-language", "und")
+        row = next((p for p in built["people"] if p["id"] == DIRECTOR), {})
+        t.eq("the rebuild restores every field the people list carried into the person's row",
+             {k: v for k, v in row.items() if k != "artwork"},
+             {"id": DIRECTOR, "name": "A Director", "sortName": "Director, A", "alsoKnownAs": ["A. D.", "Ann Director"],
+              "birthDate": "1970-01-02", "deathDate": "2026-09-28", "birthPlace": "Example Town",
+              "knownForDepartment": "Directing", "biography": {"en": "Directs examples.", "de": "Führt Beispiele vor."},
+              "externalIds": {"tmdbPerson": "42", "imdb": "nm0000042"}, "metadataLocked": False,
+              "lockedFields": ["biography"],
+              "fieldOrigins": {"name": "tmdb", "birthDate": "tmdb", "deathDate": "tmdb", "biography": "manual"},
+              "tmdbFetchedAt": "2026-09-30T08:00:00Z", "tmdbChangedAt": "2026-09-29", "modifiedAt": "2026-09-30T08:00:05Z"})
+        t.eq("and each portrait: its bytes by their hash, size and dimensions, whether it is primary, TMDB's path, "
+             "when it was fetched",
+             [{k: a.get(k) for k in ("kind", "contentType", "sha256", "sizeBytes", "width", "height", "isPrimary",
+                                     "sourcePath", "fetchedAt")} for a in row.get("artwork") or []],
+             [{"kind": "profile", "contentType": "image/png", "sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
+               "sizeBytes": len(data), "width": w, "height": h, "isPrimary": primary, "sourcePath": ref,
+               "fetchedAt": fetched}
+              for data, w, h, primary, ref, fetched in ((OLD_PORTRAIT, 4, 5, False, "/old-portrait.png", "2026-07-01T09:05:00Z"),
+                                                        (NEW_PORTRAIT, 6, 7, True, "/new-portrait.png", "2026-09-30T08:00:01Z"))])
+        item_row = rows_of(out, "--text-language", "und")[0][iid]
+        t.eq("and the item's row the state it reflects and its TMDB freshness",
+             (item_row["modifiedAt"], item_row["tmdbFetchedAt"], item_row["tmdbChangedAt"]),
+             ("2026-08-01T09:00:00Z", "2026-08-01T08:59:00Z", "2026-07-30"))
+        ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+        code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("the tree agrees with the export it came from, every field and every projection's freshness compared",
+             code == 0 and "the tree and the database agree" in ctext and "freshness unknown" not in ctext, ctext)
+
+        pristine = jload(export)
+
+        def changed(change):
+            """--compare of the tree against the export with the person's row changed, and nothing
+            projected again."""
+            e = json.loads(json.dumps(pristine))
+            change(e["people"][0])
+            path = os.path.join(tmp, "changed.json")
+            jwrite(path, e)
+            return run(REBUILD, out, "--compare", path, "--text-language", "und", "--ignore-fields", ignore)
+
+        def portrait_row(i, **fields):
+            return lambda p: p["artwork"][i].update(fields)
+
+        for what, change, phrase in (
+                ("the name", lambda p: p.update(name="Ann Director"), "people.name: 1 difference"),
+                ("the name it sorts under", lambda p: p.update(sortName="Director, Ann"), "people.sortName: 1 difference"),
+                ("another name", lambda p: p.update(alsoKnownAs=["A. D."]), "people.alsoKnownAs: 1 difference"),
+                ("the birth date", lambda p: p.update(birthDate="1970-01-03"), "people.birthDate: 1 difference"),
+                ("the death date", lambda p: p.update(deathDate=None), "people.deathDate: 1 difference"),
+                ("the birthplace", lambda p: p.update(birthPlace="Another Town"), "people.birthPlace: 1 difference"),
+                ("the department", lambda p: p.update(knownForDepartment="Writing"), "people.knownForDepartment: 1 difference"),
+                ("the biography", lambda p: p.update(biography={"en": "Directs examples."}), "people.biography: 1 difference"),
+                ("a reference id", lambda p: p["externalIds"].update(tmdbPerson="43"), "people.externalIds: 1 difference"),
+                ("the lock", lambda p: p.update(metadataLocked=True), "people.metadataLocked: 1 difference"),
+                ("the locked fields", lambda p: p.update(lockedFields=["biography", "name"]), "people.lockedFields: 1 difference"),
+                ("where a field came from", lambda p: p["fieldOrigins"].update(name="manual"), "people.fieldOrigins: 1 difference"),
+                ("when TMDB was asked", lambda p: p.update(tmdbFetchedAt="2026-09-30T09:00:00Z"), "people.tmdbFetchedAt: 1 difference"),
+                ("when TMDB last changed the person", lambda p: p.update(tmdbChangedAt="2026-09-30"), "people.tmdbChangedAt: 1 difference"),
+                ("which portrait is primary", lambda p: (portrait_row(0, isPrimary=True)(p), portrait_row(1, isPrimary=False)(p)),
+                 "people.artwork.isPrimary: 2 difference"),
+                ("the path TMDB lists a portrait under", portrait_row(1, sourcePath="/newer.png"), "people.artwork.sourcePath: 1 difference"),
+                ("a portrait's width", portrait_row(1, width=60), "people.artwork.width: 1 difference"),
+                ("a portrait's height", portrait_row(1, height=70), "people.artwork.height: 1 difference"),
+                ("when a portrait was fetched", portrait_row(1, fetchedAt="2026-09-30T08:30:00Z"), "people.artwork.fetchedAt: 1 difference"),
+                ("a portrait's type", portrait_row(1, contentType="image/jpeg"), "people.artwork.contentType: 1 difference"),
+                ("a portrait's kind", portrait_row(1, kind="poster"), "people.artwork.kind: 1 difference"),
+                ("a portrait's bytes", portrait_row(1, base64=base64.b64encode(png(8, 9)).decode(), sha256=None),
+                 "people.artwork: 2 difference"),
+                ("the row, modified since", lambda p: p.update(modifiedAt="2026-09-30T09:00:00Z"),
+                 "people: stale projection — the database changed after it was projected")):
+            code, ctext = changed(change)
+            t.ok(f"--compare catches the database changing {what}", code == 1 and phrase in ctext, ctext)
+
         # ---- what the export says that a record cannot hold, or that its bytes contradict
         e = jload(export)
         e["items"][0].update(tmdbFetchedAt=None)
@@ -1422,6 +1559,33 @@ def test_people_in_full(t):
              and person_doc(out, DIRECTOR)["images"][0]["file"] == hashlib.sha256(NEW_PORTRAIT).hexdigest() + ".png", text)
         t.ok("and the portrait the new projection no longer names is removed with it",
              not os.path.exists(os.path.join(folder, hashlib.sha256(OLD_PORTRAIT).hexdigest() + ".png")))
+
+    # ---- a person record goes stale — a death, a new photo — and projecting again makes it current
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid = full_export(os.path.join(tmp, "share"))
+        e = jload(export)
+        e["people"][0] = full_person(deathDate=None, tmdbChangedAt="2026-06-30", tmdbFetchedAt="2026-07-01T09:05:00Z",
+                                     modifiedAt="2026-07-01T09:05:30Z",
+                                     artwork=[dict(full_person()["artwork"][0], isPrimary=True)])
+        jwrite(export, e)
+        out = os.path.join(tmp, "library")
+        run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", ignore)
+        t.ok("a person projected while alive agrees with the database of then", code == 0, text)
+        e["people"][0] = full_person()
+        jwrite(export, e)
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", ignore)
+        t.ok("once the database records the death and takes a new portrait, the record is a stale projection",
+             code == 1 and report_section(text, "people: stale projection") == [DIRECTOR]
+             and "the row was modified 2026-09-30T08:00:05Z, after the 2026-07-01T09:05:30Z this projection reflects" in text
+             and "people.deathDate: 1 difference(s)" in text, text)
+        items_before = stamps(os.path.join(out, "movies"))
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out, "--people-only")
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", ignore)
+        t.ok("projected again, it is current: the compare agrees, and no item record was written",
+             code == 0 and "the tree and the database agree" in text and stamps(os.path.join(out, "movies")) == items_before,
+             text)
 
 
 # ---------------------------------------------------------------- upgrading a tree in place

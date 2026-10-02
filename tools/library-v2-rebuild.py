@@ -9,8 +9,11 @@ The database is the working copy and this tree is the record that can rebuild it
 records, applies the item's events in the order they happened, and writes the rows a catalog would
 hold: the items and their texts, the images, the credits, the chapters and segments, one playback
 asset per package and one per original that is still there, the subtitles the package carries, and
-the people under people/ with their biographies, dates, reference ids and portraits. It needs no
-network and no other service, it can run against a copy, and running it twice gives the same answer.
+the people under people/ with their biographies, dates, reference ids and portraits — which one is
+primary, and the path TMDB lists each under — and for every row the state of the database row its
+projection reflects (modifiedAt, from databaseUpdatedAt) and when TMDB was last asked (tmdbFetchedAt,
+tmdbChangedAt, from sources). It needs no network and no other service, it can run against a copy,
+and running it twice gives the same answer.
 
 The bonus material beside a movie or series becomes rows of its own, under extras in the rows
 JSON: kind, title, language, runtime and season as extra.json recorded them, the order, hidden
@@ -54,20 +57,38 @@ then nothing can be called deleted: every item only on storage is lost.
 
 People are compared too. The database's people are the export's top-level people list when it
 carries one, and otherwise everyone its items credit, by personId and name — all a catalog without
-person records knows — and only the fields the export carries are compared. The deletion log holds
+person records knows — and only the fields the export carries are compared: every field of the
+people list there is, and of each portrait its bytes by their hash, kind, type, size, dimensions,
+whether it is primary, the path TMDB lists it under and when it was fetched. The deletion log holds
 items only, so a person is never an orphan: a person only on storage is lost when an item on storage
 that is lost, or that the database holds, credits them, and unreferenced — kept, not counted, and
 never swept — when nothing the database holds credits them. A person the database holds and the
 tree does not is a missing record; with --subset only when an item on storage credits them.
 
-Field by field it then reports where the rows both sides hold disagree. It exits non-zero for a lost
-item or person, a missing record and a field that disagrees — never for an orphan or an unreferenced
-person alone — so it can gate a migration.
+Every row both sides hold is then judged by how fresh its projection is. A projection says which
+state of its database row it reflects — databaseUpdatedAt, the row's modifiedAt when it was
+projected — so against the export's modifiedAt, to the second, an item or a person is one of:
+
+  stale projection  the row was modified after the state the projection reflects: the database
+                    changed since. It is fixed by projecting again, never by editing the file.
+  projection ahead  the projection reflects a later state than the export holds: an export older
+                    than the tree, or a database restored from before it.
+
+A projection that does not say which state it reflects — one written before 2026-10-02 (f) — is
+counted as of unknown freshness, and one whose row the export gives no modifiedAt is not judged.
+
+Field by field it then reports where the rows both sides hold disagree, and marks the rows whose
+projection is stale. It exits non-zero for a lost item or person, a missing record, a projection that
+is stale or ahead and a field that disagrees — never for an orphan, an unreferenced person or an
+unknown freshness alone — so it can gate a migration. An item row's tmdbFetchedAt and tmdbChangedAt,
+and an image row's dimensions, primary flag and TMDB path, are compared where the export carries
+them: an export from before them makes no tree that has them differ.
 
 Fields that cannot agree by construction are ignored by default (--ignore-fields):
   id     a database key, not a fact about the item
   path   the bytes moved into the version folder, so the database's old paths are stale
   hash   never filled by either side
+Ignoring modifiedAt leaves the freshness of every projection unjudged.
 A trailer link's localPath is compared by its file name for the same reason: a downloaded trailer
 moved into its extra's folder and kept its name, so whether the link has a local copy, and which
 file it is, can be compared, and where it lives cannot.
@@ -91,8 +112,10 @@ EXTERNAL_ID_SOURCE = {"tmdbMovie": "tmdb", "tmdbTv": "tmdb", "tmdbSeason": "tmdb
 # A person's reference ids as an export lists them ([{source, externalId}]) and as person.json keys them.
 PERSON_ID_FIELD = {"tmdb": "tmdbPerson", "themoviedb": "tmdbPerson", "tmdb-person": "tmdbPerson",
                    "imdb": "imdb", "tvdb": "tvdb", "wikidata": "wikidata"}
-PERSON_FIELDS = ("name", "sortName", "alsoKnownAs", "birthDate", "deathDate", "birthPlace", "biography",
-                 "externalIds", "artwork", "metadataLocked")
+PERSON_FIELDS = ("name", "sortName", "alsoKnownAs", "birthDate", "deathDate", "birthPlace", "knownForDepartment",
+                 "biography", "externalIds", "artwork", "metadataLocked", "lockedFields", "fieldOrigins",
+                 "tmdbFetchedAt", "tmdbChangedAt", "modifiedAt")
+DAY_RE = re.compile(r"^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?")
 
 
 def did(*parts):
@@ -145,6 +168,25 @@ EXTRA_DIRS = ("hls", "subs", "trickplay")
 
 def utc(t):
     return t.astimezone(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def image_origin(img):
+    """An image's origin as the object it has been since 2026-10-02 (f). A projection written before
+    names the source alone, which is read as {source: <it>}."""
+    o = img.get("origin")
+    return dict(o) if isinstance(o, dict) else {"source": o} if isinstance(o, str) and o else {}
+
+
+def artwork_row(img, file):
+    """An image of a projection as a catalog's artwork row holds it: what it is, its bytes by their
+    hash and size, whether it is the primary one of its kind, and the path TMDB lists it under when
+    it came from there."""
+    origin = image_origin(img)
+    return {"kind": img["kind"], "contentType": img["contentType"],
+            "fetchedAt": img.get("fetchedAt") or origin.get("fetchedAt"), "sha256": img["sha256"],
+            "sizeBytes": img["sizeBytes"], "width": img.get("width"), "height": img.get("height"),
+            "isPrimary": bool(img.get("primary")),
+            "sourcePath": origin.get("ref") if origin.get("source") == "tmdb" else None, "file": file}
 
 
 def local_copies(extras):
@@ -234,22 +276,28 @@ class Rebuild:
         self.storage.sort(key=lambda r: r["itemId"])
 
     def person(self, d):
-        """A person row, as the last projection left it: the texts, the dates, the reference ids, the
-        portraits and the lock. No credits: those are the items' rows."""
+        """A person row, as the last projection left it: the texts, the dates, the department, the
+        reference ids, the portraits — which one is primary, and where each came from — the lock and
+        the locked fields, where each field came from, when TMDB was last asked, and the state of the
+        row the projection reflects. No credits: those are the items' rows."""
         try:
             doc = load(os.path.join(d, "person.json"))
         except (OSError, ValueError) as e:
             self.note(f"{d}: no person.json to rebuild from ({e})")
             return
+        curation = doc.get("curation") or {}
+        tmdb = (doc.get("sources") or {}).get("tmdb") or {}
         self.people.append({
             "id": doc["personId"], "name": doc.get("name"), "sortName": doc.get("sortName"),
             "alsoKnownAs": list(doc.get("alsoKnownAs") or []), "birthDate": doc.get("birthDate"),
             "deathDate": doc.get("deathDate"), "birthPlace": doc.get("birthPlace"),
+            "knownForDepartment": doc.get("knownForDepartment"),
             "biography": dict(doc.get("biography") or {}), "externalIds": dict(doc.get("externalIds") or {}),
-            "metadataLocked": bool((doc.get("curation") or {}).get("metadataLocked")),
-            "artwork": [{"kind": i["kind"], "contentType": i["contentType"], "fetchedAt": i.get("fetchedAt"),
-                         "sha256": i["sha256"], "sizeBytes": i["sizeBytes"], "file": i["file"]}
-                        for i in doc.get("images") or []]})
+            "metadataLocked": bool(curation.get("metadataLocked")), "lockedFields": list(curation.get("lockedFields") or []),
+            "fieldOrigins": dict(doc.get("fieldOrigins") or {}),
+            "tmdbFetchedAt": tmdb.get("fetchedAt"), "tmdbChangedAt": tmdb.get("changedAt"),
+            "modifiedAt": doc.get("databaseUpdatedAt"),
+            "artwork": [artwork_row(i, i["file"]) for i in doc.get("images") or []]})
 
     def item(self, d):
         try:
@@ -392,6 +440,7 @@ class Rebuild:
         body = localized.get(self.text_language) or localized.get("und") or \
             (list(localized.values())[0] if len(localized) == 1 else {})
         library = meta.get("library") or {}
+        tmdb = (meta.get("sources") or {}).get("tmdb") or {}
         primary_id = library.get("primaryVersionId")
         primary = next((v for v in versions if v["id"] == primary_id), None) or (versions[0] if versions else None)
         release = meta.get("releaseDate")
@@ -406,6 +455,8 @@ class Rebuild:
             "parentId": item.get("seriesId"), "seasonNumber": item.get("seasonNumber"),
             "episodeNumber": item.get("episodeNumber"),
             "metadataLocked": bool((meta.get("curation") or {}).get("metadataLocked")),
+            "modifiedAt": meta.get("databaseUpdatedAt"),
+            "tmdbFetchedAt": tmdb.get("fetchedAt"), "tmdbChangedAt": tmdb.get("changedAt"),
             "createdAt": item.get("createdAt"), "createdBy": item.get("createdBy"),
             "externalIds": [{"source": EXTERNAL_ID_SOURCE.get(k, k), "externalId": v}
                             for k, v in sorted((item.get("externalIds") or {}).items())],
@@ -418,9 +469,7 @@ class Rebuild:
                           "durationSec": (v["durationMs"] // 1000) if v.get("durationMs") else None,
                           "localPath": copies.get(("site", v.get("site"), v.get("key"))) or copies.get(("url", v.get("url")))}
                          for v in meta.get("videos") or []],
-            "artwork": [{"kind": i["kind"], "contentType": i["contentType"], "fetchedAt": i.get("fetchedAt"),
-                         "sha256": i["sha256"], "sizeBytes": i["sizeBytes"],
-                         "file": os.path.join("metadata", i["file"])} for i in meta.get("images") or []],
+            "artwork": [artwork_row(i, os.path.join("metadata", i["file"])) for i in meta.get("images") or []],
         }
         if primary:
             for i, c in enumerate(primary["version"].get("chapters") or []):
@@ -550,25 +599,80 @@ LIST_KEYS = {
     "trailers": lambda x: (x.get("site"), x.get("externalId")),
 }
 SET_FIELDS = ("genres", "tags")
+# The lists whose entries are compared only in the fields the database's entry carries: an image row
+# gained its dimensions, its primary flag and its TMDB path with the people list, and an export from
+# before them does not make every image on storage differ.
+CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath")}
+# The fields of an item row compared only when the export's row carries them, for the same reason:
+# items do not carry them yet.
+CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt")
+
+
+def moment_of(value):
+    """A timestamp as an aware datetime — one without a zone read as UTC, the way the writer reads it —
+    or None when it is not one."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        t = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=datetime.timezone.utc)
+
+
+def stamp(value):
+    """A timestamp in one form and to the second, the precision an export prints, so one moment
+    written two ways compares as one; anything else as it is."""
+    t = moment_of(value)
+    return utc(t) if t else value
+
+
+def day(value):
+    """A date as a record holds one: the date part of a timestamp; anything else as it is."""
+    m = DAY_RE.match(value.strip()) if isinstance(value, str) else None
+    return m.group(0) if m else value
+
+
+def raw_of(a):
+    """The bytes an export's image row carries, or b"" when it carries none it can decode."""
+    try:
+        return base64.b64decode(a.get("base64") or "", validate=False)
+    except (ValueError, TypeError):
+        return b""
 
 
 def artwork_key(a):
     """An export carries the bytes and the tree carries their hash: comparing the hash compares the
-    image itself, whichever side it came from."""
-    if a.get("sha256"):
-        return a["sha256"]
-    raw = base64.b64decode(a.get("base64") or "", validate=False)
-    return "sha256:" + hashlib.sha256(raw).hexdigest() if raw else None
+    image itself, whichever side it came from. The bytes win over a hash the row records beside them,
+    and a bare hex digest is the same hash as sha256:<hex>."""
+    raw = raw_of(a)
+    if raw:
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+    digest = str(a.get("sha256") or "").strip().lower()
+    return ("sha256:" + digest if re.fullmatch(r"[0-9a-f]{64}", digest) else digest) or None
+
+
+def normalise_artwork(a):
+    """One image row as it can be compared: its bytes reduced to their hash, its fetchedAt to the
+    second, and of the fields an image row gained later only those the row carries."""
+    out = {"kind": a.get("kind"), "contentType": a.get("contentType"), "sha256": artwork_key(a),
+           "fetchedAt": stamp(a.get("fetchedAt")),
+           "sizeBytes": a.get("sizeBytes") if a.get("sizeBytes") is not None else len(raw_of(a)) or None}
+    for key in CARRIED_ENTRY_FIELDS["artwork"]:
+        if key in a:
+            out[key] = bool(a[key]) if key == "isPrimary" else a[key]
+    return out
 
 
 def normalise(row):
-    """A catalog row as it can be compared: the artwork reduced to its hash, nothing else changed."""
+    """A catalog row as it can be compared: the artwork reduced to its hash, its freshness in one form,
+    nothing else changed."""
     out = dict(row)
-    out["artwork"] = [{"kind": a.get("kind"), "contentType": a.get("contentType"), "sha256": artwork_key(a),
-                       "fetchedAt": a.get("fetchedAt"),
-                       "sizeBytes": a.get("sizeBytes") if a.get("sizeBytes") is not None
-                       else len(base64.b64decode(a.get("base64") or "", validate=False)) or None}
-                      for a in row.get("artwork") or []]
+    out["artwork"] = [normalise_artwork(a) for a in row.get("artwork") or [] if isinstance(a, dict)]
+    if "tmdbFetchedAt" in out:
+        out["tmdbFetchedAt"] = stamp(out["tmdbFetchedAt"])
+    if "tmdbChangedAt" in out:
+        out["tmdbChangedAt"] = day(out["tmdbChangedAt"])
     if isinstance(row.get("trailers"), list):
         # a downloaded trailer moved into its extra's folder and kept its name, so its local copy is
         # compared by that name: whether there is one, and that it is the same file
@@ -647,19 +751,53 @@ PEOPLE_CLASSES = (
     ("lost", "people: lost — on storage, not in the database, and credited by an item on storage: restore candidates"),
     ("missing", "people: missing record — in the database, not on storage"),
 )
+FRESHNESS = (
+    ("stale", "stale projection — the database changed after it was projected: project it again, never edit the file"),
+    ("ahead", "projection ahead of the database — it reflects a later state of the row than the export holds: "
+              "an export older than the tree, or a database restored from before it"),
+)
+PEOPLE_FRESHNESS = tuple((key, "people: " + label) for key, label in FRESHNESS)
 LISTED = 200
 
 
-def report_existence(lines, classes, labels, rows_of, what, counts_missing):
-    """Each class on its own, with every id. Returns how many of them count as differences: every
-    lost one, and the missing records counts_missing says count."""
+def freshness(mine, theirs):
+    """How the state of the row a projection reflects (mine, its databaseUpdatedAt) stands to the row
+    the export holds (theirs, its modifiedAt): 'stale' when the row was modified after it, 'ahead' when
+    the projection reflects a later state than the export holds, 'unknown' when the projection does
+    not say, and None when they agree or the export holds no modification time. To the second, the
+    precision an export prints."""
+    d = moment_of(theirs)
+    if d is None:
+        return None
+    t = moment_of(mine)
+    if t is None:
+        return "unknown"
+    d, t = d.replace(microsecond=0), t.replace(microsecond=0)
+    return "stale" if d > t else "ahead" if d < t else None
+
+
+def judge(found, rid, mine, theirs):
+    """File one row both sides hold under its freshness class. Returns True when its projection does
+    not say which state it reflects, so its freshness is unknown."""
+    v = freshness(mine.get("modifiedAt"), theirs.get("modifiedAt"))
+    if v == "stale":
+        found["stale"].append((rid, f"the row was modified {theirs['modifiedAt']}, after the {mine['modifiedAt']} "
+                                    f"this projection reflects"))
+    elif v == "ahead":
+        found["ahead"].append((rid, f"this projection reflects {mine['modifiedAt']}, and the export's row was "
+                                    f"modified {theirs['modifiedAt']}"))
+    return v == "unknown"
+
+
+def report_classes(lines, classes, labels, rows_of, what, counts):
+    """Each class on its own, with every id. Returns how many of them count as differences: those
+    counts(class, id) says count — of the missing records, those a subset is not expected to lack."""
     n = 0
     for key, label in labels:
         found = classes[key]
         if not found:
             continue
-        counted = len(found) if key == "lost" else \
-            sum(1 for iid, _ in found if counts_missing(iid)) if key == "missing" else 0
+        counted = sum(1 for iid, _ in found if counts(key, iid))
         excused = len(found) - counted if key == "missing" else 0
         lines.append(f"  {label}: {len(found)} {what}"
                      + (f", {excused} of which a subset is expected to lack" if excused else ""))
@@ -698,6 +836,10 @@ def normalise_person(p, text_language):
             v = person_ids(v)
         elif key == "artwork":
             v = normalise({"artwork": v})["artwork"]
+        elif key == "tmdbFetchedAt":
+            v = stamp(v)
+        elif key in ("birthDate", "deathDate", "tmdbChangedAt"):
+            v = day(v)
         out[key] = v
     return out
 
@@ -758,8 +900,8 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
         lines.append(f"  extras: {len(extras)} on storage, not compared: the catalog has no table for them yet")
     classes = existence(tree, db, log, newest or {})
     stale = sorted(iid for iid in set(log or {}) & set(db))
-    n = report_existence(lines, classes, CLASSES, lambda iid: tree.get(iid) or db.get(iid), "item(s)",
-                         lambda iid: not subset)
+    n = report_classes(lines, classes, CLASSES, lambda iid: tree.get(iid) or db.get(iid), "item(s)",
+                       lambda key, iid: key == "lost" or (key == "missing" and not subset))
     if stale:
         lines.append(f"  in the deletion log but held by the database again: {len(stale)} item(s), "
                      f"compared as the live items they are")
@@ -768,23 +910,37 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
     mine = {p["id"]: normalise(p) for p in tree_people}
     theirs = database_people(export, text_language)
     who, credited = people_existence(mine, theirs, tree, classes)
-    n += report_existence(lines, who, PEOPLE_CLASSES, lambda pid: mine.get(pid) or theirs.get(pid), "person(s)",
-                          lambda pid: not subset or bool(credited.get(pid)))
+    n += report_classes(lines, who, PEOPLE_CLASSES, lambda pid: mine.get(pid) or theirs.get(pid), "person(s)",
+                        lambda key, pid: key == "lost" or (key == "missing" and (not subset or bool(credited.get(pid)))))
+
+    # how fresh each projection both sides hold is: the state of its row it reflects, against the row
+    fresh, people_fresh, unknown = {"stale": [], "ahead": []}, {"stale": [], "ahead": []}, 0
+    if "modifiedAt" not in ignore:
+        unknown += sum(judge(fresh, iid, tree[iid], db[iid]) for iid in sorted(set(tree) & set(db)))
+        unknown += sum(judge(people_fresh, pid, mine[pid], theirs[pid]) for pid in sorted(set(mine) & set(theirs)))
+    n += report_classes(lines, fresh, FRESHNESS, lambda iid: tree.get(iid), "item(s)", lambda key, iid: True)
+    n += report_classes(lines, people_fresh, PEOPLE_FRESHNESS, lambda pid: mine.get(pid), "person(s)",
+                        lambda key, pid: True)
+    if unknown:
+        lines.append(f"  freshness unknown: {unknown} projection(s) do not say which state of their database row "
+                     f"they reflect (no databaseUpdatedAt), so whether they are stale cannot be told")
+    went_stale = {rid for rid, _ in fresh["stale"] + people_fresh["stale"]}
 
     fields = {}
     for iid in sorted(set(tree) & set(db)):
         a, b = tree[iid], db[iid]
         for key in sorted(set(a) | set(b)):
-            if key not in ignore:
-                n += diff_field(fields, iid, key, a, b, ignore)
+            if key in ignore or key == "modifiedAt" or (key in CARRIED_ITEM_FIELDS and key not in b):
+                continue
+            n += diff_field(fields, iid, key, a, b, ignore)
     for pid in sorted(set(mine) & set(theirs)):
-        for key in sorted(k for k in theirs[pid] if k != "id" and k not in ignore):
+        for key in sorted(k for k in theirs[pid] if k not in ("id", "modifiedAt") and k not in ignore):
             n += diff_field(fields, pid, key, mine[pid], theirs[pid], ignore, "people.")
     for key in sorted(fields):
         rows = fields[key]
         lines.append(f"  {key}: {len(rows)} difference(s)")
         for iid, a, b in rows[:5]:
-            lines.append(f"      {iid}: storage {a!r} != database {b!r}")
+            lines.append(f"      {iid}: storage {a!r} != database {b!r}" + (" — stale projection" if iid in went_stale else ""))
         if len(rows) > 5:
             lines.append(f"      … and {len(rows) - 5} more")
     return lines, n, len(classes["orphan"])
@@ -792,10 +948,11 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
 
 def diff_field(fields, iid, key, a, b, ignore, prefix=""):
     """One field of two rows: a list by the key of its entries, a set by its members, anything else
-    by value. Returns the number of differences."""
-    if key in LIST_KEYS:
+    by value — a person's externalIds among them, which is a map where an item's is a list. Returns
+    the number of differences."""
+    if key in LIST_KEYS and not isinstance(a.get(key), dict) and not isinstance(b.get(key), dict):
         return diff_list(fields, iid, key, a.get(key) or [], b.get(key) or [], ignore, prefix)
-    if key in SET_FIELDS or (prefix and key == "alsoKnownAs"):
+    if key in SET_FIELDS or (prefix and key in ("alsoKnownAs", "lockedFields")):
         not_here = sorted(set(b.get(key) or []) - set(a.get(key) or []))
         not_there = sorted(set(a.get(key) or []) - set(b.get(key) or []))
         fields.setdefault(prefix + key, []).extend([(iid, "not on storage", v) for v in not_here] +
@@ -820,9 +977,10 @@ def diff_list(fields, iid, key, mine, theirs, ignore, prefix=""):
     for k in sorted(set(b) - set(a), key=str):
         fields.setdefault(prefix + key, []).append((iid, "missing", b[k]))
         n += 1
+    carried = CARRIED_ENTRY_FIELDS.get(key, ())
     for k in sorted(set(a) & set(b), key=str):
         for f in sorted(set(a[k]) | set(b[k])):
-            if f in ignore:
+            if f in ignore or (f in carried and f not in b[k]):
                 continue
             if a[k].get(f) != b[k].get(f):
                 fields.setdefault(f"{prefix}{key}.{f}", []).append((iid, a[k].get(f), b[k].get(f)))
