@@ -17,7 +17,7 @@
     "databaseUpdatedAt": { "$ref": "defs.schema.json#/$defs/databaseUpdatedAt", "description": "The modification time of the person's database row this projection reflects, as defs.schema.json describes it. A person changes more often than an item does — a new role, a death, a new photo — so this is what tells a person record that went stale from a current one." },
     "sources": { "$ref": "defs.schema.json#/$defs/sources" },
 
-    "name": { "type": "string", "minLength": 1, "description": "The name the database displays. Each credit repeats it, as it was when that item was projected." },
+    "name": { "type": "string", "minLength": 1, "description": "The person's current name, as the database displays it. A credit records the name as it was for its title — it may be the one the person went by then — and a reader prefers this one wherever the person has a record." },
     "sortName": { "type": ["string", "null"], "description": "The name as it sorts, e.g. 'Hubert, Ian'." },
     "alsoKnownAs": {
       "type": "array",
@@ -28,6 +28,7 @@
     "birthDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }] },
     "deathDate": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/date" }, { "type": "null" }], "description": "Not before birthDate, as far as both are known." },
     "birthPlace": { "type": ["string", "null"] },
+    "knownForDepartment": { "type": ["string", "null"], "description": "The department the reference database says the person is best known for — 'Acting', 'Directing', 'Writing' — in its words. A hint for ordering what a person page shows, not a credit: the credits stay the items'." },
     "biography": {
       "type": "object",
       "description": "The biography in every language the database holds it in, keyed by BCP 47 language — 'und' when the database does not record which language its text is in. A reader picks the variant for its viewer the way it picks a localized title.",

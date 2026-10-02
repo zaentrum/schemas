@@ -707,7 +707,7 @@ def person(pid, portraits=(), **fields):
     doc = {"schema": "zaentrum.library.person/2", "personId": pid, "asOf": PROJECTED, "projectedBy": "catalog example",
            "databaseUpdatedAt": ROW_UPDATED, **({"sources": fields.pop("sources")} if "sources" in fields else {}),
            "name": fields.pop("name"), "sortName": None, "alsoKnownAs": [], "birthDate": None, "deathDate": None,
-           "birthPlace": None, "biography": {}, "externalIds": {}, "images": images,
+           "birthPlace": None, "knownForDepartment": None, "biography": {}, "externalIds": {}, "images": images,
            "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
            "fieldOrigins": {"name": "manual", "images": "manual"}}
     doc.update(fields)
@@ -729,12 +729,13 @@ def people():
            portraits=[("profile Mara Example, from the reference source",
                        {"source": "tmdb", "ref": "/example-profile-mara.jpg", "fetched": TMDB_FETCHED})],
            sources={"tmdb": {"fetchedAt": TMDB_FETCHED, "changedAt": TMDB_CHANGED}},
-           alsoKnownAs=["M. Example"], birthDate="1985-04", birthPlace="Example City",
+           alsoKnownAs=["M. Example"], birthDate="1985-04", birthPlace="Example City", knownForDepartment="Acting",
            biography={"en": "A fictional actor who plays the lead in Example Show.",
                       "de": "Eine erfundene Schauspielerin, die in Example Show die Hauptrolle spielt."},
            curation={"metadataLocked": False, "lockedFields": ["biography"], "notes": "biography written by hand"},
            fieldOrigins={"name": "manual", "sortName": "manual", "alsoKnownAs": "manual", "birthDate": "manual",
-                         "birthPlace": "manual", "biography": "manual", "images": "manual"})
+                         "birthPlace": "manual", "knownForDepartment": "tmdb", "biography": "manual",
+                         "images": "manual"})
 
 
 def main():

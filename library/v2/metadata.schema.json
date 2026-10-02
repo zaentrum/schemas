@@ -85,7 +85,7 @@
         "additionalProperties": false,
         "properties": {
           "personId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Stable: person pages are user-facing URLs keyed by it." },
-          "name": { "type": "string" },
+          "name": { "type": "string", "description": "The name as recorded for this title: the credit as the database held it when the item was projected, which may be the name the person went by then. The person's current name lives in their person.json; a reader prefers that one when it exists, and falls back to this when the person has no record yet." },
           "role": { "type": "string", "description": "actor, director, writer, producer, ..." },
           "character": { "type": ["string", "null"] },
           "order": { "type": ["integer", "null"] },
