@@ -64,8 +64,25 @@ jobs:
       - run: |
           python -m py_compile tools/make-library-v2-examples.py tools/test-validate-library-v2.py \
             tools/library-v2-from-catalog.py tools/library-v2-from-v1.py tools/library-v2-rebuild.py \
-            tools/library-v2-media-check.py tools/test-library-v2-tools.py
-      - name: the tools write a tree, read it back and catch a broken one
+            tools/library-v2-media-check.py tools/library-v2-upgrade.py tools/library-v2-sweep.py \
+            tools/test-library-v2-tools.py
+      - name: the tools write a tree, read it back, keep it and catch a broken one
         run: python tools/test-library-v2-tools.py
       - name: examples are up to date with their generator
         run: python tools/make-library-v2-examples.py && git diff --exit-code -- library/v2/examples
+
+  library-v2-pod:
+    # The tools that run where the share is mounted are piped into a pod's own Python 3.11, with
+    # nothing installed: prove them there, with no jsonschema (the validator's cases say they skip).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: |
+          python -m py_compile tools/library-v2-from-catalog.py tools/library-v2-from-v1.py \
+            tools/library-v2-rebuild.py tools/library-v2-media-check.py tools/library-v2-upgrade.py \
+            tools/library-v2-sweep.py
+      - name: the pod tools on the pod's Python
+        run: python tools/test-library-v2-tools.py
