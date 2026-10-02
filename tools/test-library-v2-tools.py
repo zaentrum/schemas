@@ -16,7 +16,8 @@ rule and checks the tool notices:
                  order a viewer sees it, with what never finished left out
   events         each kind changes the rebuilt rows as the README says, and removing the event
                  changes them back: a superseded package reappears, a removed version reappears, a
-                 deleted original becomes a playback asset again, and a note changes nothing
+                 deleted original becomes a playback asset again, a removed extra is a row again, and
+                 a note changes nothing
   compare        an item only on storage is an orphan when the deletion log explains it and lost
                  when it does not, an item only in the database is a missing record, and only the
                  last two fail; without a log nothing on storage can be called an orphan; a person

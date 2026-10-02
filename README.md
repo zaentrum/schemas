@@ -262,17 +262,21 @@ folder of the movie or series it belongs to — never an episode's; a series' ex
 season it belongs to, which must be one the series' `metadata.json` lists. `extra.json` records
 what it is — `kind` (`featurette`, `behind-the-scenes`, `making-of`, `deleted-scene`, `interview`,
 `trailer`, `teaser`, `gag-reel`, `short`, `other`), the `title` it came with and `localizedTitles`,
-`language`, `runtimeMs`, `seasonNumber`, the `originalFiles` kept in its folder, and, when the
-original was probed, the `container`, `streams`, `fidelity` and `essence` a source record carries,
-with the `probe` that found them. The folder is written once, like a version's: the original and/or
-a package (`hls/ subs/ trickplay/` and a `package.json` that is the same record a version's package
-is), with a `checksums.sha256` over `extra.json` and every file beside it. How a viewer sees the
+`language`, `runtimeMs`, `seasonNumber`, the `originalFiles` kept in its folder and, in `originals`,
+each one's size and fixity (`qh1`, and the `sha256` when known) the way a source record describes
+its file, and, when the original was probed, the `container`, `streams`, `fidelity` and `essence` a
+source record carries, with the `probe` that found them. An `origin` says where the file came from
+when that can be named: `kind: link` with the `site`, `externalId`, `url` and `fetchedAt` of a video
+published online that was downloaded. The folder is written once, like a version's: the original
+and/or a package (`hls/ subs/ trickplay/` and a `package.json` that is the same record a version's
+package is), with a `checksums.sha256` over `extra.json` and every file beside it; an extra is
+retired by an `extra-removed` event, as a version is by `version-removed`. How a viewer sees the
 extras is a decision, so it is projected: `metadata.json`'s `library.extras` holds, per extraId, the
 `order`, a `hidden` flag and a `label` instead of the title; an extra nobody decided anything about
 is shown after the ordered ones, in the order the extras were taken in. `metadata.json`'s `videos[]`
 stays the place for videos published online, by reference, and a package's `trailers` stay the
 playback layout v1 had; a trailer that exists as a local file of its own is an extra of kind
-`trailer`.
+`trailer`, whose `origin` names its link.
 
 | Schema | Document | `schema` field |
 |---|---|---|
@@ -334,20 +338,23 @@ above them. Whether an extra is finished is told by its folder alone:
 | no `checksums.sha256` and no package | an extra whose writer has not finished it: neither the database nor a rebuild uses it, and the sweep leaves it to the writer |
 
 Because the checksums are written once, an extra kept only as its original is never packaged in
-place; a package made later is a new extra folder.
+place. **Packaging it later is a new extra folder and an `extra-removed` event for the old one**:
+every reader ignores the old folder from then on, and the sweep collects it once the removal is
+older than its grace period. The example movie's trailer came to have its package that way.
 
 ### Applying events
 
 The records describe things that cannot change, so a reader — a rebuild, a verify, a player's
 catalog — reads an item's records first and then applies its `events/` in order of `at`, earliest
-first. Four kinds, and what each one changes:
+first. Five kinds, and what each one changes:
 
 | Kind | Effect |
 |---|---|
 | `original-deleted` | The originals it names are gone from the version folder: the source it names, or all of them when it names none. Once none is left, that version's package is the only copy of it — canonical, whatever `role` its record was written with — and everything the package failed to carry is permanent. |
 | `version-removed` | The version is no longer part of the item. Ignore its folder even when it is still on storage: its package is not playable, and nothing may point at it. |
 | `package-superseded` | The package it names is no longer the one to use; the package under `supersededBy` is authoritative for its version from that moment. The superseded folder stays exactly as it was. |
-| `note` | Nothing. It is something a person recorded that no other record holds. |
+| `extra-removed` | The extra its `extraId` names is no longer part of the item. Ignore its folder even when it is still on storage: it is not listed, not played, and nothing may point at it. The sweep collects a folder still there. |
+| `note` | Nothing. It is something a person recorded that no other record holds; it may name an extra by its `extraId`. |
 
 The **deletion gate** — what deleting a version's originals would cost — is not recorded anywhere.
 A reader computes it as the essence of the version's sources minus the essence of its package, so it
@@ -363,8 +370,10 @@ each version's chain holds, `package.json` exists exactly when `.complete` does,
 their own hash, events reference records that exist and a deletion accepts no more than the gate its
 records compute, episodes do not contradict their own numbering, a person folder holds its record and
 the images it lists, extras sit under a movie or a series and never an episode, an extra's checksums
-list `extra.json` and every file beside it, its package carries no trailers, only a series' extra
-names a season and only one the series lists, and `library.extras` names extras that are there):
+list `extra.json` and every file beside it and its `originals` describe exactly its `originalFiles`
+— with `--check-media` at the size and `qh1` they record — its package carries no trailers, only a
+series' extra names a season and only one the series lists, `library.extras` names extras that are
+there, and the folder of an extra an `extra-removed` event retired is ignored, gone or not):
 
 ```sh
 pip install "jsonschema[format-nongpl]>=4.23" referencing
@@ -428,9 +437,12 @@ rows, in the order a viewer sees them; an extra that never finished is left out 
 catalog has no extras table yet**, so these rows exist in the JSON only and `--compare` counts them
 without comparing them. `library-v2-from-catalog.py` writes a trailer the catalog downloaded — a link
 whose `localPath` is a file on the share — as an extra of kind `trailer` beside its movie or series,
-copied or moved in as `--media-mode` says, and keeps the link in `videos[]`; an episode's stays a
-link, and so does every trailer with `--media-mode none`. `extra.json` does not record which link a
-file was downloaded from, so the rebuilt link's `localPath` stays empty and `--compare` reports it.
+copied or moved in as `--media-mode` says, keeps the link in `videos[]` and names it in the extra's
+`origin`; an episode's stays a link, and so does every trailer with `--media-mode none`. The rebuild
+gives a link of `videos[]` the original an extra with that origin keeps as its `localPath`, and
+`--compare` compares a trailer's `localPath` by its file name — the file moved into its extra's
+folder and kept its name, the reason `path` is not compared at all — so a migrated tree agrees with
+the export it came from, downloaded trailers included. A removed extra has no row.
 
 ### Telling an orphan from a loss
 
@@ -479,7 +491,8 @@ reason, and with `--apply` removes it:
 |---|---|
 | a deleted item's folder | the export's deletion log names the id, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
 | an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it |
-| an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
+| an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not another event, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
+| a removed extra's folder | an `extra-removed` event names it and is older than the grace, and nothing else names the extra — not `library.extras`, not another event, not the export: the whole folder, whatever it holds |
 | a dropped image | named by the hash of its own bytes, in an item's `metadata/` or beside a `person.json`, and not listed by a projection that is itself older than the grace |
 
 Everything must be older than the grace period (`--grace 24h` by default), because a write in flight
@@ -502,6 +515,18 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-02 (e)** — an extra says what it holds, where it came from, and when it is gone. An
+  extra is written once, so these had to be in it before anything real is migrated. `extra.json`
+  gains `originals`, required: for each of its `originalFiles`, the name, size and fixity (`qh1`, the
+  `sha256` when known) as a source record describes its file, so the quick media check verifies an
+  extra's original by its size and `qh1` without `--checksums`, as it does a version's. It gains an
+  optional `origin` — `kind: link` with `site`, `externalId`, `url` and `fetchedAt` — that
+  `library-v2-from-catalog.py` fills for a downloaded trailer, so the rebuild gives the trailer link
+  its `localPath` back, and `--compare`, which compares that `localPath` by its file name, no longer
+  reports it. `event.schema.json` gains the kind `extra-removed`, subject an `extraId` (which only it
+  and a note may carry): a reader ignores that extra's folder, gone or not, the rebuild gives it no
+  row, and the sweep collects a folder that is still there. Packaging an extra kept only as its
+  original later is a new extra folder and an `extra-removed` event for the old one.
 - **2026-10-02 (d)** — bonus material. A featurette, a making-of or a trailer that is a file of its
   own had no place in the record. `extra.schema.json` is new: `extras/<extraId>/extra.json`
   (`zaentrum.library.extra/2`), inside the folder of the movie or series it belongs to — never an
