@@ -89,6 +89,8 @@ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 VTT_CUE = re.compile(r"^(\d+):(\d\d):(\d\d)\.(\d{3}) --> (\d+):(\d\d):(\d\d)\.(\d{3})")
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
 EXT_TYPE = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+IMAGE_NAME = re.compile(r"^([0-9a-f]{64})\.(jpg|png|webp)$")
+SWEEP = "library-v2-sweep.py collects it once it is older than the grace period"
 ID_KEYS = {"schema", "itemId", "seriesId", "sourceId", "versionId", "packageId", "eventId", "personId", "file",
            "path", "dir", "vttPath", "manifestPath", "originalFile", "name", "language", "type", "kind",
            "tmdbMovie", "tmdbTv", "tmdbSeason", "tmdbEpisode", "tmdbCollection", "imdb", "tvdb", "tmdbPerson",
@@ -447,7 +449,7 @@ class Checker:
         if os.path.isdir(md):
             for name in listdir(md):
                 if name not in listed:
-                    self.err(os.path.join(md, name), "not listed in metadata.json")
+                    self.unlisted(os.path.join(md, name), "metadata.json")
         self.projected_decisions(where, meta, versions, removed)
         self.credits(where, meta)
         return meta
@@ -485,6 +487,19 @@ class Checker:
                 elif recorded is not None and actual != recorded:
                     self.err(f, f"{label} is {actual} but recorded as {recorded}")
         return listed
+
+    def unlisted(self, f, owner):
+        """A file beside a projection that the projection does not list. An image named by the hash of
+        its own bytes is one an earlier projection listed and a later one dropped: garbage the sweep
+        collects, not a broken record, so it is a note. Anything else is an error."""
+        m = IMAGE_NAME.match(os.path.basename(f))
+        if m and os.path.isfile(f) and sha_file(f).split(":", 1)[1] == m.group(1):
+            self.note(f, f"an image {owner} no longer lists; {SWEEP}")
+        elif m and os.path.isfile(f):
+            self.err(f, f"not listed in {owner}, and not named by the hash of its own content")
+        else:
+            self.err(f, f"not listed in {owner}" + ("" if owner == "metadata.json" else
+                                                     f": not person.json and not an image {owner} lists"))
 
     def credits(self, where, meta):
         """A credit keys a person the database holds. Without a record in people/ the tree cannot
@@ -666,6 +681,8 @@ class Checker:
         if has_package != marker:
             self.err(vp, "package.json exists exactly when .complete does, and here only "
                          + ("package.json" if has_package else ".complete") + " is present")
+        elif not marker and any(os.path.exists(os.path.join(vp, n)) for n in PACKAGE_DIRS + (SUMS,)):
+            self.note(vp, f"a package that never finished: no .complete beside it; {SWEEP}")
         if pkg is not None:
             self.counts["packages"] += 1
             self.package(vp, v, pkg)
@@ -933,7 +950,7 @@ class Checker:
         listed = self.images(d, doc["images"], "person.json")
         for name in listdir(d):
             if name != "person.json" and name not in listed:
-                self.err(os.path.join(d, name), "not person.json and not an image person.json lists")
+                self.unlisted(os.path.join(d, name), "person.json")
         born, died = doc.get("birthDate"), doc.get("deathDate")
         if born and died and died[:min(len(born), len(died))] < born[:min(len(born), len(died))]:
             self.err(where, f"deathDate {died} is before birthDate {born}")
@@ -963,7 +980,10 @@ class Checker:
         self.root_dir = r
         found = 0
         for name in listdir(r):
-            if name not in ROOT_ENTRIES:
+            if name == "_swept":
+                self.err(os.path.join(r, name), "the quarantine of a library-v2-sweep.py --apply that did not "
+                                                "finish; the next --apply finishes it")
+            elif name not in ROOT_ENTRIES:
                 self.err(os.path.join(r, name), "a library root holds only movies/, series/ and people/")
         for category, kind in CATEGORIES:
             base = os.path.join(r, category)

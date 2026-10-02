@@ -43,6 +43,7 @@ OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
 EXT_TYPE = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+IMAGE_NAME = re.compile(r"^([0-9a-f]{64})\.(jpg|png|webp)$")
 SUMS = "checksums.sha256"
 CHAIN = (".complete", "package.json", SUMS)
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")
@@ -105,6 +106,7 @@ class Check:
     def __init__(self, hash_everything):
         self.hash_everything = hash_everything
         self.problems = []
+        self.notes = []
         self.counts = {"items": 0, "people": 0, "versions": 0, "packages": 0, "originals": 0, "deleted": 0,
                        "images": 0, "files": 0, "bytes": 0}
 
@@ -219,7 +221,7 @@ class Check:
         listed = self.images(md, (meta or {}).get("images") or [], "metadata.json")
         for name in (listdir(md) if os.path.isdir(md) else []):
             if name not in listed:
-                self.err(os.path.join(md, name), "not listed in metadata.json")
+                self.unlisted(os.path.join(md, name), "metadata.json")
 
     def images(self, folder, entries, owner):
         """Every image a projection lists is in folder, named by the hash of its own content, with
@@ -246,6 +248,17 @@ class Check:
                 self.err(f, f"image extension does not match {img['contentType']}")
         return listed
 
+    def unlisted(self, f, owner):
+        """An image named by its own hash that the projection no longer lists is one a later
+        projection dropped: a note, for library-v2-sweep.py. Anything else unlisted is a problem."""
+        m = IMAGE_NAME.match(os.path.basename(f))
+        if m and os.path.isfile(f) and sha_file(f).split(":", 1)[1] == m.group(1):
+            self.notes.append(f"{f}: an image {owner} no longer lists; library-v2-sweep.py collects it")
+        elif owner == "metadata.json":
+            self.err(f, "not listed in metadata.json")
+        else:
+            self.err(f, f"not person.json and not an image {owner} lists")
+
     def person(self, d):
         """people/<aa>/<personId>/: person.json and the images it lists, nothing else."""
         doc = self.load(os.path.join(d, "person.json"))
@@ -255,7 +268,7 @@ class Check:
         listed = self.images(d, doc.get("images") or [], "person.json")
         for name in listdir(d):
             if name != "person.json" and name not in listed:
-                self.err(os.path.join(d, name), "not person.json and not an image person.json lists")
+                self.unlisted(os.path.join(d, name), "person.json")
         self.hard_links(d)
 
     # -------------------------------------------------- one version
@@ -418,6 +431,8 @@ def main():
     c = Check(args.checksums)
     c.run(os.path.abspath(args.root))
     print("checked:", c.counts)
+    for n in c.notes[:50]:
+        print("  note " + n)
     if not c.problems:
         print("OK")
         return 0

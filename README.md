@@ -47,6 +47,7 @@ tools/
   library-v2-rebuild.py            the catalog contents a v2 tree implies
   library-v2-media-check.py        check a v2 tree against the bytes, without jsonschema
   library-v2-upgrade.py            upgrade a v2 tree in place to the layout in which every record proves itself
+  library-v2-sweep.py              find provable garbage in a v2 tree and, through a quarantine, remove it
   test-library-v2-tools.py         prove the v2 tools do what they say
 ```
 
@@ -355,6 +356,9 @@ python tools/library-v2-media-check.py /…/library [--checksums]
 # a tree written before 2026-10-02 (b), brought to the layout in which every record proves itself
 python tools/library-v2-upgrade.py /…/library [--dry-run] [--verbose]
 
+# what a writer left behind that the records prove is garbage: listed, and with --apply removed
+python tools/library-v2-sweep.py /…/library [--export catalog.json] [--grace 24h] [--apply] [--verbose]
+
 python tools/test-library-v2-tools.py   # prove every one of them does what it says
 ```
 
@@ -407,11 +411,51 @@ holds items only, so a person is never an orphan and never swept: a person only 
 when an item on storage that is lost, or that the database holds, credits them, and *unreferenced* —
 listed, kept, not a failure — when nothing the database holds credits them.
 
+### Sweeping what a writer missed
+
+Nothing walks the tree on its own, so garbage a writer leaves stays until someone collects it.
+`library-v2-sweep.py` finds what the records and the database prove is garbage, lists it with the
+reason, and with `--apply` removes it:
+
+| What | Proved by |
+|---|---|
+| a deleted item's folder | the export's deletion log names the id, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
+| an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it |
+| a dropped image | named by the hash of its own bytes, in an item's `metadata/` or beside a `person.json`, and not listed by a projection that is itself older than the grace |
+
+Everything must be older than the grace period (`--grace 24h` by default), because a write in flight
+looks exactly like garbage: a record is written before its database row, and an image before the
+projection that lists it. It never touches anything referenced, anything younger than the grace,
+anything it cannot classify, or a person's folder — the deletion log holds items only — and it lists
+what it left alone and why. Without `--export`, or with a `deletedItems` that is `null`, no item
+folder is swept at all.
+
+`--apply` renames every target into a quarantine at the library root, `_swept/<YYYYMMDDTHHMMSSZ>/`,
+with a `sweep.json` that says where each came from — a rename on the same filesystem, never a copy.
+It then reads the export, the projections and the events again, puts back anything referenced by
+then, and only after that deletes the quarantine. A quarantine an interrupted `--apply` left behind
+is finished by the next one; the validator names it until then. A file the validator would otherwise
+call unlisted — an image a projection dropped — is a note for the sweep, not an error, and so is a
+package that never finished.
+
 ### Library v2 changelog
 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-02 (c)** — garbage, and telling an orphan from a loss. Deleting an item never removed its
+  folder, and a rebuild could not tell a folder the database deleted from one it lost. The catalog
+  export now carries the database's deletion log, `deletedItems: [{id, deletedAt, deletedBy}]` —
+  `null` on a catalog that keeps none yet — and `library-v2-rebuild.py --compare` sorts every item
+  only on storage into **orphan** (in the log, nothing in its folder newer than the deletion: safe
+  to remove) or **lost** (anything else: restore it), and every item only in the database into
+  **missing record**; only lost and missing fail it. People are never orphans: a person nothing the
+  database holds credits is unreferenced and kept. `library-v2-sweep.py` is new: it finds the folders
+  of orphans, version folders that never finished and images no projection lists, each older than a
+  grace period, and with `--apply` removes them through a quarantine it checks again before deleting.
+  Format: an image named by its own hash that a projection no longer lists is a validator note, not
+  an error — it is what the sweep collects — and so is a package without its `.complete`; a
+  `_swept/` quarantine at the root is reported until the next `--apply` finishes it.
 - **2026-10-02 (b)** — the records themselves are protected. A version's `checksums.sha256` covered
   its package files but not `version.json` or `package.json`, the files a rebuild trusts. Now every
   folder written once carries the checksums of its records, written with them, so `sha256sum -c` in

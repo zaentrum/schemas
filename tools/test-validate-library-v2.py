@@ -277,6 +277,21 @@ def old_event(root):
     shutil.rmtree(os.path.dirname(ep))
 
 
+def dropped_image(folder):
+    """An image a projection listed once and a later one dropped: named by the hash of its bytes."""
+    data = b"\xff\xd8\xff\xfe\x00\x0bdropped\xff\xd9"
+    with open(os.path.join(folder, hashlib.sha256(data).hexdigest() + ".jpg"), "wb") as f:
+        f.write(data)
+
+
+def unfinished_package(root):
+    """The director's cut as a packager that died left it: its originals and record, part of a
+    package, and no package.json or .complete."""
+    vp = kept(root)
+    for name in (".complete", "package.json", "checksums.sha256"):
+        os.remove(os.path.join(vp, name))
+
+
 def note(root, at="2026-09-20T09:45:00Z", **fields):
     """Add a note event to the movie."""
     new_event(movie(root), {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": at, "by": "test",
@@ -526,6 +541,13 @@ CASES = [
     ("a credit to a person with no record is a note", True, lambda r: shutil.rmtree(director(r)), "who has no people/", []),
     ("a person nothing is known about but a name", True, bare_person, "OK", ["--check-media"]),
     ("a death known only to the year of the birth", True, lambda r: edit(pjson(lead(r)), lambda d: d.update(deathDate="1985")), "OK", []),
+
+    # ---- garbage a writer left: a note for the sweep, not a broken record
+    ("an image a later projection dropped is a note", True, lambda r: dropped_image(os.path.join(movie(r), "metadata")), "metadata.json no longer lists; library-v2-sweep.py", []),
+    ("a portrait a later projection dropped is a note", True, lambda r: dropped_image(lead(r)), "person.json no longer lists; library-v2-sweep.py", ["--check-media"]),
+    ("a file beside a projection that claims a hash it does not have", False, lambda r: open(os.path.join(movie(r), "metadata", "a" * 64 + ".jpg"), "wb").write(b"\xff\xd8 other bytes"), "not named by the hash of its own content", []),
+    ("a package that never finished is a note", True, unfinished_package, "a package that never finished", []),
+    ("a quarantine an interrupted sweep left", False, lambda r: os.makedirs(os.path.join(r, "_swept", "20261002T120000Z")), "the quarantine of a library-v2-sweep.py --apply that did not finish", []),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in

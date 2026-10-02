@@ -45,7 +45,7 @@
     },
     "images": {
       "type": "array",
-      "description": "Every image file in this folder that the projection uses, beside person.json. An image a later projection stops naming is left to be swept.",
+      "description": "Every image file in this folder that the projection uses, beside person.json. An image a later projection stops naming is left to be swept (library-v2-sweep.py).",
       "items": {
         "$ref": "defs.schema.json#/$defs/image",
         "properties": {

@@ -28,6 +28,10 @@ rule and checks the tool notices:
                  run changes nothing, a stopped run is finished by the next, a second run does
                  nothing, and whatever contradicts its records is refused and left as it was
   proves itself  sha256sum -c passes in every write-once folder, and each version is one chain
+  sweep          a dry run finds every kind of garbage and only it, --apply removes exactly that
+                 through a quarantine it checks again — putting back what is referenced by then — and
+                 finishes one an interrupted run left; whatever is referenced, younger than the
+                 grace, unclassifiable or a person's is left alone, with the reason
   v1 -> v2       the v1 example tree converts, the result passes validate-library-v2.py and the
                  media check, the texts and the packages survive, and a second run does nothing
   catalog -> v2  an export, a package store and source files become a tree that validates; the
@@ -36,7 +40,7 @@ rule and checks the tool notices:
   media check    every check it makes fails on a tree that breaks it and passes on one that does not
   the pieces     the JPEG and PNG header parsing, the qh1 fingerprint and the generated ids
 """
-import base64, datetime, glob, hashlib, importlib.util, json, os, shutil, subprocess, sys, tempfile, uuid
+import base64, datetime, glob, hashlib, importlib.util, json, os, shutil, subprocess, sys, tempfile, time, uuid
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES = os.path.join(TOOLS, "..", "library", "v2", "examples")
@@ -46,6 +50,7 @@ FROM_V1 = os.path.join(TOOLS, "library-v2-from-v1.py")
 REBUILD = os.path.join(TOOLS, "library-v2-rebuild.py")
 MEDIA_CHECK = os.path.join(TOOLS, "library-v2-media-check.py")
 UPGRADE = os.path.join(TOOLS, "library-v2-upgrade.py")
+SWEEP = os.path.join(TOOLS, "library-v2-sweep.py")
 VALIDATOR = os.path.join(TOOLS, "validate-library-v2.py")
 
 
@@ -474,6 +479,25 @@ def test_export_sample(t):
         t.ok("against a catalog from before the log, every folder is lost and none an orphan",
              code == 1 and sorted(report_section(text, "lost")) == sorted(deleted + [kept])
              and not report_section(text, "orphan") and "deletedItems is null" in text, text)
+
+        # the sweep reads the same export; its deletions are recent, so the grace is said, not assumed
+        code, text = run(SWEEP, out, "--export", export, "--grace", "0")
+        t.eq("the sweep would remove exactly the folders the log names, and keeps the item that exists",
+             swept(text, out), sorted(os.path.join(out, "movies", i[:2], i) for i in deleted))
+        deleted_at = datetime.datetime(2026, 10, 2, 14, 1, 37, tzinfo=datetime.timezone.utc)
+        grace = int((datetime.datetime.now(datetime.timezone.utc) - deleted_at).total_seconds()) + 86400
+        for iid in deleted:
+            aged(os.path.join(out, "movies", iid[:2], iid), days=grace / 86400 + 1)
+        code, text = run(SWEEP, out, "--export", export, "--grace", f"{grace}s")
+        t.ok("but not while the deletion is younger than the grace, however old the folder", swept(text, out) == []
+             and "deleted 2026-10-02T14:01:37Z, within the grace period" in text, text)
+        code, text = run(SWEEP, out, "--export", before, "--grace", "0")
+        t.ok("and against a catalog from before the log it sweeps no item folder at all",
+             swept(text, out) == [] and "deletedItems is null" in text, text)
+        code, text = run(SWEEP, out, "--export", export, "--grace", "0", "--apply")
+        t.ok("--apply removes them, and the item the database holds is still there",
+             code == 0 and not any(os.path.exists(os.path.join(out, "movies", i[:2], i)) for i in deleted)
+             and os.path.isfile(os.path.join(out, "movies", kept[:2], kept, "item.json")), text)
 
 
 def test_compare(t):
@@ -1189,6 +1213,287 @@ def test_upgrade(t):
              code == 0 and stamps(vp) == before and "removed by an event" in text, text)
 
 
+# ---------------------------------------------------------------- sweeping provable garbage
+GONE = "0d0d0d0d-0000-4000-8000-000000000001"           # an item the database deleted
+NOTHING_WROTE = "11111111-0000-4000-8000-00000000000b"  # a version folder with part of a package, no record
+RECORDED = "22222222-0000-4000-8000-00000000000b"       # a version that wrote its record, kept no original
+BESIDE = "33333333-0000-4000-8000-00000000000b"         # an unfinished package beside a kept original
+
+
+def aged(root, days=3):
+    """Every file and folder under root made days old: garbage counts only once it is older than
+    the grace, and a fresh copy of the examples is as new as the moment it was made."""
+    then = time.time() - days * 86400
+    for base, dirs, files in os.walk(root):
+        for n in dirs + files:
+            os.utime(os.path.join(base, n), (then, then), follow_symlinks=False)
+    os.utime(root, (then, then))
+
+
+def garbage(tmp, age=True):
+    """The examples with one of each kind of garbage in them, and the export of a database that holds
+    every item they hold and remembers deleting one more. Returns the tree, the export's path and
+    where each piece of garbage is."""
+    root = os.path.join(tmp, "library")
+    shutil.copytree(EXAMPLES, root)
+    movie = glob.glob(os.path.join(root, "movies", "*", "*"))[0]
+    kept = next(vp for vp in sorted(glob.glob(os.path.join(movie, "versions", "*")))
+                if jload(os.path.join(vp, "version.json"))["originalFiles"]
+                and all(os.path.isfile(os.path.join(vp, n)) for n in jload(os.path.join(vp, "version.json"))["originalFiles"]))
+    where = {"gone": outlive(root, GONE), "series": glob.glob(os.path.join(root, "series", "*", "*"))[0]}
+    where["nothing wrote"] = os.path.join(movie, "versions", NOTHING_WROTE)
+    os.makedirs(os.path.join(where["nothing wrote"], "hls", "v0"))
+    open(os.path.join(where["nothing wrote"], "hls", "v0", "seg-0001.m4s"), "wb").write(b"a segment")
+    where["recorded"] = os.path.join(movie, "versions", RECORDED)
+    os.makedirs(os.path.join(where["recorded"], "hls", "v0"))
+    jwrite(os.path.join(where["recorded"], "version.json"),
+           dict(jload(os.path.join(kept, "version.json")), versionId=RECORDED, originalFiles=[]))
+    where["beside"] = os.path.join(movie, "versions", BESIDE)
+    shutil.copytree(kept, where["beside"])
+    for name in (".complete", "package.json", "checksums.sha256"):
+        os.unlink(os.path.join(where["beside"], name))
+    jwrite(os.path.join(where["beside"], "version.json"),
+           dict(jload(os.path.join(where["beside"], "version.json")), versionId=BESIDE))
+    image = b"\xff\xd8\xff\xfe\x00\x0bdropped\xff\xd9"
+    where["dropped image"] = os.path.join(movie, "metadata", hashlib.sha256(image).hexdigest() + ".jpg")
+    open(where["dropped image"], "wb").write(image)
+    portrait = b"\xff\xd8\xff\xfe\x00\x0dportrait\xff\xd9"
+    lead = next(p for p in glob.glob(os.path.join(root, "people", "*", "*"))
+                if jload(os.path.join(p, "person.json"))["name"] == "Mara Example")
+    where["dropped portrait"] = os.path.join(lead, hashlib.sha256(portrait).hexdigest() + ".jpg")
+    open(where["dropped portrait"], "wb").write(portrait)
+    rows, _ = rows_of(EXAMPLES)
+    export = os.path.join(tmp, "catalog.json")
+    jwrite(export, {"exportedAt": "2026-10-01T12:00:00Z", "items": list(rows.values()),
+                    "deletedItems": [{"id": GONE, "deletedAt": "2026-09-30T10:00:00Z", "deletedBy": "librarian"}]})
+    if age:
+        aged(root)
+    return root, export, where
+
+
+def swept(text, root):
+    """The targets a sweep lists, as absolute paths."""
+    return sorted(os.path.join(root, line.split()[2 if line.startswith("  would") else 1])
+                  for line in text.splitlines() if line.startswith(("  would remove  ", "  remove  ")))
+
+
+def left_alone(text):
+    return [line.strip() for line in text.splitlines() if line.startswith("    ")]
+
+
+def test_sweep(t):
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        expected = sorted([where["gone"], where["nothing wrote"], where["recorded"],
+                           os.path.join(where["beside"], "hls"), os.path.join(where["beside"], "trickplay"),
+                           where["dropped image"], where["dropped portrait"]])
+        before = stamps(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.eq("a dry run finds every kind of garbage, and nothing else", swept(text, root), expected)
+        t.ok("and says why each one is garbage",
+             "deleted item: deleted 2026-09-30T10:00:00Z by librarian, and nothing in it is newer" in text
+             and "no .complete and no version.json: nothing can have known it" in text
+             and "no .complete, no original, and nothing names it" in text
+             and "beside the original" in text and "metadata.json no longer lists it" in text
+             and "person.json no longer lists it" in text, text)
+        t.ok("and changes nothing", code == 0 and stamps(root) == before and "run again with --apply" in text, text)
+
+        code, text = run_piped(SWEEP, root, "--export", export, "--apply")
+        rest = {k: v for k, v in stamps(root).items()}
+        gone = [k for k in before if not any(os.path.join(root, k) == e or os.path.join(root, k).startswith(e + os.sep)
+                                             for e in expected)]
+        t.ok("--apply, piped into a pod's Python, removes exactly those", code == 0
+             and not any(os.path.lexists(e) for e in expected) and "removed 7 target(s)" in text, text)
+        t.ok("and leaves every other file as it was", all(rest.get(k) == before[k] for k in gone))
+        t.ok("and no quarantine behind it", not os.path.exists(os.path.join(root, "_swept")))
+        t.ok("the original beside the unfinished package stays, with its record",
+             os.path.isfile(os.path.join(where["beside"], "version.json"))
+             and all(os.path.isfile(os.path.join(where["beside"], n))
+                     for n in jload(os.path.join(where["beside"], "version.json"))["originalFiles"]))
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-media", root)
+            t.ok("what is left is a valid record", code == 0 and "FAILED" not in vtext, vtext)
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("and a second sweep finds nothing", code == 0 and swept(text, root) == [], text)
+
+    # ---- what is not provably garbage is left alone, and the sweep says why
+    def refused(name, change, phrase, what="gone", extra=(), export_too=True, age_after=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, export, where = garbage(tmp)
+            change(root, export, where)
+            if age_after:
+                aged(root)
+            code, text = run(SWEEP, root, *(("--export", export) if export_too else ()), *extra)
+            t.ok(f"the sweep leaves alone {name}", code == 0 and where[what] not in swept(text, root)
+                 and any(phrase in line for line in left_alone(text) + text.splitlines()), text)
+
+    def export_edit(export, change):
+        doc = jload(export)
+        change(doc)
+        jwrite(export, doc)
+
+    def touch(p):
+        os.utime(p, None)
+
+    def movie_of(where):
+        return os.path.dirname(os.path.dirname(where["recorded"]))
+
+    refused("a deleted item the database holds again",
+            lambda r, e, w: export_edit(e, lambda d: d["items"].append({"id": GONE, "type": "movie", "title": "Back"})),
+            "the database holds it again")
+    refused("a deletion that is younger than the grace",
+            lambda r, e, w: export_edit(e, lambda d: d["deletedItems"][0].update(
+                deletedAt=(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))),
+            "within the grace period")
+    refused("a deleted item's folder written to within the grace",
+            lambda r, e, w: touch(os.path.join(w["gone"], "metadata.json")), "written to within the grace period")
+    refused("a deleted item's folder that holds a record newer than the deletion",
+            lambda r, e, w: export_edit(e, lambda d: d["deletedItems"][0].update(deletedAt="2026-09-19T00:00:00Z")),
+            "created again since")
+    refused("a deleted series one of whose episodes the database still holds",
+            lambda r, e, w: export_edit(e, lambda d: (
+                d["deletedItems"].append({"id": next(x["id"] for x in d["items"] if x["type"] == "series"),
+                                          "deletedAt": "2026-09-30T10:00:00Z", "deletedBy": "librarian"}),
+                d.update(items=[x for x in d["items"] if x["type"] != "series"]))),
+            "still holds its episode", what="series")
+    refused("a deleted item when the export carries no deletion log",
+            lambda r, e, w: export_edit(e, lambda d: d.update(deletedItems=None)), "deletedItems is null")
+    refused("a deleted item without an export", lambda r, e, w: None, "no --export", export_too=False)
+    refused("a version that wrote its record, without an export to say the database does not know it",
+            lambda r, e, w: None, "without --export the sweep cannot tell", what="recorded", export_too=False)
+    refused("an unfinished version metadata.json names",
+            lambda r, e, w: jwrite(os.path.join(movie_of(w), "metadata.json"), dict(
+                jload(os.path.join(movie_of(w), "metadata.json")),
+                library=dict(jload(os.path.join(movie_of(w), "metadata.json"))["library"], primaryVersionId=RECORDED))),
+            "metadata.json names it", what="recorded", age_after=True)
+    refused("an unfinished version an event names",
+            lambda r, e, w: write_event(movie_of(w), {"schema": "zaentrum.library.event/2", "eventId": str(uuid.uuid4()),
+                                                      "at": "2026-09-21T10:00:00Z", "by": "test", "kind": "note",
+                                                      "versionId": RECORDED, "reason": "a person looked at it"}),
+            "names it", what="recorded", age_after=True)
+    refused("an unfinished version the database names",
+            lambda r, e, w: export_edit(e, lambda d: d["items"][0]["playbackAssets"].append(
+                {"id": "x", "kind": "packaged", "path": f"/library/versions/{RECORDED}/package.json"})),
+            "the export names it", what="recorded")
+    refused("an unfinished version holding a file the sweep cannot classify",
+            lambda r, e, w: open(os.path.join(w["recorded"], "notes.txt"), "w").write("x"),
+            "cannot classify", what="recorded", age_after=True)
+    refused("an unfinished version written to within the grace",
+            lambda r, e, w: touch(os.path.join(w["recorded"], "version.json")), "written to within the grace period",
+            what="recorded")
+    refused("an image not named by the hash of its own bytes",
+            lambda r, e, w: open(w["dropped image"], "ab").write(b"x"), "not named by the hash of its own bytes",
+            what="dropped image", age_after=True)
+    refused("a file beside a projection that is not an image it can classify",
+            lambda r, e, w: shutil.move(w["dropped image"], os.path.join(os.path.dirname(w["dropped image"]), "poster.jpg")),
+            "not an image the sweep can classify", what="dropped image", age_after=True)
+    refused("an image dropped by a projection written within the grace",
+            lambda r, e, w: touch(os.path.join(movie_of(w), "metadata.json")),
+            "dropped by a metadata.json written within the grace period", what="dropped image")
+    refused("an image younger than the grace", lambda r, e, w: touch(w["dropped image"]), "written within the grace period",
+            what="dropped image")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        lead = os.path.dirname(where["dropped portrait"])
+        nobody = os.path.join(root, "people", "4e", "4e4e4e4e-0000-4000-8000-000000000001")
+        shutil.copytree(lead, nobody)
+        os.unlink(os.path.join(nobody, os.path.basename(where["dropped portrait"])))
+        jwrite(os.path.join(nobody, "person.json"), dict(jload(os.path.join(lead, "person.json")),
+                                                        personId=os.path.basename(nobody), name="Credited By Nothing"))
+        aged(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("a person's folder is never swept, not even when nothing credits the person",
+             not any(p.startswith(nobody) for p in swept(text, root)) and os.path.isdir(nobody), text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp, age=False)
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("garbage written moments ago is left for the grace period", swept(text, root) == [], text)
+        code, text = run(SWEEP, root, "--export", export, "--grace", "0")
+        t.ok("and --grace 0 sweeps it", where["dropped image"] in swept(text, root) and where["nothing wrote"] in swept(text, root), text)
+        code, text = run(SWEEP, root, "--grace", "a while")
+        t.ok("a grace that is not a duration is refused", code != 0 and "is not a grace period" in text, text)
+
+    # ---- the quarantine: checked again before anything is deleted, and finished if it was interrupted
+    sw = load_tool(SWEEP)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        s = sw.Sweep(root, sw.References(root, export), 86400, now)
+        s.run()
+        a = sw.Apply(s)
+        check = a.finish
+
+        def listed_again(q):
+            meta = os.path.join(movie_of(where), "metadata.json")
+            doc = jload(meta)
+            doc["images"].append({"kind": "poster", "file": os.path.basename(where["dropped image"])})
+            jwrite(meta, doc)
+            check(q)
+        a.finish = listed_again
+        a.run(now)
+        t.ok("a target a projection lists again by the time it is checked is put back, not deleted",
+             os.path.isfile(where["dropped image"]) and any("lists it again" in n for n in a.put_back)
+             and not os.path.exists(where["nothing wrote"]) and not os.path.exists(os.path.join(root, "_swept")), a.put_back)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        s = sw.Sweep(root, sw.References(root, export), 86400, now)
+        s.run()
+        a = sw.Apply(s)
+        check = a.finish
+
+        def held_again(q):
+            doc = jload(export)
+            doc["items"].append({"id": GONE, "type": "movie", "title": "Restored"})
+            jwrite(export, doc)
+            check(q)
+        a.finish = held_again
+        a.run(now)
+        t.ok("an item the database holds again by the time it is checked is put back: the export is read again",
+             os.path.isdir(where["gone"]) and any("the database holds it again" in n for n in a.put_back), a.put_back)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        s = sw.Sweep(root, sw.References(root, export), 86400, now)
+        s.run()
+        a = sw.Apply(s)
+        q = a.quarantine_dir(now)
+        a.write_plan(q, s.targets, now)
+        for target in s.targets:
+            os.makedirs(os.path.dirname(os.path.join(q, target["path"])), exist_ok=True)
+            os.rename(os.path.join(root, target["path"]), os.path.join(q, target["path"]))
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("a dry run says an earlier --apply did not finish", "did not finish" in text, text)
+        code, text = run(SWEEP, root, "--export", export, "--apply")
+        t.ok("and the next --apply checks and finishes it", code == 0 and not os.path.exists(os.path.join(root, "_swept"))
+             and "removed 7 target(s)" in text, text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        stray = os.path.join(root, "_swept", "unknown", "something")
+        os.makedirs(os.path.dirname(stray))
+        open(stray, "w").write("x")
+        code, text = run(SWEEP, root, "--export", export, "--apply")
+        t.ok("a quarantine without its sweep.json is left for a person, and the run says it failed",
+             code == 1 and "without its sweep.json" in text and os.path.isfile(stray), text)
+
+    if os.geteuid() != 0:
+        with tempfile.TemporaryDirectory() as tmp:
+            root, export, where = garbage(tmp)
+            folder = os.path.dirname(where["dropped image"])
+            os.chmod(folder, 0o555)
+            try:
+                code, text = run(SWEEP, root, "--export", export, "--apply")
+            finally:
+                os.chmod(folder, 0o755)
+            t.ok("a target that cannot be renamed into the quarantine is left where it is, and the run fails",
+                 code == 1 and "could not be renamed into the quarantine" in text and os.path.isfile(where["dropped image"]), text)
+    else:
+        t.skip("a target that cannot be renamed is left where it is", "permissions do not bind root")
+
+
 # ---------------------------------------------------------------- the media check
 def test_media_check(t):
     def case(name, expect_ok, change, phrase="", extra=()):
@@ -1220,6 +1525,12 @@ def test_media_check(t):
          "not named by the hash of its own content")
     case("an image that no record names", False,
          lambda r: open(os.path.join(movie(r), "metadata", "stray.jpg"), "wb").write(b"\xff\xd8"),
+         "not listed in metadata.json")
+    case("an image a later projection dropped, as a note for the sweep", True,
+         lambda r: open(os.path.join(movie(r), "metadata", hashlib.sha256(b"\xff\xd8dropped").hexdigest() + ".jpg"),
+                        "wb").write(b"\xff\xd8dropped"), "no longer lists; library-v2-sweep.py collects it")
+    case("a file that claims a hash it does not have", False,
+         lambda r: open(os.path.join(movie(r), "metadata", "b" * 64 + ".jpg"), "wb").write(b"\xff\xd8other"),
          "not listed in metadata.json")
     case("an original that is not there", False,
          lambda r: os.unlink(os.path.join(kept_version(r),
@@ -1358,7 +1669,7 @@ def main():
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog), ("people", test_people),
-                        ("upgrading a tree in place", test_upgrade),
+                        ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):
             continue
