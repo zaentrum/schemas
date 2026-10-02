@@ -39,9 +39,10 @@ with the bytes beside them, never about a document being up to date.
                itself consistently, does not collide with another episode, and sits in a season the
                series' metadata lists; its own numbering does not contradict the numbers item.json
                was created with, and no two episodes claim one place in one ordering
-  events       the folder name is the event's own moment, eventId and kind; every source, version and package
-               it names exists (a version-removed event is the exception — its folder may be gone,
-               and a folder it names is ignored altogether); a deletion names a version that had an
+  events       the folder name is the event's own moment, eventId and kind; every source, version, package
+               and extra it names exists (a version-removed or extra-removed event is the exception —
+               its folder may be gone, and a folder it names is ignored altogether, an extra's with a
+               note for the sweep; an episode has no extra to remove); a deletion names a version that had an
                original and one of that version's own sources, and accepts no more than the
                deletion gate — the essence of the version's sources minus that of its package,
                computed here because no record holds it; a package-superseded event names a
@@ -93,7 +94,7 @@ EXTRA_ENTRIES = {"extra.json", "package.json", SUMS, ".complete", *EXTRA_DIRS}
 # Each link of a version's chain holds the hash of the next one down, so none of them can be listed by
 # the checksums file it sits above.
 CHAIN = (".complete", "package.json", SUMS)
-EVENT_KINDS = ("original-deleted", "version-removed", "package-superseded", "source-removed", "note")
+EVENT_KINDS = ("original-deleted", "version-removed", "package-superseded", "source-removed", "extra-removed", "note")
 EVENT_FOLDER = re.compile(r"^(\d{8}T\d{6}Z)-([0-9a-f]{8})-(" + "|".join(EVENT_KINDS) + r")$")
 OLD_EVENT_FILE = re.compile(r"^\d{8}T\d{6}Z(?:-[0-9a-f]{8})?-(" + "|".join(EVENT_KINDS) + r")\.json$")
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")
@@ -422,15 +423,20 @@ class Checker:
                                                 f"{'; media belongs in versions/<versionId>/' if expect_type != 'series' else ''}")
         events = self.events(d)
         removed = {e["versionId"] for e in events if e["kind"] == "version-removed" and e.get("versionId")}
+        retired = {e["extraId"] for e in events if e["kind"] == "extra-removed" and e.get("extraId")}
         sources, versions, packages = {}, {}, {}
         if expect_type != "series":
             sources = self.sources(d)
             versions, packages = self.versions(d, sources, events, removed)
-        extras = self.extras(d) if expect_type != "episode" else {}
-        meta = self.metadata(d, item, versions, removed, extras)
+        extras = self.extras(d, retired) if expect_type != "episode" else {}
+        meta = self.metadata(d, item, versions, removed, extras, retired)
         if not valid:
             return  # the rules that span files assume the documented shape
         self.extra_seasons(d, expect_type, extras, meta)
+        if expect_type == "episode":
+            for e in events:
+                if e["kind"] == "extra-removed":
+                    self.err(e["where"], "an episode has no extras, so none can be removed from it")
 
         ids = item.get("externalIds") or {}
         if expect_type == "movie" and set(ids) & {"tmdbTv", "tmdbSeason", "tmdbEpisode"}:
@@ -442,14 +448,14 @@ class Checker:
                 self.err(ip, "an episode carries movie reference ids")
             self.episode(ip, item, meta, series)
 
-        self.event_subjects(events, sources, versions, packages, removed)
+        self.event_subjects(events, sources, versions, packages, removed, extras, retired)
         if expect_type == "series":
             self.series(d, item, meta)
         if self.check_media:
             self.hard_links(d)
 
     # ------------------------------------------------------------ metadata.json + metadata/
-    def metadata(self, d, item, versions=(), removed=(), extras=()):
+    def metadata(self, d, item, versions=(), removed=(), extras=(), retired=()):
         where = os.path.join(d, "metadata.json")
         meta, valid = self.document("metadata", where)
         if meta is None:
@@ -476,7 +482,7 @@ class Checker:
             for name in listdir(md):
                 if name not in listed:
                     self.unlisted(os.path.join(md, name), "metadata.json")
-        self.projected_decisions(where, meta, versions, removed, extras)
+        self.projected_decisions(where, meta, versions, removed, extras, retired)
         self.credits(where, meta)
         return meta
 
@@ -537,7 +543,7 @@ class Checker:
                 self.note(where, f"credit {c['name']!r} ({c['role']}) names person {pid}, who has no "
                                  f"people/{pid[:2]}/{pid}/person.json yet")
 
-    def projected_decisions(self, where, meta, versions, removed, extras=()):
+    def projected_decisions(self, where, meta, versions, removed, extras=(), retired=()):
         """metadata.library holds what the database decided about this item's storage, so every
         version and every extra it names has to be one that is really there."""
         lib = meta.get("library") or {}
@@ -551,7 +557,8 @@ class Checker:
                                 + ("a removed version" if vid in removed else "no version folder"))
         for xid in sorted(lib.get("extras") or {}):
             if xid not in extras:
-                self.err(where, f"library.extras names {xid}, which is no extras/<extraId>/ folder of this item")
+                self.err(where, f"library.extras names {xid}, which is "
+                                + ("a removed extra" if xid in retired else "no extras/<extraId>/ folder of this item"))
 
     # ------------------------------------------------------------ events/
     def events(self, d):
@@ -906,16 +913,20 @@ class Checker:
                         f"the library must hold independent files")
 
     # ------------------------------------------------------------ extras/
-    def extras(self, d):
+    def extras(self, d, retired=()):
         """extras/<extraId>/, each a write-once folder: extra.json, the originals it keeps and/or a
         package, and the checksums written with them. Returns {extraId: the record, or None when it
-        does not hold to its schema} for every extra folder that holds an extra.json."""
+        does not hold to its schema} for every extra folder that holds an extra.json. The folder of an
+        extra an extra-removed event retired is ignored, whatever it holds."""
         base = os.path.join(d, "extras")
         found = {}
         if not os.path.isdir(base):
             return found
         for name in listdir(base):
             p = os.path.join(base, name)
+            if name in retired:
+                self.note(p, f"the folder of an extra an extra-removed event removed: it is ignored, and {SWEEP}")
+                continue
             if not os.path.isdir(p):
                 self.err(p, "every extra is a folder under extras/: extras/<extraId>/ holding extra.json")
                 continue
@@ -1048,20 +1059,24 @@ class Checker:
                 self.err(where, f"season {x['seasonNumber']}, which the series' metadata.json does not list")
 
     # ------------------------------------------------------------ events against the records
-    def event_subjects(self, events, sources, versions, packages, removed):
+    def event_subjects(self, events, sources, versions, packages, removed, extras=(), retired=()):
         for e in events:
             subjects = [("sourceId", e.get("sourceId"), sources, "source record under sources/"),
                         ("packageId", e.get("packageId"), packages, "package of any version")]
             if e["kind"] != "version-removed":
                 # the one event whose subject is allowed to be gone: that is what it records
                 subjects.append(("versionId", e.get("versionId"), versions, "version folder under versions/"))
+            if e["kind"] != "extra-removed":
+                # and its counterpart for an extra
+                subjects.append(("extraId", e.get("extraId"), extras, "extra folder under extras/"))
             by = e.get("supersededBy") or {}
             subjects += [("supersededBy.versionId", by.get("versionId"), versions, "version folder under versions/"),
                          ("supersededBy.packageId", by.get("packageId"), packages, "package of any version")]
             for field, value, known, what in subjects:
                 if value and value not in known:
                     self.err(e["where"], f"{field} {value} names no {what}"
-                                         + (", and a removed version is not one" if value in removed else ""))
+                                         + (", and a removed version is not one" if value in removed else "")
+                                         + (", and a removed extra is not one" if value in retired else ""))
             if by.get("versionId") and by["versionId"] == e.get("versionId"):
                 self.err(e["where"], "supersededBy names the version it supersedes; a re-package is a new folder")
 

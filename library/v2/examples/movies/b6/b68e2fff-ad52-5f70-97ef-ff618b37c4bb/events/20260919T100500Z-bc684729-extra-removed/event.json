@@ -1,0 +1,9 @@
+{
+  "schema": "zaentrum.library.event/2",
+  "eventId": "bc684729-7e72-582c-adb5-a4e9f6c25cdf",
+  "at": "2026-09-19T10:05:00Z",
+  "by": "librarian example",
+  "kind": "extra-removed",
+  "extraId": "d274f018-ea8f-5e13-b1e5-90e4334a7b2c",
+  "reason": "packaged later: a new extra folder keeps the trailer and its package"
+}

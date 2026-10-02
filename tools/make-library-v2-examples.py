@@ -10,7 +10,8 @@ every record the format has and the shapes a reader most needs to see:
            second keeps its original next to its package, and carries a quality ladder. Beside
            them, in extras/, a featurette kept as its original and a package of its own, which the
            projection puts first and labels, and the trailer videos[] links to, downloaded, whose
-           origin names that link.
+           origin names that link. It was first kept as its original alone and packaged later, as a
+           new extra folder: an extra-removed event retired the old one.
   series/  one series with a season and two episodes. The first episode keeps its original and
            carries forced, full and SDH subtitles and a commentary track; the second was packaged
            from an original that was never kept here, so its package is canonical. Beside the
@@ -45,6 +46,7 @@ EXTRA_TAKEN = "2026-09-19T08:00:00Z"  # bonus material was taken in beside its m
 EXTRA_PACKAGED = "2026-09-19T08:40:00Z"  # and the featurette's package completed
 TRAILER_FETCHED = "2026-09-19T07:30:00Z"  # the trailer link was downloaded
 TRAILER_PACKAGED = "2026-09-19T10:00:00Z"  # and the trailer taken in with a package of its own
+TRAILER_RETIRED = "2026-09-19T10:05:00Z"   # the extra that had kept it as its original alone, retired
 
 # A fixed 1x1 JPEG and a fixed 1x1 transparent PNG, as bytes rather than generated, so the fixture
 # hashes do not depend on the library build that happens to run the generator.
@@ -474,6 +476,11 @@ def movie():
           "h264/high/8bit/sdr/1920x800", package=trailer_package, created=TRAILER_PACKAGED,
           origin={"kind": "link", "site": "example.org", "externalId": "tears-of-steel-trailer", "url": None,
                   "fetchedAt": TRAILER_FETCHED})
+    # The trailer was first kept as its original alone. An extra's checksums are written once, so it was
+    # packaged into a new extra folder — the one above — and this event retired the old one, whose
+    # folder is gone now: the event is all that is left of it.
+    event(mdir, TRAILER_RETIRED, "extra-removed", extraId=uid(mid, "extra", "trailer", "original-only"),
+          reason="packaged later: a new extra folder keeps the trailer and its package")
 
     write(os.path.join(mdir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": mid, "type": "movie",

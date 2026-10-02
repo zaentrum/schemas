@@ -42,7 +42,7 @@ import argparse, datetime, hashlib, json, os, re, stat, sys
 
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-KINDS = ("original-deleted", "version-removed", "package-superseded", "source-removed", "note")
+KINDS = ("original-deleted", "version-removed", "package-superseded", "source-removed", "extra-removed", "note")
 OLD_EVENT = re.compile(r"^(\d{8}T\d{6}Z)(?:-([0-9a-f]{8}))?-(" + "|".join(KINDS) + r")\.json$")
 EVENT_FOLDER = re.compile(r"^(\d{8}T\d{6}Z)-([0-9a-f]{8})-(" + "|".join(KINDS) + r")$")
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")

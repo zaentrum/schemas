@@ -182,6 +182,32 @@ def x_original(xp):
     return os.path.join(xp, json.load(open(xjson(xp)))["originalFiles"][0])
 
 
+def retirement(root):
+    """The movie's extra-removed event: it retired the extra that kept the trailer as its original alone."""
+    return only("movies/*/*/events/*-extra-removed/event.json", root)
+
+
+def retired(root):
+    return json.load(open(retirement(root)))["extraId"]
+
+
+def resurrect_extra(root):
+    """Put the removed extra's folder back, full of junk: an extra-removed event says to ignore the
+    folder even when it is still on storage."""
+    xp = os.path.join(movie(root), "extras", retired(root))
+    os.makedirs(xp)
+    with open(os.path.join(xp, "extra.json"), "w") as f:
+        f.write("this is not even JSON")
+    with open(os.path.join(xp, "notes.txt"), "w") as f:
+        f.write("x")
+
+
+def retire(item_dir, extra_id):
+    """An extra-removed event in item_dir, naming extra_id when it is not None."""
+    new_event(item_dir, {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": "2026-09-20T11:00:00Z",
+                         "by": "test", "kind": "extra-removed", **({"extraId": extra_id} if extra_id else {})})
+
+
 def x_decision(root, xid, decision):
     """The movie's projection deciding something about the extra xid."""
     edit(meta(movie(root)), lambda d: d["library"]["extras"].update({xid: decision}))
@@ -685,6 +711,16 @@ CASES = [
     ("a decision about an extra the format does not model", False, lambda r: x_decision(r, os.path.basename(featurette(r)), {"pinned": True}), "'pinned' was unexpected", []),
     ("a decision about an extra that decides nothing", False, lambda r: x_decision(r, os.path.basename(featurette(r)), {}), "should be non-empty", []),
     ("decisions about extras on an episode", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"].update(extras={NOWHERE: {"hidden": True}})), "must not have extras", []),
+
+    # ---- an extra retired by an event: its folder may be gone, and one still there is ignored
+    ("an extra-removed event without the extra it removes", False, lambda r: retire(movie(r), None), "'extraId' is a required property", []),
+    ("an extraId on an event about an original", False, lambda r: edit(deletion(r), lambda d: d.update(extraId=NOWHERE)), "must not have extraId", []),
+    ("an extra-removed event in an episode", False, lambda r: retire(episode(r, 1), NOWHERE), "an episode has no extras, so none can be removed", []),
+    ("a removed extra's folder still on storage is ignored, and noted for the sweep", True, resurrect_extra, "the folder of an extra an extra-removed event removed", ["--check-checksums"]),
+    ("the projection deciding about a removed extra", False, lambda r: x_decision(r, retired(r), {"hidden": True}), "which is a removed extra", []),
+    ("a note about an extra that is not there", False, lambda r: note(r, extraId=NOWHERE), f"extraId {NOWHERE} names no extra folder under extras/", []),
+    ("a note about an extra that was removed", False, lambda r: note(r, extraId=retired(r)), "and a removed extra is not one", []),
+    ("a note about an extra", True, lambda r: note(r, extraId=os.path.basename(featurette(r))), "OK", []),
 
     # ---- what an extra may also be
     ("an extra kept only as its package", True, package_only, "OK", ["--check-checksums"]),
