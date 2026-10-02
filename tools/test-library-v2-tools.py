@@ -1277,6 +1277,153 @@ def test_people(t):
              code != 0 and "--packages and --media are needed" in text, text)
 
 
+# ---------------------------------------------------------------- the people list in full
+def png(width, height):
+    """The header of a PNG of this size: enough for every reader of the format to know it by."""
+    return (b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR" + width.to_bytes(4, "big") +
+            height.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + b"\x00" * 4)
+
+
+OLD_PORTRAIT, NEW_PORTRAIT = png(4, 5), png(6, 7)
+DIRECTOR = "99999999-8888-4777-8666-555555555555"
+
+
+def full_person(**changes):
+    """A person as the catalog's people list carries one, every field filled: the shape
+    library-v2-from-catalog.py maps into person.json and --compare compares. TMDB reported a change
+    the day after the person died, the database fetched it the day after that, and the row was
+    modified with what it fetched: a new portrait, now the primary one, beside the old."""
+    entry = {"id": DIRECTOR, "name": "A Director", "sortName": "Director, A", "alsoKnownAs": ["A. D.", "Ann Director"],
+             "birthDate": "1970-01-02", "deathDate": "2026-09-28", "birthPlace": "Example Town",
+             "biography": {"en": "Directs examples.", "de": "Führt Beispiele vor."},
+             "externalIds": {"tmdbPerson": "42", "imdb": "nm0000042"}, "knownForDepartment": "Directing",
+             "metadataLocked": False, "lockedFields": ["biography"],
+             "fieldOrigins": {"name": "tmdb", "birthDate": "tmdb", "deathDate": "tmdb", "biography": "manual"},
+             "tmdbFetchedAt": "2026-09-30T08:00:00Z", "tmdbChangedAt": "2026-09-29", "modifiedAt": "2026-09-30T08:00:05Z",
+             "artwork": [{"kind": "profile", "contentType": "image/png", "base64": base64.b64encode(OLD_PORTRAIT).decode(),
+                          "sha256": hashlib.sha256(OLD_PORTRAIT).hexdigest(), "width": 4, "height": 5,
+                          "isPrimary": False, "sourcePath": "/old-portrait.png", "fetchedAt": "2026-07-01T09:05:00Z"},
+                         {"kind": "profile", "contentType": "image/png", "base64": base64.b64encode(NEW_PORTRAIT).decode(),
+                          "sha256": "sha256:" + hashlib.sha256(NEW_PORTRAIT).hexdigest(), "width": 6, "height": 7,
+                          "isPrimary": True, "sourcePath": "/new-portrait.png", "fetchedAt": "2026-09-30T08:00:01Z"}]}
+    entry.update(changes)
+    return entry
+
+
+def full_export(share, **changes):
+    """fake_export's catalog with its people list in full, the item's own freshness with it, and an
+    export taken after all of it."""
+    export, media, packages, iid, _ = fake_export(share)
+    e = jload(export)
+    e["exportedAt"] = "2026-10-01T12:00:00Z"
+    e["items"][0].update(tmdbFetchedAt="2026-08-01T08:59:00Z", tmdbChangedAt="2026-07-30")
+    e["people"] = [full_person(**changes), {"id": "77777777-6666-4555-8444-333333333333", "name": "Credited Nowhere"}]
+    jwrite(export, e)
+    return export, media, packages, iid
+
+
+def portrait(data, fetched, ref, primary=False):
+    """The image entry person.json holds for one of full_person's portraits."""
+    digest = hashlib.sha256(data).hexdigest()
+    return {"kind": "profile", **({"primary": True} if primary else {}), "file": digest + ".png",
+            "sha256": "sha256:" + digest, "contentType": "image/png", "sizeBytes": len(data),
+            "width": int.from_bytes(data[16:20], "big"), "height": int.from_bytes(data[20:24], "big"),
+            "language": None, "sourceUrl": None, "fetchedAt": fetched,
+            "origin": {"source": "tmdb", "ref": ref, "fetchedAt": fetched}}
+
+
+def test_people_in_full(t):
+    """The people list the catalog exports, every field of it, into person.json — and what is not
+    there, or not right, stays out of the record rather than being guessed."""
+    other = "77777777-6666-4555-8444-333333333333"
+
+    def person_doc(out, pid):
+        p = os.path.join(out, "people", pid[:2], pid, "person.json")
+        return jload(p) if os.path.isfile(p) else {}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid = full_export(os.path.join(tmp, "share"))
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        t.ok("an export with its people list in full becomes a tree", code == 0, text)
+        t.eq("every field the people list carries becomes the person's, under the name person.json gives it",
+             person_doc(out, DIRECTOR),
+             {"schema": "zaentrum.library.person/2", "personId": DIRECTOR, "asOf": "2026-10-01T12:00:00Z",
+              "projectedBy": "library-v2-from-catalog", "databaseUpdatedAt": "2026-09-30T08:00:05Z",
+              "sources": {"tmdb": {"fetchedAt": "2026-09-30T08:00:00Z", "changedAt": "2026-09-29"}},
+              "name": "A Director", "sortName": "Director, A", "alsoKnownAs": ["A. D.", "Ann Director"],
+              "birthDate": "1970-01-02", "deathDate": "2026-09-28", "birthPlace": "Example Town",
+              "knownForDepartment": "Directing",
+              "biography": {"en": "Directs examples.", "de": "Führt Beispiele vor."},
+              "externalIds": {"tmdbPerson": "42", "imdb": "nm0000042"},
+              "images": [portrait(OLD_PORTRAIT, "2026-07-01T09:05:00Z", "/old-portrait.png"),
+                         portrait(NEW_PORTRAIT, "2026-09-30T08:00:01Z", "/new-portrait.png", primary=True)],
+              "curation": {"metadataLocked": False, "lockedFields": ["biography"], "notes": None},
+              "fieldOrigins": {"name": "tmdb", "birthDate": "tmdb", "deathDate": "tmdb", "biography": "manual"}})
+        folder = os.path.join(out, "people", DIRECTOR[:2], DIRECTOR)
+        t.ok("each portrait is beside it, named by its own content",
+             all(os.path.isfile(os.path.join(folder, i["file"])) for i in person_doc(out, DIRECTOR)["images"]))
+        meta = jload(os.path.join(out, "movies", iid[:2], iid, "metadata.json"))
+        t.eq("the item's projection says which state of its row it reflects, and when TMDB was last asked",
+             (meta.get("databaseUpdatedAt"), meta.get("sources")),
+             ("2026-08-01T09:00:00Z", {"tmdb": {"fetchedAt": "2026-08-01T08:59:00Z", "changedAt": "2026-07-30"}}))
+        t.eq("its image, which the row says nothing more of, came from the catalog and is not marked primary",
+             [({k: v for k, v in i["origin"].items()}, "primary" in i) for i in meta["images"]],
+             [({"source": "legacy-catalog", "fetchedAt": "2026-07-01T09:05:00Z"}, False)])
+        t.eq("a person the list holds by id and name alone is a record with nothing else in it",
+             {k: v for k, v in person_doc(out, other).items() if k not in ("schema", "personId", "asOf", "projectedBy")},
+             {"name": "Credited Nowhere", "sortName": None, "alsoKnownAs": [], "birthDate": None, "deathDate": None,
+              "birthPlace": None, "knownForDepartment": None, "biography": {}, "externalIds": {}, "images": [],
+              "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
+              "fieldOrigins": {"name": "legacy-catalog"}})
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", out)
+            t.ok("the tree passes validate-library-v2.py, the full person and the bare one alike",
+                 code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("the tree passes validate-library-v2.py", "jsonschema is not importable here")
+        code, mtext = run(MEDIA_CHECK, "--checksums", out)
+        t.ok("and the media check", code == 0 and "'people': 2" in mtext, mtext)
+
+        # ---- what the export says that a record cannot hold, or that its bytes contradict
+        e = jload(export)
+        e["items"][0].update(tmdbFetchedAt=None)
+        e["people"][0] = full_person(
+            modifiedAt="last tuesday", tmdbFetchedAt=None, fieldOrigins={"name": "tmdb", "biography": "wikipedia"},
+            artwork=[dict(a, isPrimary=True, contentType="image/jpeg", width=99) if i == 0 else a
+                     for i, a in enumerate(full_person()["artwork"])] +
+                    [dict(full_person()["artwork"][0], sha256="0" * 64, isPrimary=False)])
+        jwrite(export, e)
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out, "--people-only")
+        doc = person_doc(out, DIRECTOR)
+        t.ok("a modifiedAt that is not a moment is dropped with a note, and the record does not say which state it is",
+             code == 0 and "modifiedAt 'last tuesday' is not a moment, dropped" in text and "databaseUpdatedAt" not in doc, text)
+        t.ok("a TMDB change date without the fetch it belongs to is not recorded, and the run says so",
+             "sources" not in doc and "tmdbChangedAt 2026-09-29 without a tmdbFetchedAt is not recorded" in text, text)
+        t.ok("an origin of a field a record cannot name is dropped with a note, the rest kept as the database has them",
+             doc["fieldOrigins"] == {"name": "tmdb"} and "'wikipedia', which a record cannot name" in text, text)
+        t.eq("two primary portraits: the first the export lists stays primary, and the second is not",
+             [i.get("primary", False) for i in doc["images"]], [True, False])
+        t.ok("and the run says which", "a second primary profile" in text, text)
+        t.ok("the bytes decide what an image is, whatever the row says, and the run says where they disagree",
+             doc["images"][0]["contentType"] == "image/png" and doc["images"][0]["width"] == 4
+             and "says contentType 'image/jpeg', width 99 where its bytes say 'image/png', 4" in text, text)
+        t.ok("an entry whose bytes are another's is that image, listed once, and the run says so",
+             len(doc["images"]) == 2 and "profile artwork is byte-identical to the profile, listed once" in text, text)
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, out)
+            t.ok("and what is written is still a valid record", code == 0, vtext)
+
+        e["people"][0] = full_person(artwork=[dict(full_person()["artwork"][1], sha256="1" * 64)])
+        jwrite(export, e)
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out, "--people-only")
+        t.ok("a hash the row records that its bytes do not have is said, and the record names the bytes",
+             code == 0 and "is not the hash of its bytes" in text
+             and person_doc(out, DIRECTOR)["images"][0]["file"] == hashlib.sha256(NEW_PORTRAIT).hexdigest() + ".png", text)
+        t.ok("and the portrait the new projection no longer names is removed with it",
+             not os.path.exists(os.path.join(folder, hashlib.sha256(OLD_PORTRAIT).hexdigest() + ".png")))
+
+
 # ---------------------------------------------------------------- upgrading a tree in place
 def downgrade(root):
     """Turn a tree in today's layout into the one before 2026-10-02 (b), as the live trees are:
@@ -2290,6 +2437,7 @@ def main():
                         ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras), ("people", test_people),
+                        ("the people list in full", test_people_in_full),
                         ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("the media check", test_media_check)):

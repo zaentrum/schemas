@@ -50,6 +50,8 @@ ORDERINGS = ("aired", "dvd", "absolute", "production")
 IMAGE_KINDS = {"poster", "backdrop", "logo", "still", "banner", "thumb"}
 EXT_OF = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 ORIGINS = {"tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"}
+# Where a v1 image came from, which v2 keeps as the source of its origin.
+IMAGE_SOURCES = {"tmdb", "legacy-catalog", "manual"}
 EVIDENCE_SIGNALS = {"runtime", "container-title", "stream-title", "folder-name", "filename", "commentary-track",
                     "content-analysis", "encoder-tag", "codec-vs-title", "tmdb", "catalog", "manual"}
 LOSS_FLAGS = ("surround", "losslessAudio", "objectAudio", "hdr10Metadata", "dolbyVision", "stereo3d",
@@ -435,10 +437,12 @@ class Convert:
             seen[name] = img["kind"]
             self.w.move(p, os.path.join(md_dst, name))
             self.counts["images"] += 1
+            fetched = ts(img.get("fetchedAt"))
             entry = {"kind": img["kind"], "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
                      "sizeBytes": len(raw), "width": w, "height": h, "language": img.get("language"),
-                     "sourceUrl": img.get("sourceUrl"), "fetchedAt": ts(img.get("fetchedAt")),
-                     "origin": img.get("origin") if img.get("origin") in ORIGINS else "manual"}
+                     "sourceUrl": img.get("sourceUrl"), "fetchedAt": fetched,
+                     "origin": {"source": img.get("origin") if img.get("origin") in IMAGE_SOURCES else "manual",
+                                **({"fetchedAt": fetched} if fetched else {})}}
             if man["type"] == "series":
                 entry["season"] = img.get("season")
             out.append(entry)

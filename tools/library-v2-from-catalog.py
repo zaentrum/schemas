@@ -29,13 +29,23 @@ closes its chain last: checksums over version.json and the package, package.json
 People: a catalog without person records knows only what its credits say, a personId and a name, so
 that is what person.json holds and every other field stays empty. When the export carries a
 top-level people list, each entry's fields are used under the names person.json gives them — id,
-name, sortName, alsoKnownAs, birthDate, deathDate, birthPlace, biography (a string in
---text-language, or {language: text}), externalIds ({tmdbPerson, imdb, tvdb, wikidata}, or the
-[{source, externalId}] list items use), artwork ([{kind: "profile", base64, fetchedAt}]) and
-metadataLocked — and every person in it is written, credited or not, unless --items narrows the run
-to the people its items credit. person.json is a projection: it is replaced whole, and an image it
-no longer names is removed with it. --people-only writes people/ and touches no item folder, so a
-tree written earlier gains its people without rewriting a record.
+name, sortName, alsoKnownAs, birthDate, deathDate, birthPlace, knownForDepartment, biography (a
+string in --text-language, or {language: text}), externalIds ({tmdbPerson, imdb, tvdb, wikidata},
+or the [{source, externalId}] list items use), metadataLocked and lockedFields (its curation),
+fieldOrigins (the database's own record of where each field came from, used instead of the
+catalog's), and artwork ([{kind: "profile", base64, isPrimary, sourcePath, fetchedAt, …}]) — and
+every person in it is written, credited or not, unless --items narrows the run to the people its
+items credit. person.json is a projection: it is replaced whole, and an image it no longer names is
+removed with it. --people-only writes people/ and touches no item folder, so a tree written earlier
+gains its people without rewriting a record; run again after the database changed, it is how a
+person record that went stale is projected again.
+
+Every projection says how fresh it is. A row's modifiedAt — an item's or a person's — is the
+databaseUpdatedAt of its projection, the state of the row it reflects, and a row that carries
+tmdbFetchedAt (with tmdbChangedAt, the day TMDB last reported a change) gives it sources.tmdb; a row
+without them gets neither. An image is named by its own content, primary where the row's isPrimary
+says so — at most one of a kind, the first the export lists — and its origin is TMDB with the
+sourcePath it was fetched from when the row has one, and the catalog when it does not.
 
 The export is produced on the client side (see the query beside this tool in the runbook); this
 tool needs no database driver and no network, only the standard library, so it can be piped into
@@ -78,6 +88,9 @@ PERSON_IDS = {"tmdb": ("tmdbPerson", r"[0-9]+"), "themoviedb": ("tmdbPerson", r"
               "tmdb-person": ("tmdbPerson", r"[0-9]+"), "tmdbperson": ("tmdbPerson", r"[0-9]+"),
               "imdb": ("imdb", r"nm[0-9]+"), "tvdb": ("tvdb", r"[0-9]+"), "wikidata": ("wikidata", r"Q[0-9]+")}
 DATE_RE = re.compile(r"^([0-9]{4})(-[0-9]{2}(-[0-9]{2})?)?")
+TIMESTAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")
+# Where a projection's field came from, as fieldOrigins in defs.schema.json names it.
+FIELD_ORIGINS = {"tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"}
 SEGMENT_KINDS = {"intro", "recap", "credits", "preview", "commercial", "other"}
 EXT_OF = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 # The names an extra's folder keeps for itself, which an original beside them cannot have.
@@ -130,6 +143,18 @@ def ts(v):
         s += "Z"
     s = re.sub(r"([+-]\d\d)(\d\d)$", r"\1:\2", s)
     return s.replace("+00:00", "Z")
+
+
+def is_moment(s):
+    """Whether s is a timestamp as a record holds one: RFC 3339 with an upper-case T and Z, and a
+    real moment."""
+    if not s or not TIMESTAMP_RE.match(s):
+        return False
+    try:
+        datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
 
 
 def link_of(t):
@@ -830,7 +855,7 @@ class Build:
         if body:
             localized[lg] = body
         doc = {"schema": "zaentrum.library.metadata/2", "itemId": row["id"], "type": row["type"],
-               "asOf": self.as_of, "projectedBy": "library-v2-from-catalog",
+               "asOf": self.as_of, "projectedBy": "library-v2-from-catalog", **self.freshness(row["id"], row),
                "titles": {"primary": text(row.get("title")) or "", "original": None,
                           "sort": text(row.get("sortTitle")), "qualifier": None, "localized": localized},
                "releaseDate": str(row["year"]) if row.get("year") else None,
@@ -880,38 +905,104 @@ class Build:
 
     def images(self, row, d):
         md = os.path.join(d, "metadata")
-        out, seen = [], {}
-        for art in row.get("artwork") or []:
+        out, names = self.artwork(row["id"], row.get("artwork") or [], md, IMAGE_KINDS, "artwork", "a v2 record",
+                                  series=row["type"] == "series")
+        self.w.prune(md, names)
+        return out
+
+    def artwork(self, owner, entries, folder, kinds, label, holder, series=False):
+        """The images a projection lists, from the export's artwork: each written into folder, named by
+        the hash of its own bytes, which decide its type and size whatever the row says. An image is
+        primary where the row's isPrimary says so — at most one of a kind, the first the export lists —
+        and its origin is TMDB with the sourcePath it was fetched from when the row has one, the
+        catalog when it does not. Byte-identical entries are one image, listed once, primary when
+        either is. Returns the entries and the names of the files they list."""
+        out, by_name = [], {}
+        for art in entries:
+            art = art if isinstance(art, dict) else {}
             kind = (art.get("kind") or "").lower()
-            if kind not in IMAGE_KINDS:
-                self.note(row["id"], f"artwork kind {kind!r} is not one a v2 record holds, dropped")
+            if kind not in kinds:
+                self.note(owner, f"{label} kind {kind!r} is not one {holder} holds, dropped")
                 continue
             try:
                 raw = base64.b64decode(art.get("base64") or "", validate=False)
             except (ValueError, TypeError):
                 raw = b""
             if not raw:
-                self.note(row["id"], f"{kind} artwork has no bytes, dropped")
+                self.note(owner, f"{kind} artwork has no bytes, dropped")
                 continue
             ctype, w, h = sniff_image(raw)
             if ctype not in EXT_OF:
-                self.note(row["id"], f"{kind} artwork is not a JPEG, PNG or WebP, dropped")
+                self.note(owner, f"{kind} artwork is not a JPEG, PNG or WebP, dropped")
                 continue
             digest = hashlib.sha256(raw).hexdigest()
             name = f"{digest}.{EXT_OF[ctype]}"
-            if name in seen:
-                self.note(row["id"], f"{kind} artwork is byte-identical to the {seen[name]}, listed once")
+            primary = art.get("isPrimary") is True
+            if name in by_name:
+                self.note(owner, f"{kind} artwork is byte-identical to the {by_name[name]['kind']}, listed once")
+                if primary and by_name[name]["kind"] == kind:
+                    by_name[name]["primary"] = True
                 continue
-            seen[name] = kind
-            self.w.write(os.path.join(md, name), raw)
+            recorded = str(art.get("sha256") or "").strip().lower()
+            if recorded and recorded.split(":", 1)[-1] != digest:
+                self.note(owner, f"{kind} artwork's sha256 {recorded!r} is not the hash of its bytes; the record "
+                                 f"names the bytes")
+            said = [(k, art[k], got) for k, got in (("contentType", ctype), ("width", w), ("height", h))
+                    if art.get(k) is not None and (art[k] if k == "contentType" else num(art[k])) != got]
+            if said:
+                self.note(owner, f"{kind} artwork says " + ", ".join(f"{k} {v!r}" for k, v, _ in said)
+                                 + " where its bytes say " + ", ".join(repr(got) for _, _, got in said)
+                                 + "; the record says what the bytes say")
+            self.w.write(os.path.join(folder, name), raw)
             self.counts["images"] += 1
-            entry = {"kind": kind, "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
-                     "sizeBytes": len(raw), "width": w, "height": h, "language": None, "sourceUrl": None,
-                     "fetchedAt": ts(art.get("fetchedAt")), "origin": "legacy-catalog"}
-            if row["type"] == "series":
+            fetched = self.moment(owner, f"the {kind} artwork's fetchedAt", art.get("fetchedAt"))
+            ref = text(art.get("sourcePath"))
+            entry = {"kind": kind, **({"primary": True} if primary else {}), "file": name,
+                     "sha256": "sha256:" + digest, "contentType": ctype, "sizeBytes": len(raw), "width": w,
+                     "height": h, "language": None, "sourceUrl": None, "fetchedAt": fetched,
+                     "origin": {"source": "tmdb" if ref else "legacy-catalog", **({"ref": ref} if ref else {}),
+                                **({"fetchedAt": fetched} if fetched else {})}}
+            if series:
                 entry["season"] = None
             out.append(entry)
-        self.w.prune(md, set(seen))
+            by_name[name] = entry
+        first = {}
+        for e in out:
+            if not e.get("primary"):
+                continue
+            if e["kind"] in first:
+                del e["primary"]
+                self.note(owner, f"a second primary {e['kind']}, {e['file'][:12]}…, is not primary: at most one of a "
+                                 f"kind is, and {first[e['kind']][:12]}…, which the export lists first, stays it")
+            else:
+                first[e["kind"]] = e["file"]
+        return out, set(by_name)
+
+    def moment(self, owner, field, v):
+        """A timestamp as a record holds one, or None — with a note when the export holds something
+        that is not a moment: a record never carries a guess."""
+        s = ts(v)
+        if s and not is_moment(s):
+            self.note(owner, f"{field} {v!r} is not a moment, dropped")
+            return None
+        return s
+
+    def freshness(self, owner, entry):
+        """How fresh a projection is, from the row it projects: the row's modifiedAt is the
+        databaseUpdatedAt, the state of the row the projection reflects, and tmdbFetchedAt with
+        tmdbChangedAt the tmdb entry of sources — only with a tmdbFetchedAt, because a source entry
+        says when the database fetched from it. What the export does not carry is not written."""
+        out = {}
+        updated = self.moment(owner, "modifiedAt", entry.get("modifiedAt"))
+        if updated:
+            out["databaseUpdatedAt"] = updated
+        fetched = self.moment(owner, "tmdbFetchedAt", entry.get("tmdbFetchedAt"))
+        changed = self.date(owner, "tmdbChangedAt", entry.get("tmdbChangedAt"))
+        if fetched:
+            out["sources"] = {"tmdb": {"fetchedAt": fetched, **({"changedAt": changed} if changed else {})}}
+        elif changed:
+            self.note(owner, f"tmdbChangedAt {changed} without a tmdbFetchedAt is not recorded: a source entry says "
+                             f"when the database fetched from it")
         return out
 
     def videos(self, row):
@@ -1364,20 +1455,41 @@ class Build:
             self.note(pid, f"credited under {len(credited_as)} names ({', '.join(map(repr, credited_as))}); "
                            f"person.json says {name!r}")
         d = os.path.join(self.a.out, "people", pid[:2], pid)
+        locked = entry.get("lockedFields") if isinstance(entry.get("lockedFields"), list) else []
         doc = {"schema": "zaentrum.library.person/2", "personId": pid, "asOf": self.as_of,
-               "projectedBy": "library-v2-from-catalog", "name": name, "sortName": text(entry.get("sortName")),
+               "projectedBy": "library-v2-from-catalog", **self.freshness(pid, entry),
+               "name": name, "sortName": text(entry.get("sortName")),
                "alsoKnownAs": sorted({text(x) for x in entry.get("alsoKnownAs") or [] if text(x)} - {name}),
                "birthDate": self.date(pid, "birthDate", entry.get("birthDate")),
                "deathDate": self.date(pid, "deathDate", entry.get("deathDate")),
-               "birthPlace": text(entry.get("birthPlace")), "biography": self.biography(pid, entry.get("biography")),
+               "birthPlace": text(entry.get("birthPlace")), "knownForDepartment": text(entry.get("knownForDepartment")),
+               "biography": self.biography(pid, entry.get("biography")),
                "externalIds": self.person_ids(pid, entry.get("externalIds")),
                "images": self.person_images(pid, d, entry.get("artwork") or []),
-               "curation": {"metadataLocked": bool(entry.get("metadataLocked")), "lockedFields": [], "notes": None}}
-        doc["fieldOrigins"] = {k: "legacy-catalog" for k in ("name", "sortName", "alsoKnownAs", "birthDate",
-                                                             "deathDate", "birthPlace", "biography", "externalIds",
-                                                             "images") if doc[k]}
+               "curation": {"metadataLocked": bool(entry.get("metadataLocked")),
+                            "lockedFields": sorted({text(x) for x in locked if text(x)}), "notes": None}}
+        if isinstance(entry.get("fieldOrigins"), dict):
+            doc["fieldOrigins"] = self.field_origins(pid, entry["fieldOrigins"])
+        else:
+            doc["fieldOrigins"] = {k: "legacy-catalog" for k in ("name", "sortName", "alsoKnownAs", "birthDate",
+                                                                 "deathDate", "birthPlace", "knownForDepartment",
+                                                                 "biography", "externalIds", "images") if doc[k]}
         self.w.write_json(os.path.join(d, "person.json"), doc)
         self.counts["people"] += 1
+
+    def field_origins(self, pid, v):
+        """Where each field came from, as the database records it — in place of the catalog's own
+        guess. An origin a record cannot name is dropped with a note, never renamed."""
+        out = {}
+        for field, origin in v.items():
+            key = text(field)
+            if not key:
+                continue
+            if origin in FIELD_ORIGINS:
+                out[key] = origin
+            else:
+                self.note(pid, f"fieldOrigins says {key} came from {origin!r}, which a record cannot name, dropped")
+        return out
 
     def date(self, pid, field, v):
         """A date as the format holds one — a year, a year and month, or a day — from a date or the
@@ -1423,33 +1535,11 @@ class Build:
         return out
 
     def person_images(self, pid, d, artwork):
-        """The images beside person.json, named by their own content. person.json is replaced
-        whole, so an image the new one does not name is removed with it."""
-        out, seen = [], set()
-        for art in artwork:
-            kind = (art.get("kind") or "").lower()
-            if kind not in PERSON_IMAGE_KINDS:
-                self.note(pid, f"person artwork kind {kind!r} is not one a person record holds, dropped")
-                continue
-            try:
-                raw = base64.b64decode(art.get("base64") or "", validate=False)
-            except (ValueError, TypeError):
-                raw = b""
-            ctype, w, h = sniff_image(raw)
-            if ctype not in EXT_OF:
-                self.note(pid, f"{kind} artwork is not a JPEG, PNG or WebP, dropped")
-                continue
-            digest = hashlib.sha256(raw).hexdigest()
-            name = f"{digest}.{EXT_OF[ctype]}"
-            if name in seen:
-                continue
-            seen.add(name)
-            self.w.write(os.path.join(d, name), raw)
-            self.counts["images"] += 1
-            out.append({"kind": kind, "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
-                        "sizeBytes": len(raw), "width": w, "height": h, "language": None, "sourceUrl": None,
-                        "fetchedAt": ts(art.get("fetchedAt")), "origin": "legacy-catalog"})
-        self.w.prune(d, seen | {"person.json"})
+        """The portraits beside person.json, named by their own content, with which one is primary and
+        where each came from. person.json is replaced whole, so an image the new one does not name is
+        removed with it."""
+        out, names = self.artwork(pid, artwork, d, PERSON_IMAGE_KINDS, "person artwork", "a person record")
+        self.w.prune(d, names | {"person.json"})
         return out
 
 
