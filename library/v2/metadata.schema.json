@@ -71,7 +71,7 @@
 
     "credits": {
       "type": "array",
-      "description": "People, by reference. The person's own texts and images are not copied here: personId keys the person the database holds.",
+      "description": "People, by reference. The person's own texts and images are not copied here: personId keys the person the database holds, recorded in people/<aa>/<personId>/person.json. A credit whose person has no record there yet is not an error — the person may not have been projected — and a validator says so as a note.",
       "items": {
         "type": "object",
         "required": ["personId", "name", "role"],
@@ -137,28 +137,11 @@
 
     "images": {
       "type": "array",
-      "description": "Every image file in metadata/. Each is named by the hash of its own content, so an image is written once and never replaced in place: a new image is a new file, and the projection that stops naming an old one lets it be collected. A missing kind falls back to the parent at read time (an episode without a still shows its season poster, then the series poster); nothing is copied.",
+      "description": "Every image file in metadata/ that this projection uses. Each is named by the hash of its own content, so an image is written once and never replaced in place: a new image is a new file, and the projection that stops naming an old one leaves it to be swept. A missing kind falls back to the parent at read time (an episode without a still shows its season poster, then the series poster); nothing is copied.",
       "items": {
-        "type": "object",
-        "required": ["kind", "file", "sha256", "contentType", "sizeBytes"],
-        "additionalProperties": false,
+        "$ref": "defs.schema.json#/$defs/image",
         "properties": {
-          "kind": { "enum": ["poster", "backdrop", "logo", "still", "banner", "thumb"] },
-          "file": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}\\.(jpg|png|webp)$",
-            "description": "metadata/<content hash>.<ext>: the lower-case hex sha256 of the file's own bytes, and the extension matching contentType. No subfolders."
-          },
-          "season": { "type": ["integer", "null"], "minimum": 0, "description": "On a series: the season this image belongs to; null for the series itself." },
-          "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }], "description": "For posters and logos with text, the language of that text. The file name carries no language, so this is the only record of it." },
-          "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "The same digest the file name carries, in the form the rest of the format uses. Caches key on it." },
-          "contentType": { "enum": ["image/jpeg", "image/png", "image/webp"] },
-          "sizeBytes": { "type": "integer", "minimum": 0 },
-          "width": { "type": ["integer", "null"] },
-          "height": { "type": ["integer", "null"] },
-          "sourceUrl": { "type": ["string", "null"], "description": "Where the image came from, so the exact chosen image can be fetched again." },
-          "fetchedAt": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/timestamp" }, { "type": "null" }] },
-          "origin": { "enum": ["legacy-catalog", "tmdb", "manual"] }
+          "kind": { "enum": ["poster", "backdrop", "logo", "still", "banner", "thumb"] }
         }
       }
     },
@@ -241,21 +224,8 @@
       }
     },
 
-    "curation": {
-      "type": "object",
-      "description": "What a person decided about the texts and images, projected with them so a rebuild does not hand a locked item back to automation.",
-      "additionalProperties": false,
-      "properties": {
-        "metadataLocked": { "type": "boolean" },
-        "lockedFields": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-        "notes": { "type": ["string", "null"] }
-      }
-    },
-    "fieldOrigins": {
-      "type": "object",
-      "description": "Where each value came from, keyed by field path. Lists only fields that are set. Images carry their own origin.",
-      "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"] }
-    }
+    "curation": { "$ref": "defs.schema.json#/$defs/curation" },
+    "fieldOrigins": { "$ref": "defs.schema.json#/$defs/fieldOrigins" }
   },
 
   "$defs": {

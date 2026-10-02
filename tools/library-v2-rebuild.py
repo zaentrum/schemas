@@ -7,10 +7,10 @@ Usage:
 
 The database is the working copy and this tree is the record that can rebuild it. This reads the
 records, applies the item's events in the order they happened, and writes the rows a catalog would
-hold: the items and their texts, the images, the people, the chapters and segments, one playback
-asset per package and one per original that is still there, and the subtitles the package carries.
-It needs no network and no other service, it can run against a copy, and running it twice gives the
-same answer.
+hold: the items and their texts, the images, the credits, the chapters and segments, one playback
+asset per package and one per original that is still there, the subtitles the package carries, and
+the people under people/ with their biographies, dates, reference ids and portraits. It needs no
+network and no other service, it can run against a copy, and running it twice gives the same answer.
 
 Applying events, earliest first:
   original-deleted    the originals it names are gone, so they are not playback assets any more,
@@ -35,7 +35,15 @@ lost the item or deleted it:
 
 An export without deletedItems predates the log, and then every item only on storage is 'lost or
 orphan': nothing can tell the two apart. Field by field it then reports where the rows both sides
-hold disagree. It exits non-zero for a lost item (or one that may be lost), a missing record and a
+hold disagree.
+
+People are compared the same way. The database's people are the export's top-level people list when
+it carries one, and otherwise everyone its items credit, by personId and name — all a catalog without
+person records knows — and only the fields the export carries are compared. There is no deletion log
+for people, so a person only on storage takes the class of the items on storage that credit them: an
+orphan when only orphans credit them or nothing does, lost when an item that is lost (or one the
+database still holds) credits them. A person the database holds and the tree does not is a missing
+record; with --subset only when an item on storage credits them. It exits non-zero for a lost item (or one that may be lost), a missing record and a
 field that disagrees — never for an orphan alone — so it can gate a migration.
 
 Fields that cannot agree by construction are ignored by default (--ignore-fields):
@@ -59,6 +67,11 @@ LOSS_LANGUAGES = ("audioLanguages", "subtitleLanguages", "sdhSubtitleLanguages",
 EXTERNAL_ID_SOURCE = {"tmdbMovie": "tmdb", "tmdbTv": "tmdb", "tmdbSeason": "tmdb-season",
                       "tmdbEpisode": "tmdb-episode", "tmdbCollection": "tmdb-collection",
                       "imdb": "imdb", "tvdb": "tvdb"}
+# A person's reference ids as an export lists them ([{source, externalId}]) and as person.json keys them.
+PERSON_ID_FIELD = {"tmdb": "tmdbPerson", "themoviedb": "tmdbPerson", "tmdb-person": "tmdbPerson",
+                   "imdb": "imdb", "tvdb": "tvdb", "wikidata": "wikidata"}
+PERSON_FIELDS = ("name", "sortName", "alsoKnownAs", "birthDate", "deathDate", "birthPlace", "biography",
+                 "externalIds", "artwork", "metadataLocked")
 
 
 def did(*parts):
@@ -98,6 +111,7 @@ class Rebuild:
         self.root = root
         self.text_language = text_language
         self.items = []
+        self.people = []
         self.storage = []
         self.notes = []
 
@@ -122,8 +136,33 @@ class Rebuild:
                     for eid in (listdir(ed) if os.path.isdir(ed) else []):
                         if os.path.isdir(os.path.join(ed, eid)):
                             self.item(os.path.join(ed, eid))
+        base = os.path.join(self.root, "people")
+        for shard in (listdir(base) if os.path.isdir(base) else []):
+            sd = os.path.join(base, shard)
+            for pid in (listdir(sd) if os.path.isdir(sd) else []):
+                if os.path.isdir(os.path.join(sd, pid)):
+                    self.person(os.path.join(sd, pid))
         self.items.sort(key=lambda r: r["id"])
+        self.people.sort(key=lambda r: r["id"])
         self.storage.sort(key=lambda r: r["itemId"])
+
+    def person(self, d):
+        """A person row, as the last projection left it: the texts, the dates, the reference ids, the
+        portraits and the lock. No credits: those are the items' rows."""
+        try:
+            doc = load(os.path.join(d, "person.json"))
+        except (OSError, ValueError) as e:
+            self.note(f"{d}: no person.json to rebuild from ({e})")
+            return
+        self.people.append({
+            "id": doc["personId"], "name": doc.get("name"), "sortName": doc.get("sortName"),
+            "alsoKnownAs": list(doc.get("alsoKnownAs") or []), "birthDate": doc.get("birthDate"),
+            "deathDate": doc.get("deathDate"), "birthPlace": doc.get("birthPlace"),
+            "biography": dict(doc.get("biography") or {}), "externalIds": dict(doc.get("externalIds") or {}),
+            "metadataLocked": bool((doc.get("curation") or {}).get("metadataLocked")),
+            "artwork": [{"kind": i["kind"], "contentType": i["contentType"], "fetchedAt": i.get("fetchedAt"),
+                         "sha256": i["sha256"], "sizeBytes": i["sizeBytes"], "file": i["file"]}
+                        for i in doc.get("images") or []]})
 
     def item(self, d):
         try:
@@ -420,30 +459,108 @@ CLASSES = (
     ("unknown", "lost or orphan — on storage, not in the database, and no deletion log to tell which"),
     ("missing", "missing record — in the database, not on storage"),
 )
+PEOPLE_CLASSES = (
+    ("orphan", "people: orphan — on storage, not in the database, and nothing it holds credits them: safe to remove"),
+    ("lost", "people: lost — on storage, not in the database, and credited by an item that is not an orphan: restore candidates"),
+    ("unknown", "people: lost or orphan — on storage, not in the database, credited by items no deletion log explains"),
+    ("missing", "people: missing record — in the database, not on storage"),
+)
 LISTED = 200
 
 
-def report_existence(lines, classes, rows_of, what, subset):
-    """Each class on its own, with every id. Returns how many of them count as differences."""
+def report_existence(lines, classes, labels, rows_of, what, counts_missing):
+    """Each class on its own, with every id. Returns how many of them count as differences: every
+    lost and unknown one, and the missing records counts_missing says count."""
     n = 0
-    for key, label in CLASSES:
+    for key, label in labels:
         found = classes[key]
         if not found:
             continue
-        counted = key in ("lost", "unknown") or (key == "missing" and not subset)
+        counted = len(found) if key in ("lost", "unknown") else \
+            sum(1 for iid, _ in found if counts_missing(iid)) if key == "missing" else 0
+        excused = len(found) - counted if key == "missing" else 0
         lines.append(f"  {label}: {len(found)} {what}"
-                     + ("" if counted or key == "orphan" else ", which a subset is expected to be"))
+                     + (f", {excused} of which a subset is expected to lack" if excused else ""))
         for iid, why in found[:LISTED]:
             title = (rows_of(iid) or {}).get("title") or (rows_of(iid) or {}).get("name")
             lines.append(f"      {iid} {title!r} — {why}")
         if len(found) > LISTED:
             lines.append(f"      … and {len(found) - LISTED} more")
-        if counted:
-            n += len(found)
+        n += counted
     return n
 
 
-def compare(tree_rows, export, ignore, subset=False):
+def person_ids(v):
+    """A person's reference ids in the form person.json keys them, from either form an export uses."""
+    if isinstance(v, dict):
+        return dict(v)
+    out = {}
+    for e in v or []:
+        field = PERSON_ID_FIELD.get(str((e or {}).get("source") or "").lower())
+        if field and (e or {}).get("externalId"):
+            out[field] = str(e["externalId"])
+    return out
+
+
+def normalise_person(p, text_language):
+    """A person as the export carries them, in the shape of a rebuilt person row, keeping only the
+    fields the export carries: a field it does not carry is not compared."""
+    out = {"id": str(p["id"])}
+    for key in PERSON_FIELDS:
+        if key not in p:
+            continue
+        v = p[key]
+        if key == "biography" and not isinstance(v, dict):
+            v = {text_language: v} if v else {}
+        elif key == "externalIds":
+            v = person_ids(v)
+        elif key == "artwork":
+            v = normalise({"artwork": v})["artwork"]
+        out[key] = v
+    return out
+
+
+def database_people(export, text_language):
+    """The people the database holds: its own list when the export carries one, and otherwise
+    everyone its items credit, by personId and name — all a catalog without person records knows."""
+    if isinstance(export.get("people"), list):
+        return {str(p["id"]): normalise_person(p, text_language)
+                for p in export["people"] if isinstance(p, dict) and p.get("id")}
+    out = {}
+    for row in export.get("items") or []:
+        for c in row.get("people") or []:
+            if c.get("personId") and c["personId"] not in out:
+                out[c["personId"]] = {"id": c["personId"], "name": c.get("name")}
+    return out
+
+
+def people_existence(tree_people, db_people, tree, item_classes):
+    """There is no deletion log for people, so a person only on storage takes the class of the items
+    on storage that credit them."""
+    credited = {}
+    for iid, row in tree.items():
+        for c in row.get("people") or []:
+            credited.setdefault(c.get("personId"), set()).add(iid)
+    of = {key: {iid for iid, _ in found} for key, found in item_classes.items()}
+    out = {"orphan": [], "lost": [], "unknown": [], "missing": []}
+    for pid in sorted(set(tree_people) - set(db_people)):
+        by = credited.get(pid, set())
+        live = sorted(by - of["orphan"] - of["lost"] - of["unknown"])
+        if not by:
+            out["orphan"].append((pid, "nothing on storage credits them"))
+        elif by & of["lost"]:
+            out["lost"].append((pid, f"credited by {sorted(by & of['lost'])[0]}, which is lost"))
+        elif live:
+            out["lost"].append((pid, f"credited by {live[0]}, which the database holds"))
+        elif by & of["unknown"]:
+            out["unknown"].append((pid, f"credited by {sorted(by & of['unknown'])[0]}, which may be lost"))
+        else:
+            out["orphan"].append((pid, "only orphans credit them"))
+    out["missing"] = [(pid, "not on storage") for pid in sorted(set(db_people) - set(tree_people))]
+    return out, credited
+
+
+def compare(tree_rows, tree_people, export, ignore, subset=False, text_language="und"):
     """Both directions, field by field. Returns (lines, number of differences, number of orphans)."""
     tree = {r["id"]: normalise(r) for r in tree_rows}
     db = {r["id"]: normalise(r) for r in export.get("items") or []}
@@ -451,57 +568,74 @@ def compare(tree_rows, export, ignore, subset=False):
     lines = []
     classes = existence(tree, db, log)
     stale = sorted(iid for iid in set(log or {}) & set(db))
-    n = report_existence(lines, classes, lambda iid: tree.get(iid) or db.get(iid), "item(s)", subset)
+    n = report_existence(lines, classes, CLASSES, lambda iid: tree.get(iid) or db.get(iid), "item(s)",
+                         lambda iid: not subset)
     if stale:
         lines.append(f"  in the deletion log but held by the database again: {len(stale)} item(s), "
                      f"compared as the live items they are")
         lines += [f"      {iid}" for iid in stale[:LISTED]]
+
+    mine = {p["id"]: normalise(p) for p in tree_people}
+    theirs = database_people(export, text_language)
+    who, credited = people_existence(mine, theirs, tree, classes)
+    n += report_existence(lines, who, PEOPLE_CLASSES, lambda pid: mine.get(pid) or theirs.get(pid), "person(s)",
+                          lambda pid: not subset or bool(credited.get(pid)))
+
     fields = {}
     for iid in sorted(set(tree) & set(db)):
         a, b = tree[iid], db[iid]
         for key in sorted(set(a) | set(b)):
-            if key in ignore:
-                continue
-            if key in LIST_KEYS:
-                n += diff_list(fields, iid, key, a.get(key) or [], b.get(key) or [], ignore)
-            elif key in SET_FIELDS:
-                miss_a, miss_b = sorted(set(b.get(key) or []) - set(a.get(key) or [])), \
-                                 sorted(set(a.get(key) or []) - set(b.get(key) or []))
-                for value in miss_a:
-                    fields.setdefault(key, []).append((iid, "not on storage", value))
-                for value in miss_b:
-                    fields.setdefault(key, []).append((iid, "not in the database", value))
-                n += len(miss_a) + len(miss_b)
-            elif a.get(key) != b.get(key):
-                fields.setdefault(key, []).append((iid, a.get(key), b.get(key)))
-                n += 1
+            if key not in ignore:
+                n += diff_field(fields, iid, key, a, b, ignore)
+    for pid in sorted(set(mine) & set(theirs)):
+        for key in sorted(k for k in theirs[pid] if k != "id" and k not in ignore):
+            n += diff_field(fields, pid, key, mine[pid], theirs[pid], ignore, "people.")
     for key in sorted(fields):
         rows = fields[key]
         lines.append(f"  {key}: {len(rows)} difference(s)")
-        for iid, mine, theirs in rows[:5]:
-            lines.append(f"      {iid}: storage {mine!r} != database {theirs!r}")
+        for iid, a, b in rows[:5]:
+            lines.append(f"      {iid}: storage {a!r} != database {b!r}")
         if len(rows) > 5:
             lines.append(f"      … and {len(rows) - 5} more")
-    return lines, n, len(classes["orphan"])
+    return lines, n, len(classes["orphan"]) + len(who["orphan"])
 
 
-def diff_list(fields, iid, key, mine, theirs, ignore):
+def diff_field(fields, iid, key, a, b, ignore, prefix=""):
+    """One field of two rows: a list by the key of its entries, a set by its members, anything else
+    by value. Returns the number of differences."""
+    if key in LIST_KEYS:
+        return diff_list(fields, iid, key, a.get(key) or [], b.get(key) or [], ignore, prefix)
+    if key in SET_FIELDS or (prefix and key == "alsoKnownAs"):
+        not_here = sorted(set(b.get(key) or []) - set(a.get(key) or []))
+        not_there = sorted(set(a.get(key) or []) - set(b.get(key) or []))
+        fields.setdefault(prefix + key, []).extend([(iid, "not on storage", v) for v in not_here] +
+                                                    [(iid, "not in the database", v) for v in not_there])
+        if not fields[prefix + key]:
+            del fields[prefix + key]
+        return len(not_here) + len(not_there)
+    if a.get(key) != b.get(key):
+        fields.setdefault(prefix + key, []).append((iid, a.get(key), b.get(key)))
+        return 1
+    return 0
+
+
+def diff_list(fields, iid, key, mine, theirs, ignore, prefix=""):
     keyer = LIST_KEYS[key]
     a = {keyer(x): x for x in mine}
     b = {keyer(x): x for x in theirs}
     n = 0
     for k in sorted(set(a) - set(b), key=str):
-        fields.setdefault(key, []).append((iid, a[k], "missing"))
+        fields.setdefault(prefix + key, []).append((iid, a[k], "missing"))
         n += 1
     for k in sorted(set(b) - set(a), key=str):
-        fields.setdefault(key, []).append((iid, "missing", b[k]))
+        fields.setdefault(prefix + key, []).append((iid, "missing", b[k]))
         n += 1
     for k in sorted(set(a) & set(b), key=str):
         for f in sorted(set(a[k]) | set(b[k])):
             if f in ignore:
                 continue
             if a[k].get(f) != b[k].get(f):
-                fields.setdefault(f"{key}.{f}", []).append((iid, a[k].get(f), b[k].get(f)))
+                fields.setdefault(f"{prefix}{key}.{f}", []).append((iid, a[k].get(f), b[k].get(f)))
                 n += 1
     return n
 
@@ -509,7 +643,7 @@ def diff_list(fields, iid, key, mine, theirs, ignore):
 def main():
     ap = argparse.ArgumentParser(prog="library-v2-rebuild.py",
                                  description="Produce the catalog contents a v2 tree implies.")
-    ap.add_argument("root", help="the library root holding movies/ and series/")
+    ap.add_argument("root", help="the library root holding movies/, series/ and people/")
     ap.add_argument("--out", help="write the rows here as JSON; stdout gets the summary either way")
     ap.add_argument("--compare", help="a catalog export to report against, in both directions")
     ap.add_argument("--text-language", default="und",
@@ -525,7 +659,7 @@ def main():
     r.run()
     out = {"generatedAt": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
            .isoformat().replace("+00:00", "Z"),
-           "root": r.root, "items": r.items, "storage": r.storage, "notes": r.notes}
+           "root": r.root, "items": r.items, "people": r.people, "storage": r.storage, "notes": r.notes}
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=2, ensure_ascii=False)
@@ -533,9 +667,10 @@ def main():
     kinds = {}
     for row in r.items:
         kinds[row["type"]] = kinds.get(row["type"], 0) + 1
-    print(f"rebuilt: {kinds}, playback assets: {sum(len(x['playbackAssets']) for x in r.items)}, "
+    print(f"rebuilt: {kinds}, people: {len(r.people)}, "
+          f"playback assets: {sum(len(x['playbackAssets']) for x in r.items)}, "
           f"subtitles: {sum(len(x['subtitleAssets']) for x in r.items)}, "
-          f"images: {sum(len(x['artwork']) for x in r.items)}")
+          f"images: {sum(len(x['artwork']) for x in r.items) + sum(len(p['artwork']) for p in r.people)}")
     for n in r.notes:
         print("  note " + n)
     if not args.compare:
@@ -543,7 +678,7 @@ def main():
     ignore = {x.strip() for x in args.ignore_fields.split(",") if x.strip()}
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
-    lines, n, orphans = compare(r.items, export, ignore, args.subset)
+    lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     for line in lines:
         print(line)

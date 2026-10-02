@@ -21,7 +21,8 @@ What it checks, for every item folder:
     trailer folders and the marker, nothing else — and matches the count, the total size and the
     hash of itself that package.json recorded (--checksums also hashes every file);
   * every image in metadata/ is named by the hash of its own content, has the recorded size, and is
-    listed exactly once, with nothing unlisted beside it;
+    listed exactly once, with nothing unlisted beside it — and the same for the images in a person's
+    folder under people/, beside the person.json that lists them;
   * no file is a hard link shared with another path, because a library of links is not portable.
 
 It exits non-zero when anything is wrong, and prints one line per problem.
@@ -76,7 +77,7 @@ class Check:
     def __init__(self, hash_everything):
         self.hash_everything = hash_everything
         self.problems = []
-        self.counts = {"items": 0, "versions": 0, "packages": 0, "originals": 0, "deleted": 0,
+        self.counts = {"items": 0, "people": 0, "versions": 0, "packages": 0, "originals": 0, "deleted": 0,
                        "images": 0, "files": 0, "bytes": 0}
 
     def err(self, where, msg):
@@ -155,29 +156,47 @@ class Check:
         if os.path.isfile(os.path.join(d, "metadata.json")):
             meta = self.load(os.path.join(d, "metadata.json"))
         md = os.path.join(d, "metadata")
+        listed = self.images(md, (meta or {}).get("images") or [], "metadata.json")
+        for name in (listdir(md) if os.path.isdir(md) else []):
+            if name not in listed:
+                self.err(os.path.join(md, name), "not listed in metadata.json")
+
+    def images(self, folder, entries, owner):
+        """Every image a projection lists is in folder, named by the hash of its own content, with
+        the size and extension recorded. Returns the names listed."""
         listed = set()
-        for img in (meta or {}).get("images") or []:
+        for img in entries:
             name = img.get("file") or ""
-            f = os.path.join(md, name)
+            f = os.path.join(folder, name)
             if name in listed:
-                self.err(f, "listed twice in metadata.json")
+                self.err(f, f"listed twice in {owner}")
             listed.add(name)
             if not os.path.isfile(f):
-                self.err(f, "image listed in metadata.json but not there")
+                self.err(f, f"image listed in {owner} but not there")
                 continue
             self.counts["images"] += 1
             digest = sha_file(f)
             if name.rsplit(".", 1)[0] != digest.split(":", 1)[1]:
                 self.err(f, "image is not named by the hash of its own content")
             if img.get("sha256") and img["sha256"] != digest:
-                self.err(f, "image sha256 does not match metadata.json")
+                self.err(f, f"image sha256 does not match {owner}")
             if img.get("sizeBytes") is not None and os.path.getsize(f) != img["sizeBytes"]:
-                self.err(f, f"image is {os.path.getsize(f)} bytes, metadata.json says {img['sizeBytes']}")
+                self.err(f, f"image is {os.path.getsize(f)} bytes, {owner} says {img['sizeBytes']}")
             if img.get("contentType") and EXT_TYPE.get(name.rsplit(".", 1)[-1]) != img["contentType"]:
                 self.err(f, f"image extension does not match {img['contentType']}")
-        for name in (listdir(md) if os.path.isdir(md) else []):
-            if name not in listed:
-                self.err(os.path.join(md, name), "not listed in metadata.json")
+        return listed
+
+    def person(self, d):
+        """people/<aa>/<personId>/: person.json and the images it lists, nothing else."""
+        doc = self.load(os.path.join(d, "person.json"))
+        if doc is None:
+            return
+        self.counts["people"] += 1
+        listed = self.images(d, doc.get("images") or [], "person.json")
+        for name in listdir(d):
+            if name != "person.json" and name not in listed:
+                self.err(os.path.join(d, name), "not person.json and not an image person.json lists")
+        self.hard_links(d)
 
     # -------------------------------------------------- one version
     def version(self, vp, vid, sources, events):
@@ -304,6 +323,12 @@ class Check:
                         if os.path.isdir(os.path.join(ed, eid)):
                             self.item(os.path.join(ed, eid))
                             found += 1
+        base = os.path.join(root, "people")
+        for shard in (listdir(base) if os.path.isdir(base) else []):
+            sd = os.path.join(base, shard)
+            for pid in (listdir(sd) if os.path.isdir(sd) else []):
+                if os.path.isdir(os.path.join(sd, pid)):
+                    self.person(os.path.join(sd, pid))
         if not found:
             self.err(root, "no item folders under movies/ or series/")
 

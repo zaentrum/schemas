@@ -24,7 +24,16 @@
   "tags": [],
   "rating": null,
   "contentRating": null,
-  "credits": [],
+  "credits": [
+    {
+      "personId": "542ed02d-222b-501a-9456-a7c0a9945adb",
+      "name": "Mara Example",
+      "role": "actor",
+      "character": "Captain Example",
+      "order": 0,
+      "tmdbPerson": null
+    }
+  ],
   "series": {
     "status": "returning",
     "firstAirDate": "2024-01-10",
@@ -95,6 +104,7 @@
     "titles.primary": "manual",
     "titles.qualifier": "filename",
     "series": "manual",
+    "credits": "manual",
     "images": "manual"
   }
 }

@@ -18,7 +18,11 @@ rule and checks the tool notices:
                  deleted original becomes a playback asset again, and a note changes nothing
   compare        an item only on storage is an orphan when the deletion log explains it and lost
                  when it does not, an item only in the database is a missing record, and only the
-                 last two fail; without a log nothing on storage can be called an orphan
+                 last two fail; without a log nothing on storage can be called an orphan; a person
+                 only on storage takes the class of the items that credit them
+  people         a credited person gets a record that holds what the credit knows; a people list in
+                 the export fills every field it carries; --people-only touches no item record; a
+                 projection that drops a portrait removes it
   v1 -> v2       the v1 example tree converts, the result passes validate-library-v2.py and the
                  media check, the texts and the packages survive, and a second run does nothing
   catalog -> v2  an export, a package store and source files become a tree that validates; the
@@ -93,6 +97,17 @@ def tree_files(root):
         for f in sorted(files):
             p = os.path.join(base, f)
             out[os.path.relpath(p, root)] = open(p, "rb").read()
+    return out
+
+
+def stamps(root):
+    """Every file under root with its size and modification time: a file written again, even with
+    the same bytes, has a new time."""
+    out = {}
+    for base, dirs, files in os.walk(root):
+        for f in files:
+            st = os.stat(os.path.join(base, f))
+            out[os.path.relpath(os.path.join(base, f), root)] = (st.st_size, st.st_mtime_ns)
     return out
 
 
@@ -234,6 +249,17 @@ def test_round_trip(t):
     t.ok("the rebuild says which version lost its original for good",
          any(v["permanentLoss"] for s in doc["storage"] for v in s["versions"]))
     t.ok("running it twice gives the same rows", rows_of(EXAMPLES)[0] == rows)
+    people = {p["personId"]: p for p in (jload(x) for x in glob.glob(os.path.join(EXAMPLES, "people", "*", "*",
+                                                                               "person.json")))}
+    t.eq("the rebuild finds exactly the people the example set holds", sorted(p["id"] for p in doc["people"]),
+         sorted(people))
+    t.ok("with each person's texts, dates and portraits as the record states them",
+         all(p["name"] == people[p["id"]]["name"] and p["biography"] == people[p["id"]]["biography"]
+             and p["birthDate"] == people[p["id"]]["birthDate"]
+             and [a["sha256"] for a in p["artwork"]] == [i["sha256"] for i in people[p["id"]]["images"]]
+             for p in doc["people"]))
+    credited = {c["personId"] for r in rows.values() for c in r["people"]}
+    t.eq("and every person a credit names is one of them", credited, set(people))
 
 
 def test_events(t):
@@ -300,14 +326,14 @@ def test_compare(t):
     series = next(r for r in rows.values() if r["type"] == "series")
     episodes = sorted(iid for iid, r in rows.items() if r["type"] == "episode")
 
-    def compare(change, *extra):
-        export = {"exportedAt": "2026-10-01T12:00:00Z", "items": [dict(r) for r in rows.values()],
+    def compare(change, *extra, tree=EXAMPLES):
+        export = {"exportedAt": "2026-10-01T12:00:00Z", "items": json.loads(json.dumps(list(rows.values()))),
                   "deletedItems": []}
         change(export)
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "catalog.json")
             jwrite(path, export)
-            code, text = run(REBUILD, EXAMPLES, "--compare", path, "--text-language", "en", *extra)
+            code, text = run(REBUILD, tree, "--compare", path, "--text-language", "en", *extra)
         return code, text
 
     def section(text, label):
@@ -334,8 +360,11 @@ def test_compare(t):
 
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
     t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",
-         code == 0 and section(text, "orphan") == [movie["id"]] and "1 orphan(s) on storage" in text, text)
+         code == 0 and section(text, "orphan") == [movie["id"]] and "orphan(s) on storage are safe" in text, text)
     t.ok("the orphan says when and by whom", "deleted 2026-09-30T10:00:00Z by librarian" in text, text)
+    director = movie["people"][0]["personId"]
+    t.ok("a person only an orphan credits is an orphan too",
+         section(text, "people: orphan") == [director] and "only orphans credit them" in text, text)
 
     code, text = compare(drop(movie["id"]))
     t.ok("an item the database neither holds nor deleted is lost, and fails",
@@ -370,6 +399,63 @@ def test_compare(t):
     code, text = compare(deleted(movie["id"]))
     t.ok("an item the database deleted and holds again is live, and compared as one",
          code == 0 and "held by the database again: 1" in text and not section(text, "orphan"), text)
+
+    # ---- people: the database's people are its list when it has one, else whom its items credit
+    lead = series["people"][0]["personId"]
+
+    def uncredit(iid):
+        return lambda e: [r.update(people=[]) for r in e["items"] if r["id"] == iid]
+
+    code, text = compare(drop(movie["id"]))
+    t.ok("a person a lost item credits is lost with it",
+         code == 1 and section(text, "people: lost —") == [director] and "which is lost" in text, text)
+
+    code, text = compare(both(drop(movie["id"]), lambda e: e.pop("deletedItems")))
+    t.ok("a person only items that may be lost credit may be lost too",
+         code == 1 and section(text, "people: lost or orphan") == [director], text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, tree)
+        stray = "00000000-0000-4000-8000-0000000000dd"
+        p = os.path.join(tree, "people", stray[:2], stray)
+        shutil.copytree(os.path.join(tree, "people", director[:2], director), p)
+        doc = jload(os.path.join(p, "person.json"))
+        jwrite(os.path.join(p, "person.json"), dict(doc, personId=stray, name="Credited By Nothing"))
+        code, text = compare(lambda e: None, tree=tree)
+        t.ok("a person nothing on storage credits, whom the database does not hold, is an orphan",
+             code == 0 and section(text, "people: orphan") == [stray] and "nothing on storage credits them" in text, text)
+
+    code, text = compare(uncredit(series["id"]))
+    t.ok("a person on storage that an item the database holds still credits is lost, not an orphan",
+         code == 1 and section(text, "people: lost —") == [lead] and "which the database holds" in text, text)
+
+    code, text = compare(lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"}]))
+    t.ok("with a people list, a person it does not hold is judged by the list",
+         code == 1 and section(text, "people: lost —") == [lead], text)
+
+    code, text = compare(lambda e: e["items"][0].setdefault("people", []).append(
+        {"personId": "00000000-0000-4000-8000-0000000000bb", "name": "Nobody Recorded", "role": "actor"}))
+    t.ok("a person the database credits who has no record on storage is a missing record",
+         code == 1 and section(text, "people: missing record") == ["00000000-0000-4000-8000-0000000000bb"], text)
+
+    code, text = compare(lambda e: e.update(people=[
+        {"id": director, "name": "Ian Hubert", "biography": "Someone else's life."},
+        {"id": lead, "name": "Mara Example"}]), "--text-language", "en")
+    t.ok("a field the people list carries is compared", code == 1 and "people.biography: 1 difference" in text, text)
+    code, text = compare(lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"},
+                                                    {"id": lead, "name": "Mara Example"}]))
+    t.ok("and a field it does not carry is not", code == 0 and "the tree and the database agree" in text, text)
+
+    listed = lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"}, {"id": lead, "name": "Mara Example"},
+                                        {"id": "00000000-0000-4000-8000-0000000000cc", "name": "Only Listed"}])
+    code, text = compare(listed)
+    t.ok("a person the people list holds who is not on storage is a missing record",
+         code == 1 and section(text, "people: missing record") == ["00000000-0000-4000-8000-0000000000cc"], text)
+    code, text = compare(listed, "--subset")
+    t.ok("and in a subset, when no item on storage credits them, it is listed without failing",
+         code == 0 and section(text, "people: missing record") == ["00000000-0000-4000-8000-0000000000cc"]
+         and "1 of which a subset is expected to lack" in text, text)
 
 
 # ---------------------------------------------------------------- v1 -> v2
@@ -613,6 +699,96 @@ def test_from_catalog(t):
              code == 0 and not os.path.exists(out) and tree_files(share) == before, text)
 
 
+# ---------------------------------------------------------------- people
+def test_people(t):
+    """A catalog without person records knows a personId and a name per credit, and that is what the
+    record holds; an export with a people list fills every field it carries."""
+    png = (b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR" + (4).to_bytes(4, "big") +
+           (5).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + b"\x00" * 4)
+    director, other = "99999999-8888-4777-8666-555555555555", "77777777-6666-4555-8444-333333333333"
+
+    def person_doc(out, pid):
+        p = os.path.join(out, "people", pid[:2], pid, "person.json")
+        return jload(p) if os.path.isfile(p) else None
+
+    with tempfile.TemporaryDirectory() as tmp:
+        share = os.path.join(tmp, "share")
+        export, media, packages, iid, _ = fake_export(share)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        doc = person_doc(out, director)
+        t.ok("a credited person gets a record", code == 0 and doc is not None, text)
+        t.eq("which holds what the credit knows and nothing else",
+             (doc or {}).get("name"), "A Director")
+        t.ok("and leaves the rest empty rather than guessed",
+             doc and not doc["biography"] and not doc["externalIds"] and not doc["images"] and doc["sortName"] is None)
+        rows, built = rows_of(out, "--text-language", "und")
+        t.eq("the rebuild restores the person row", [(p["id"], p["name"]) for p in built["people"]],
+             [(director, "A Director")])
+
+        # ---- an export that lists its people: every field it carries crosses over
+        e = jload(export)
+        e["people"] = [{"id": director, "name": "A Director", "sortName": "Director, A", "alsoKnownAs": ["A. D."],
+                        "birthDate": "1970-01-02T00:00:00Z", "birthPlace": "Example Town",
+                        "biography": "Directs examples.", "metadataLocked": True,
+                        "externalIds": [{"source": "tmdb", "externalId": "42"}, {"source": "imdb", "externalId": "tt123"}],
+                        "artwork": [{"kind": "profile", "base64": base64.b64encode(png).decode(),
+                                     "fetchedAt": "2026-07-01T09:05:00Z"},
+                                    {"kind": "poster", "base64": base64.b64encode(png).decode()}]},
+                       {"id": other, "name": "Credited Nowhere"}]
+        jwrite(export, e)
+        items_before = stamps(os.path.join(out, "movies"))
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out, "--people-only")
+        doc = person_doc(out, director)
+        t.ok("--people-only needs neither the package store nor the originals", code == 0, text)
+        t.ok("and rewrites no item record: every file under movies/ is the one that was there",
+             stamps(os.path.join(out, "movies")) == items_before)
+        t.eq("the fields a people list carries become the person's",
+             {k: doc[k] for k in ("sortName", "alsoKnownAs", "birthDate", "birthPlace", "biography", "externalIds")},
+             {"sortName": "Director, A", "alsoKnownAs": ["A. D."], "birthDate": "1970-01-02",
+              "birthPlace": "Example Town", "biography": {"und": "Directs examples."},
+              "externalIds": {"tmdbPerson": "42"}})
+        t.ok("and a lock on the person is projected with them", doc["curation"]["metadataLocked"] is True)
+        t.ok("a title id is not a person's imdb id, and is dropped with a note",
+             "'tt123' is not a valid imdb id" in text and "imdb" not in doc["externalIds"], text)
+        portrait = os.path.join(out, "people", director[:2], director, doc["images"][0]["file"]) \
+            if doc["images"] else ""
+        t.ok("the portrait is written beside the record, named by its own content",
+             len(doc["images"]) == 1 and os.path.isfile(portrait)
+             and doc["images"][0]["sha256"] == "sha256:" + hashlib.sha256(png).hexdigest(), doc["images"])
+        t.ok("and an item's kind of image is not a person's", "kind 'poster' is not one a person record holds" in text, text)
+        t.ok("a person the list holds is written even when nothing credits them",
+             (person_doc(out, other) or {}).get("name") == "Credited Nowhere")
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, out)
+            t.ok("a tree with its people passes validate-library-v2.py", code == 0, vtext)
+
+        # ---- a projection is replaced whole: an image it stops naming goes with it
+        e["people"][0]["artwork"] = []
+        jwrite(export, e)
+        run(FROM_CATALOG, "--export", export, "--out", out, "--people-only")
+        t.ok("a portrait the new projection drops is removed by the writer that dropped it",
+             not os.path.exists(portrait) and person_doc(out, director)["images"] == [])
+
+        # ---- one person, credited under two names: the record says which, and the run says so
+        e = jload(export)
+        e.pop("people")
+        e["items"][0]["people"].append({"personId": director, "name": "A. Director", "role": "writer"})
+        jwrite(export, e)
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out, "--people-only")
+        t.ok("a person credited under two names is recorded once, with a note",
+             code == 0 and "credited under 2 names" in text and person_doc(out, director)["name"] == "A Director", text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"))
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out, "--people-only", "--dry-run")
+        t.ok("a dry run of --people-only writes nothing", code == 0 and not os.path.exists(out), text)
+        code, text = run(FROM_CATALOG, "--export", export, "--out", out)
+        t.ok("without --people-only the package store and the originals are required",
+             code != 0 and "--packages and --media are needed" in text, text)
+
+
 # ---------------------------------------------------------------- the media check
 def test_media_check(t):
     def case(name, expect_ok, change, phrase="", extra=()):
@@ -676,6 +852,15 @@ def test_media_check(t):
          lambda r: os.unlink(glob.glob(os.path.join(movie(r), "sources", "*", "ffprobe.json"))[0]),
          "probe file a source record names is missing")
     case("a file that is a hard link to another path", False, hard_link, "hard links")
+    case("a portrait a person record names that is gone", False,
+         lambda r: os.unlink(glob.glob(os.path.join(r, "people", "*", "*", "*.jpg"))[0]),
+         "image listed in person.json but not there")
+    case("a stray file in a person's folder", False,
+         lambda r: open(os.path.join(glob.glob(os.path.join(r, "people", "*", "*"))[0], "notes.txt"), "w").write("x"),
+         "not person.json and not an image person.json lists")
+    case("a portrait that is a hard link to another path", False,
+         lambda r: os.link(glob.glob(os.path.join(r, "people", "*", "*", "*.jpg"))[0],
+                           os.path.join(os.path.dirname(r), "elsewhere")), "hard links")
 
 
 def rename_image(d):
@@ -718,7 +903,8 @@ def main():
     for section, fn in (("the pieces", test_pieces), ("the example tree", test_round_trip),
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
                         ("v1 -> v2", test_from_v1),
-                        ("catalog -> v2", test_from_catalog), ("the media check", test_media_check)):
+                        ("catalog -> v2", test_from_catalog), ("people", test_people),
+                        ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):
             continue
         print(f"\n--- {section}")

@@ -111,6 +111,48 @@ def probe(root):
     return sorted(glob.glob(os.path.join(movie(root), "sources", "*", "ffprobe.json")))[0]
 
 
+def person(root, name):
+    """The folder of the person the examples call name."""
+    for p in sorted(glob.glob(os.path.join(root, "people", "*", "*"))):
+        if json.load(open(os.path.join(p, "person.json")))["name"] == name:
+            return p
+    raise AssertionError(f"no person {name}")
+
+
+def director(root):
+    return person(root, "Ian Hubert")
+
+
+def lead(root):
+    return person(root, "Mara Example")
+
+
+def pjson(p):
+    return os.path.join(p, "person.json")
+
+
+def profile(p):
+    return os.path.join(p, json.load(open(pjson(p)))["images"][0]["file"])
+
+
+def move_person(root, p, new_id, shard=None):
+    """Put a person folder under another id, or into another shard."""
+    target = os.path.join(root, "people", shard or new_id[:2], new_id)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    shutil.move(p, target)
+
+
+def bare_person(root):
+    """A person the database knows nothing about but a name: the smallest record there is."""
+    p = director(root)
+    for name in os.listdir(p):
+        if name != "person.json":
+            os.remove(os.path.join(p, name))
+    doc = json.load(open(pjson(p)))
+    write_json(pjson(p), {"schema": doc["schema"], "personId": doc["personId"], "asOf": doc["asOf"],
+                          "name": doc["name"], "images": []})
+
+
 # ---------------------------------------------------------------- editing the fixture
 def edit(path, change):
     with open(path) as f:
@@ -200,7 +242,7 @@ CASES = [
     # ---- identity
     ("itemId differs from its folder", False, lambda r: edit(item(movie(r)), lambda d: d.update(itemId=NOWHERE)), "does not match folder", []),
     ("item in the wrong shard", False, lambda r: shutil.move(movie(r), os.path.join(r, "movies", "ff", os.path.basename(movie(r)))) if os.makedirs(os.path.join(r, "movies", "ff")) is None else None, "is not in shard", []),
-    ("a category that is not movies or series", False, lambda r: os.makedirs(os.path.join(r, "music", "aa")), "holds only movies/ and series/", []),
+    ("a category that is not movies, series or people", False, lambda r: os.makedirs(os.path.join(r, "music", "aa")), "holds only movies/, series/ and people/", []),
     ("a movie carrying episode numbering", False, lambda r: edit(item(movie(r)), lambda d: d.update(seasonNumber=1)), "must not have seasonNumber", []),
     ("an episode without its series", False, lambda r: edit(item(episode(r, 1)), lambda d: d.pop("seriesId")), "'seriesId' is a required property", []),
     ("a movie carrying an episode reference id", False, lambda r: edit(item(movie(r)), lambda d: d["externalIds"].update(tmdbEpisode="1")), "carries series or episode reference ids", []),
@@ -343,6 +385,25 @@ CASES = [
     ("a naming field the format does not model", False, lambda r: edit(episode_source(r, 2), lambda d: d["naming"].update(title="Crosswind")), "'title' was unexpected", []),
     ("provenance the format does not model", False, lambda r: edit(item(movie(r)), lambda d: d["provenance"].update(legacyPath="/old/library")), "'legacyPath' was unexpected", []),
     ("a legacy id that is not an id", False, lambda r: edit(item(movie(r)), lambda d: d["provenance"].update(legacyItemId="movie-12")), "does not match", []),
+
+    # ---- people: a category of their own, a projection like metadata.json
+    ("a person folder not named by its id", False, lambda r: move_person(r, director(r), "a1" + NOWHERE[2:]), "does not match folder", []),
+    ("a person in the wrong shard", False, lambda r: move_person(r, director(r), os.path.basename(director(r)), shard="ff"), "person folder is not in shard", []),
+    ("a person folder without its record", False, lambda r: os.remove(pjson(director(r))), "person.json: missing", []),
+    ("a person record listing credits", False, lambda r: edit(pjson(director(r)), lambda d: d.update(credits=[])), "'credits' was unexpected", []),
+    ("a stray file in a person folder", False, lambda r: open(os.path.join(director(r), "notes.txt"), "w").write("x"), "not person.json and not an image person.json lists", []),
+    ("a portrait whose hash is wrong", False, lambda r: open(profile(director(r)), "ab").write(b"x"), "sha256 does not match person.json", []),
+    ("a portrait listed but missing", False, lambda r: os.remove(profile(director(r))), "listed in person.json but does not exist", []),
+    ("a person image of an item's kind", False, lambda r: edit(pjson(director(r)), lambda d: d["images"][0].update(kind="poster")), "'poster' is not one of ['profile']", []),
+    ("an item image of a person's kind", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(kind="profile")), "'profile' is not one of", []),
+    ("a person image belonging to a season", False, lambda r: edit(pjson(director(r)), lambda d: d["images"][0].update(season=1)), "must not have season here", []),
+    ("a death before the birth", False, lambda r: edit(pjson(lead(r)), lambda d: d.update(deathDate="1984-12-31")), "is before birthDate", []),
+    ("a biography in something that is not a language", False, lambda r: edit(pjson(lead(r)), lambda d: d["biography"].update(English="x")), "$.biography", []),
+    ("a title id as a person's imdb id", False, lambda r: edit(pjson(lead(r)), lambda d: d["externalIds"].update(imdb="tt2285752")), "does not match", []),
+    ("a person name that is empty", False, lambda r: edit(pjson(lead(r)), lambda d: d.update(name="")), "$.name", []),
+    ("a credit to a person with no record is a note", True, lambda r: shutil.rmtree(director(r)), "who has no people/", []),
+    ("a person nothing is known about but a name", True, bare_person, "OK", ["--check-media"]),
+    ("a death known only to the year of the birth", True, lambda r: edit(pjson(lead(r)), lambda d: d.update(deathDate="1985")), "OK", []),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in

@@ -6,11 +6,12 @@ Usage:
   library-v2-from-catalog.py --export CATALOG.json --packages DIR --media DIR --out LIBRARY
                              [--items id,id,...] [--media-mode copy|move|none]
                              [--as-of TIMESTAMP] [--text-language LANG] [--dry-run]
+  library-v2-from-catalog.py --export CATALOG.json --out LIBRARY --people-only [--items …] [--dry-run]
 
 The catalog is the working copy and this writes the record beside the bytes: one item folder per
 row, holding the identity the row was created with, the texts and images the database held, the
 original each row points at as the file itself reports it, and one version folder per packaged
-asset with the package moved or copied in.
+asset with the package moved or copied in — and one folder per person the rows credit.
 
   <out>/movies/<aa>/<itemId>/          item.json  metadata.json  metadata/<sha256>.jpg
                                        sources/<sourceId>.json  sources/<sourceId>/ffprobe.json
@@ -19,6 +20,18 @@ asset with the package moved or copied in.
                                                              checksums.sha256  .complete
   <out>/series/<aa>/<seriesId>/        item.json  metadata.json  metadata/
                                        episodes/<episodeId>/ (as above)
+  <out>/people/<aa>/<personId>/        person.json  <sha256>.jpg
+
+People: a catalog without person records knows only what its credits say, a personId and a name, so
+that is what person.json holds and every other field stays empty. When the export carries a
+top-level people list, each entry's fields are used under the names person.json gives them — id,
+name, sortName, alsoKnownAs, birthDate, deathDate, birthPlace, biography (a string in
+--text-language, or {language: text}), externalIds ({tmdbPerson, imdb, tvdb, wikidata}, or the
+[{source, externalId}] list items use), artwork ([{kind: "profile", base64, fetchedAt}]) and
+metadataLocked — and every person in it is written, credited or not, unless --items narrows the run
+to the people its items credit. person.json is a projection: it is replaced whole, and an image it
+no longer names is removed with it. --people-only writes people/ and touches no item folder, so a
+tree written earlier gains its people without rewriting a record.
 
 The export is produced on the client side (see the query beside this tool in the runbook); this
 tool needs no database driver and no network, only the standard library, so it can be piped into
@@ -47,7 +60,15 @@ import argparse, base64, datetime, hashlib, json, os, re, shutil, subprocess, sy
 NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://zaentrum.github.io/schemas/library")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 IMAGE_KINDS = {"poster", "backdrop", "logo", "still", "banner", "thumb"}
+PERSON_IMAGE_KINDS = {"profile"}
+# A person's reference ids: the source an export names, the field person.json keys it under, and the
+# form the value must have.
+PERSON_IDS = {"tmdb": ("tmdbPerson", r"[0-9]+"), "themoviedb": ("tmdbPerson", r"[0-9]+"),
+              "tmdb-person": ("tmdbPerson", r"[0-9]+"), "tmdbperson": ("tmdbPerson", r"[0-9]+"),
+              "imdb": ("imdb", r"nm[0-9]+"), "tvdb": ("tvdb", r"[0-9]+"), "wikidata": ("wikidata", r"Q[0-9]+")}
+DATE_RE = re.compile(r"^([0-9]{4})(-[0-9]{2}(-[0-9]{2})?)?")
 SEGMENT_KINDS = {"intro", "recap", "credits", "preview", "commercial", "other"}
 EXT_OF = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
@@ -693,7 +714,7 @@ class Build:
         self.probe_version = ffprobe_version() if have_ffprobe() else None
         self.notes = []
         self.skipped = []
-        self.counts = {"items": 0, "sources": 0, "versions": 0, "packages": 0, "images": 0, "probed": 0}
+        self.counts = {"items": 0, "people": 0, "sources": 0, "versions": 0, "packages": 0, "images": 0, "probed": 0}
 
     def note(self, item_id, msg):
         self.notes.append(f"{item_id}: {msg}")
@@ -1202,14 +1223,134 @@ class Build:
                           self.metadata_json(row, d, version_ids, episodes))
         self.counts["items"] += 1
 
+    # -------------------------------------------------- people
+    def people(self, rows, everyone):
+        """One person.json per person the rows credit — and, when the export lists its people and
+        the run is not narrowed to some items, per person it lists. Returns how many were written."""
+        listed = {str(p["id"]): p for p in self.export.get("people") or [] if isinstance(p, dict) and p.get("id")}
+        names = {}
+        for row in rows:
+            for c in row.get("people") or []:
+                pid = text(c.get("personId"))
+                if pid and UUID_RE.match(pid):
+                    names.setdefault(pid, [])
+                    if text(c.get("name")) and text(c["name"]) not in names[pid]:
+                        names[pid].append(text(c["name"]))
+        wanted = sorted(set(names) | ({pid for pid in listed if UUID_RE.match(pid)} if everyone else set()))
+        for pid in wanted:
+            try:
+                self.person(pid, listed.get(pid) or {}, names.get(pid) or [])
+            except Exception as e:  # one unreadable person must not stop the run
+                self.skipped.append((pid, f"{type(e).__name__}: {e}"))
+
+    def person(self, pid, entry, credited_as):
+        name = text(entry.get("name")) or (credited_as[0] if credited_as else None)
+        if not name:
+            self.skipped.append((pid, "a person record must carry a name, and nothing names this person"))
+            return
+        if len(credited_as) > 1:
+            self.note(pid, f"credited under {len(credited_as)} names ({', '.join(map(repr, credited_as))}); "
+                           f"person.json says {name!r}")
+        d = os.path.join(self.a.out, "people", pid[:2], pid)
+        doc = {"schema": "zaentrum.library.person/2", "personId": pid, "asOf": self.as_of,
+               "projectedBy": "library-v2-from-catalog", "name": name, "sortName": text(entry.get("sortName")),
+               "alsoKnownAs": sorted({text(x) for x in entry.get("alsoKnownAs") or [] if text(x)} - {name}),
+               "birthDate": self.date(pid, "birthDate", entry.get("birthDate")),
+               "deathDate": self.date(pid, "deathDate", entry.get("deathDate")),
+               "birthPlace": text(entry.get("birthPlace")), "biography": self.biography(pid, entry.get("biography")),
+               "externalIds": self.person_ids(pid, entry.get("externalIds")),
+               "images": self.person_images(pid, d, entry.get("artwork") or []),
+               "curation": {"metadataLocked": bool(entry.get("metadataLocked")), "lockedFields": [], "notes": None}}
+        doc["fieldOrigins"] = {k: "legacy-catalog" for k in ("name", "sortName", "alsoKnownAs", "birthDate",
+                                                             "deathDate", "birthPlace", "biography", "externalIds",
+                                                             "images") if doc[k]}
+        self.w.write_json(os.path.join(d, "person.json"), doc)
+        self.counts["people"] += 1
+
+    def date(self, pid, field, v):
+        """A date as the format holds one — a year, a year and month, or a day — from a date or the
+        date part of a timestamp; anything else is dropped rather than guessed."""
+        if not v:
+            return None
+        m = DATE_RE.match(str(v).strip())
+        if not m:
+            self.note(pid, f"{field} {v!r} is not a date, dropped")
+            return None
+        return m.group(0)
+
+    def biography(self, pid, v):
+        if not v:
+            return {}
+        if isinstance(v, dict):
+            out = {}
+            for k, body in v.items():
+                if not LANGUAGE_RE.match(str(k)):
+                    self.note(pid, f"biography in {k!r}, which is not a language, dropped")
+                elif str(body or "").strip():
+                    out[str(k)] = str(body).strip()
+            return out
+        return {self.a.text_language: str(v).strip()} if str(v).strip() else {}
+
+    def person_ids(self, pid, v):
+        pairs = v.items() if isinstance(v, dict) else \
+            [((e or {}).get("source"), (e or {}).get("externalId")) for e in v or []]
+        by_field = {field: pattern for field, pattern in PERSON_IDS.values()}
+        out = {}
+        for source, value in pairs:
+            source, value = str(source or ""), text(value)
+            field, pattern = (source, by_field[source]) if source in by_field else \
+                PERSON_IDS.get(source.lower(), (None, None))
+            if not value:
+                continue
+            if field is None:
+                self.note(pid, f"person id source {source!r} has no person.json field, dropped")
+            elif not re.fullmatch(pattern, value):
+                self.note(pid, f"{value!r} is not a valid {field} id, dropped")
+            else:
+                out[field] = value
+        return out
+
+    def person_images(self, pid, d, artwork):
+        """The images beside person.json, named by their own content. person.json is replaced
+        whole, so an image the new one does not name is removed with it."""
+        out, seen = [], set()
+        for art in artwork:
+            kind = (art.get("kind") or "").lower()
+            if kind not in PERSON_IMAGE_KINDS:
+                self.note(pid, f"person artwork kind {kind!r} is not one a person record holds, dropped")
+                continue
+            try:
+                raw = base64.b64decode(art.get("base64") or "", validate=False)
+            except (ValueError, TypeError):
+                raw = b""
+            ctype, w, h = sniff_image(raw)
+            if ctype not in EXT_OF:
+                self.note(pid, f"{kind} artwork is not a JPEG, PNG or WebP, dropped")
+                continue
+            digest = hashlib.sha256(raw).hexdigest()
+            name = f"{digest}.{EXT_OF[ctype]}"
+            if name in seen:
+                continue
+            seen.add(name)
+            self.w.write(os.path.join(d, name), raw)
+            self.counts["images"] += 1
+            out.append({"kind": kind, "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
+                        "sizeBytes": len(raw), "width": w, "height": h, "language": None, "sourceUrl": None,
+                        "fetchedAt": ts(art.get("fetchedAt")), "origin": "legacy-catalog"})
+        self.w.prune(d, seen | {"person.json"})
+        return out
+
 
 def main():
     ap = argparse.ArgumentParser(prog="library-v2-from-catalog.py",
                                  description="Write v2 library records from a catalog export.")
     ap.add_argument("--export", required=True, help="the catalog export produced on the client side")
-    ap.add_argument("--packages", required=True, help="the package store the catalog's packaged assets point into")
-    ap.add_argument("--media", required=True, help="the folder the catalog's primary assets point into")
-    ap.add_argument("--out", required=True, help="the library root to write: movies/ and series/ go here")
+    ap.add_argument("--packages", help="the package store the catalog's packaged assets point into")
+    ap.add_argument("--media", help="the folder the catalog's primary assets point into")
+    ap.add_argument("--out", required=True, help="the library root to write: movies/, series/ and people/ go here")
+    ap.add_argument("--people-only", action="store_true",
+                    help="write people/ and nothing else, so a tree written earlier gains its people "
+                         "without a record being rewritten; needs neither --packages nor --media")
     ap.add_argument("--items", default="", help="comma-separated item ids; a selected episode brings its series, "
                                                 "a selected series brings its episodes")
     ap.add_argument("--media-mode", choices=("copy", "move", "none"), default="copy",
@@ -1221,9 +1362,11 @@ def main():
                          "because the catalog does not record what language its texts are in")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    if not args.people_only and not (args.packages and args.media):
+        ap.error("--packages and --media are needed, unless --people-only")
     args.out = os.path.abspath(args.out)
-    args.media = os.path.abspath(args.media)
-    args.packages = os.path.abspath(args.packages)
+    args.media = os.path.abspath(args.media or ".")
+    args.packages = os.path.abspath(args.packages or ".")
 
     with open(args.export, encoding="utf-8") as f:
         export = json.load(f)
@@ -1244,16 +1387,17 @@ def main():
         rows = [r for r in rows if r["id"] in chosen]
 
     b = Build(args, export)
-    if not b.probe_version:
+    if not b.probe_version and not args.people_only:
         print("note: ffprobe is not on PATH; source records will carry size, mtime and qh1 only")
     order = {"series": 0, "movie": 1, "episode": 2}
-    for row in sorted(rows, key=lambda r: (order.get(r["type"], 3), r["id"])):
+    for row in ([] if args.people_only else sorted(rows, key=lambda r: (order.get(r["type"], 3), r["id"]))):
         episodes = [r for r in (export.get("items") or []) if r.get("parentId") == row["id"]] \
             if row["type"] == "series" else []
         try:
             b.build(row, by_id, episodes)
         except Exception as e:  # one unreadable item must not stop the run
             b.skipped.append((row["id"], f"{type(e).__name__}: {e}"))
+    b.people(rows, everyone=not wanted)
 
     print(f"{'would write' if args.dry_run else 'wrote'}: {b.counts}")
     print(f"files placed: {b.w.placed} ({b.w.bytes_placed} bytes), records written: {b.w.written}")

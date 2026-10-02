@@ -4,16 +4,19 @@
 Usage:
   validate-library-v2.py [--check-media | --check-checksums] [--schemas URL-or-dir] ROOT [ROOT ...]
 
-ROOT is a folder holding movies/ and/or series/. In v2 the database is the working copy and this
-tree is the record that can rebuild it: every file is either written once (item, source, version,
-package, event) or replaced whole by the one service that owns it (metadata). Nothing here is
-merged, so the rules below are about records agreeing with each other and with the bytes beside
-them, never about a document being up to date.
+ROOT is a folder holding movies/, series/ and people/. In v2 the database is the working copy and
+this tree is the record that can rebuild it: every file is either written once (item, source,
+version, package, event) or replaced whole by the one service that owns it (metadata, person).
+Nothing here is merged, so the rules below are about records agreeing with each other and with the
+bytes beside them, never about a document being up to date.
 
-  layout       only movies/ and series/ at the root; shard folders of two characters; itemId equals
-               the folder name and its shard; an item folder holds only item.json, metadata.json,
-               metadata/, sources/, versions/, events/ (a series: episodes/ instead of sources/ and
-               versions/) — so no media can sit in the item folder
+  layout       only movies/, series/ and people/ at the root; shard folders of two characters; itemId
+               and personId equal the folder name and its shard; an item folder holds only item.json,
+               metadata.json, metadata/, sources/, versions/, events/ (a series: episodes/ instead of
+               sources/ and versions/) — so no media can sit in the item folder
+  people       a person folder holds person.json and the images it lists; a death is not before the
+               birth; a credit whose person has no folder is a note, not an error, because the
+               person may not have been projected yet
   versions     every version is a folder under versions/ whose name is its versionId; its sourceIds
                name source records that exist and its originalFiles are those sources' file names;
                package.json exists exactly when .complete does; a package is canonical exactly when
@@ -22,8 +25,8 @@ them, never about a document being up to date.
                flags do not contradict it
   metadata     same item and type as item.json; every image exists with the recorded hash, size,
                content type and dimensions, is named by its own content hash, is listed once, and
-               nothing unlisted sits in metadata/; library.primaryVersionId and library.versionLabels
-               name versions that are really there
+               nothing unlisted sits in metadata/ (the same for a person's images beside person.json);
+               library.primaryVersionId and library.versionLabels name versions that are really there
   series       an episode names its enclosing series, agrees with it on the reference id, numbers
                itself consistently, does not collide with another episode, and sits in a season the
                series' metadata lists; its own numbering does not contradict the numbers item.json
@@ -53,11 +56,12 @@ from jsonschema.exceptions import best_match
 from referencing import Registry, Resource
 
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "library", "v2")
-NAMES = ["defs", "item", "metadata", "source", "version", "package", "event"]
-DOCUMENTS = ["item", "metadata", "source", "version", "package", "event"]
+NAMES = ["defs", "item", "metadata", "person", "source", "version", "package", "event"]
+DOCUMENTS = ["item", "metadata", "person", "source", "version", "package", "event"]
 BASE = "https://zaentrum.github.io/schemas/library/v2/"
 
 CATEGORIES = (("movies", "movie"), ("series", "series"))
+ROOT_ENTRIES = {"movies", "series", "people"}
 ITEM_ENTRIES = {"item.json", "metadata.json", "metadata", "sources", "versions", "events"}
 SERIES_ENTRIES = {"item.json", "metadata.json", "metadata", "episodes", "events"}
 VERSION_ENTRIES = {"version.json", "package.json", "checksums.sha256", ".complete", "hls", "subs", "trickplay", "trailers"}
@@ -266,11 +270,17 @@ class Checker:
         self.check_media = check_media or check_checksums
         self.check_checksums = check_checksums
         self.errors = []
-        self.counts = {"movie": 0, "series": 0, "episode": 0, "versions": 0, "packages": 0,
+        self.notes = []
+        self.root_dir = None
+        self.counts = {"movie": 0, "series": 0, "episode": 0, "people": 0, "versions": 0, "packages": 0,
                        "sources": 0, "images": 0, "events": 0}
 
     def err(self, where, msg):
         self.errors.append(f"{where}: {msg}")
+
+    def note(self, where, msg):
+        """Something worth knowing that is not wrong: the tree is still a valid record."""
+        self.notes.append(f"{where}: {msg}")
 
     def load(self, p):
         try:
@@ -377,20 +387,39 @@ class Checker:
         numbers = [s["number"] for s in (meta.get("series") or {}).get("seasons") or []]
         if len(numbers) != len(set(numbers)):
             self.err(where, "series.seasons lists a season number twice")
-        listed = set()
+        listed = self.images(md, meta["images"], "metadata.json")
         for img in meta["images"]:
+            f = os.path.join(md, img["file"])
+            if item.get("type") != "series" and img.get("season") is not None:
+                self.err(f, "season-specific image on a non-series item")
+            if img.get("season") is not None and img["season"] not in seasons:
+                self.err(f, f"names season {img['season']}, which metadata.json does not describe")
+        if os.path.isdir(md):
+            for name in listdir(md):
+                if name not in listed:
+                    self.err(os.path.join(md, name), "not listed in metadata.json")
+        self.projected_decisions(where, meta, versions, removed)
+        self.credits(where, meta)
+        return meta
+
+    def images(self, folder, entries, owner):
+        """The images a projection lists, each against the file it names in folder: there, listed
+        once, named by the hash of its own content, of the recorded size, type and dimensions.
+        Returns the names listed."""
+        listed = set()
+        for img in entries:
             name = img["file"]
-            f = os.path.join(md, name)
+            f = os.path.join(folder, name)
             if name in listed:
-                self.err(f, "listed twice in metadata.json")
+                self.err(f, f"listed twice in {owner}")
             listed.add(name)
             if not os.path.isfile(f):
-                self.err(f, "listed in metadata.json but does not exist")
+                self.err(f, f"listed in {owner} but does not exist")
                 continue
             self.counts["images"] += 1
             digest = sha_file(f)
             if digest != img["sha256"]:
-                self.err(f, "sha256 does not match metadata.json")
+                self.err(f, f"sha256 does not match {owner}")
             if name.rsplit(".", 1)[0] != digest.split(":", 1)[1]:
                 self.err(f, "file name is not the hash of its own content")
             if os.path.getsize(f) != img["sizeBytes"]:
@@ -405,16 +434,17 @@ class Checker:
                     self.err(f, f"{label} is recorded as {recorded} but cannot be read from the file")
                 elif recorded is not None and actual != recorded:
                     self.err(f, f"{label} is {actual} but recorded as {recorded}")
-            if item.get("type") != "series" and img.get("season") is not None:
-                self.err(f, "season-specific image on a non-series item")
-            if img.get("season") is not None and img["season"] not in seasons:
-                self.err(f, f"names season {img['season']}, which metadata.json does not describe")
-        if os.path.isdir(md):
-            for name in listdir(md):
-                if name not in listed:
-                    self.err(os.path.join(md, name), "not listed in metadata.json")
-        self.projected_decisions(where, meta, versions, removed)
-        return meta
+        return listed
+
+    def credits(self, where, meta):
+        """A credit keys a person the database holds. Without a record in people/ the tree cannot
+        restore that person's texts and images, which is worth saying — but the person may simply
+        not have been projected yet, so it is a note."""
+        for c in meta.get("credits") or []:
+            pid = c["personId"]
+            if not os.path.isfile(os.path.join(self.root_dir or "", "people", pid[:2], pid, "person.json")):
+                self.note(where, f"credit {c['name']!r} ({c['role']}) names person {pid}, who has no "
+                                 f"people/{pid[:2]}/{pid}/person.json yet")
 
     def projected_decisions(self, where, meta, versions, removed):
         """metadata.library holds what the database decided about this item's storage, so every
@@ -786,33 +816,69 @@ class Checker:
                 self.err(where, f"library.numbering.{name} puts this episode where {other} already is")
             series["places"][at] = item["itemId"]
 
+    # ------------------------------------------------------------ people/
+    def person(self, d):
+        try:
+            self._person(d)
+        except Exception as e:  # a malformed record must not stop the run
+            self.err(d, f"cannot check: {type(e).__name__}: {e}")
+
+    def _person(self, d):
+        where = os.path.join(d, "person.json")
+        doc, valid = self.document("person", where)
+        if doc is None:
+            return
+        self.counts["people"] += 1
+        folder = os.path.basename(d.rstrip("/"))
+        if doc.get("personId") != folder:
+            self.err(where, f"personId {doc.get('personId')} does not match folder {folder}")
+        if not valid:
+            return
+        listed = self.images(d, doc["images"], "person.json")
+        for name in listdir(d):
+            if name != "person.json" and name not in listed:
+                self.err(os.path.join(d, name), "not person.json and not an image person.json lists")
+        born, died = doc.get("birthDate"), doc.get("deathDate")
+        if born and died and died[:min(len(born), len(died))] < born[:min(len(born), len(died))]:
+            self.err(where, f"deathDate {died} is before birthDate {born}")
+        if self.check_media:
+            self.hard_links(d)
+
+    def shards(self, base, what):
+        """The <aa>/<id>/ folders of one category, with the rules every category shares."""
+        for shard in listdir(base):
+            sd = os.path.join(base, shard)
+            if not os.path.isdir(sd):
+                self.err(sd, "unexpected file among the shard folders")
+                continue
+            if not re.fullmatch(r"[0-9a-f]{2}", shard):
+                self.err(sd, f"shard folders are the first two characters of {what} id")
+            for name in listdir(sd):
+                p = os.path.join(sd, name)
+                if name[:2] != shard:
+                    self.err(p, f"{what.split()[-1]} folder is not in shard {name[:2]}")
+                if not os.path.isdir(p):
+                    self.err(p, "unexpected file in a shard folder")
+                    continue
+                yield p
+
     # ------------------------------------------------------------ roots
     def root(self, r):
+        self.root_dir = r
         found = 0
-        known = {c for c, _ in CATEGORIES}
         for name in listdir(r):
-            if name not in known:
-                self.err(os.path.join(r, name), "a library root holds only movies/ and series/")
+            if name not in ROOT_ENTRIES:
+                self.err(os.path.join(r, name), "a library root holds only movies/, series/ and people/")
         for category, kind in CATEGORIES:
             base = os.path.join(r, category)
             if not os.path.isdir(base):
                 continue
-            for shard in listdir(base):
-                sd = os.path.join(base, shard)
-                if not os.path.isdir(sd):
-                    self.err(sd, "unexpected file among the shard folders")
-                    continue
-                if not re.fullmatch(r"[0-9a-f]{2}", shard):
-                    self.err(sd, "shard folders are the first two characters of an item id")
-                for iid in listdir(sd):
-                    p = os.path.join(sd, iid)
-                    if iid[:2] != shard:
-                        self.err(p, f"item folder is not in shard {iid[:2]}")
-                    if not os.path.isdir(p):
-                        self.err(p, "unexpected file in a shard folder")
-                        continue
-                    self.item(p, kind)
-                    found += 1
+            for p in self.shards(base, "an item"):
+                self.item(p, kind)
+                found += 1
+        if os.path.isdir(os.path.join(r, "people")):
+            for p in self.shards(os.path.join(r, "people"), "a person"):
+                self.person(p)
         if not found:
             self.err(r, "no items found under movies/ or series/")
 
@@ -829,6 +895,10 @@ def main():
     for r in args.roots:
         c.root(r)
     print("checked:", c.counts)
+    for n in c.notes[:50]:
+        print("  note " + n)
+    if len(c.notes) > 50:
+        print(f"  ... and {len(c.notes) - 50} more notes")
     if c.errors:
         for e in c.errors[:200]:
             print("  " + e)

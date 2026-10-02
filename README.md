@@ -29,9 +29,9 @@ library/v1/
   manifest.schema.json, metadata.schema.json, defs.schema.json
   examples/                a movie and a series in the storage layout
 library/v2/
-  item.schema.json, metadata.schema.json, source.schema.json,
+  item.schema.json, metadata.schema.json, person.schema.json, source.schema.json,
   version.schema.json, package.schema.json, event.schema.json, defs.schema.json
-  examples/                a movie, a series and a deletion in the record layout
+  examples/                a movie, a series, a deletion and the people they credit
 tools/
   publish-to-apicurio.sh           publish Avro schemas to a registry
   validate-library.py              validate a v1 library tree
@@ -227,12 +227,24 @@ movies/<aa>/<itemId>/
     .complete                      the package is finished
   events/<timestamp>-<kind>.json   facts that arise later, written once
 series/<aa>/<seriesId>/            item.json, metadata.json, metadata/, episodes/<episodeId>/
+people/<aa>/<personId>/
+  person.json                      the database's person, projected
+  <sha256>.jpg                     the portraits it lists, named by their own content hash
 ```
+
+**People are a category of their own.** A credit carries only a `personId` and a name, and people
+are shared by every item that credits them, so a person's biography, dates, reference ids and
+portraits live once, in `people/<aa>/<personId>/person.json` beside `movies/` and `series/`, with the
+same id-based folder and shard. Like `metadata.json` it is a projection, replaced whole by the one
+service that owns people, so a rebuild restores every person as the last projection left them. It
+lists no credits — those are the items' own, by `personId` — and a credit whose person has no folder
+yet is a note, not an error: the person may simply not have been projected.
 
 | Schema | Document | `schema` field |
 |---|---|---|
 | [`item.schema.json`](https://zaentrum.github.io/schemas/library/v2/item.schema.json) | `item.json` | `zaentrum.library.item/2` |
 | [`metadata.schema.json`](https://zaentrum.github.io/schemas/library/v2/metadata.schema.json) | `metadata.json` | `zaentrum.library.metadata/2` |
+| [`person.schema.json`](https://zaentrum.github.io/schemas/library/v2/person.schema.json) | `people/<aa>/<personId>/person.json` | `zaentrum.library.person/2` |
 | [`source.schema.json`](https://zaentrum.github.io/schemas/library/v2/source.schema.json) | `sources/<sourceId>.json` | `zaentrum.library.source/2` |
 | [`version.schema.json`](https://zaentrum.github.io/schemas/library/v2/version.schema.json) | `versions/<versionId>/version.json` | `zaentrum.library.version/2` |
 | [`package.schema.json`](https://zaentrum.github.io/schemas/library/v2/package.schema.json) | `versions/<versionId>/package.json` | `zaentrum.library.package/2` |
@@ -263,7 +275,8 @@ may accept less.
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
 outside a version folder, `package.json` exists exactly when `.complete` does, images are named by
 their own hash, events reference records that exist and a deletion accepts no more than the gate its
-records compute, episodes do not contradict their own numbering):
+records compute, episodes do not contradict their own numbering, a person folder holds its record and
+the images it lists):
 
 ```sh
 pip install "jsonschema[format-nongpl]>=4.23" referencing
@@ -282,9 +295,12 @@ place it is reachable (`oc exec -i deploy/packager -- python3 - <args> < tool.py
 export they read is produced on the client side, so nothing needs a driver or a credential.
 
 ```sh
-# a catalog's rows, its package store and its originals become item folders
+# a catalog's rows, its package store and its originals become item folders, and its people folders
 python tools/library-v2-from-catalog.py --export catalog.json --packages /…/packages \
        --media /…/media --out /…/library [--items id,id] [--media-mode copy|move|none] [--dry-run]
+
+# only the people, into a tree written earlier: no item record is touched
+python tools/library-v2-from-catalog.py --export catalog.json --out /…/library --people-only [--dry-run]
 
 # v1 item folders (manifest.json + metadata/) become v2 records, in place or into a new tree
 python tools/library-v2-from-v1.py --in /…/library --in-place [--dry-run]
@@ -328,10 +344,30 @@ orphan*, and fails the compare, because any of them may be a loss. A field that 
 two rows both sides hold fails it too. An id that is in the log and in the database again is compared
 as the live item it is.
 
+People are compared too. The database's people are the export's top-level `people` list when it
+carries one, and otherwise everyone its items credit — a `personId` and a name, which is all a catalog
+without person records knows — and only the fields the export carries are compared. Nothing logs a
+person's deletion, so a person only on storage takes the class of the items on storage that credit
+them: an orphan when nothing credits them or only orphans do, lost when an item that is lost, or one
+the database still holds, credits them.
+
 ### Library v2 changelog
 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
+
+- **2026-10-02 (a)** — people are recorded. A credit carried only a `personId` and a name, so a
+  database loss took every biography and portrait with it. `person.schema.json` is new:
+  `people/<aa>/<personId>/person.json` (`zaentrum.library.person/2`), a category beside `movies/` and
+  `series/` with the same id and shard rules, holding the person as the database projects them —
+  `name`, `sortName`, `alsoKnownAs`, `birthDate`, `deathDate`, `birthPlace`, `biography` keyed by
+  language, `externalIds` (`tmdbPerson`, `imdb` as an `nm…` id, `tvdb`, `wikidata`), the portraits
+  beside it (`kind: profile`), `curation` and `fieldOrigins` — and no credits, which stay the items'.
+  The image object, `curation` and `fieldOrigins` move to `defs` so `metadata.json` and `person.json`
+  share them; each document narrows the image `kind` to its own. A credit whose person has no record
+  is a validator note, not an error. `library-v2-from-catalog.py` writes a record for every person
+  the export credits (and every person a top-level `people` list holds), `--people-only` writes just
+  those into an existing tree, and `library-v2-rebuild.py` restores and compares people rows.
 
 - **2026-09-21 (c)** — the gate is computed, not recorded. `lostIfOriginalDeleted` is gone from both
   `version.json` and `package.json`: it is the sources' essence minus the package's, which a reader

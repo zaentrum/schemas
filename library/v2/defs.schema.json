@@ -143,6 +143,45 @@
         "acl": { "type": ["string", "null"] },
         "selinux": { "type": ["string", "null"] }
       }
+    },
+    "image": {
+      "type": "object",
+      "description": "One image file of a projection, named by the hash of its own content: it is written once and never replaced in place, so a new image is a new file and a projection that stops naming an old one leaves it to be swept. metadata.json lists the images in metadata/, person.json the images beside it, both with this one object, so the two cannot drift apart; each narrows kind to its own kinds. An image needs no checksum file: its name is its checksum.",
+      "required": ["kind", "file", "sha256", "contentType", "sizeBytes"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "description": "Narrowed by the document that lists the image." },
+        "season": { "type": ["integer", "null"], "minimum": 0, "description": "Only in a series' metadata.json: the season this image belongs to; null for the series itself. person.json forbids it." },
+        "file": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}\\.(jpg|png|webp)$",
+          "description": "<content hash>.<ext>: the lower-case hex sha256 of the file's own bytes, and the extension matching contentType. A plain name in the folder the listing document names; no subfolders."
+        },
+        "language": { "oneOf": [{ "$ref": "#/$defs/language" }, { "type": "null" }], "description": "The language of the text an image carries, e.g. a poster's or a logo's. The file name carries no language, so this is the only record of it." },
+        "sha256": { "$ref": "#/$defs/sha256", "description": "The same digest the file name carries, in the form the rest of the format uses. Caches key on it." },
+        "contentType": { "enum": ["image/jpeg", "image/png", "image/webp"] },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "width": { "type": ["integer", "null"] },
+        "height": { "type": ["integer", "null"] },
+        "sourceUrl": { "type": ["string", "null"], "description": "Where the image came from, so the exact chosen image can be fetched again." },
+        "fetchedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "origin": { "enum": ["legacy-catalog", "tmdb", "manual"] }
+      }
+    },
+    "curation": {
+      "type": "object",
+      "description": "What a person decided about a projection's texts and images, projected with them so a rebuild does not hand a locked record back to automation.",
+      "additionalProperties": false,
+      "properties": {
+        "metadataLocked": { "type": "boolean" },
+        "lockedFields": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "fieldOrigins": {
+      "type": "object",
+      "description": "Where each value of a projection came from, keyed by field path. Lists only fields that are set. Images carry their own origin.",
+      "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"] }
     }
   }
 }

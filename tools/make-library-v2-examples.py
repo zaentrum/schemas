@@ -11,6 +11,8 @@ every record the format has and the shapes a reader most needs to see:
   series/  one series with a season and two episodes. The first episode keeps its original and
            carries forced, full and SDH subtitles and a commentary track; the second was packaged
            from an original that was never kept here, so its package is canonical.
+  people/  the two people the items credit: the movie's director, with only what is known about
+           him, and the series' lead, a fictional person with every field a person record has.
 
 Images are named by the hash of their own content. Originals and images are small placeholders and
 rendition folders are empty; hashes, sizes and checksums are computed, never typed. The tree passes
@@ -74,12 +76,13 @@ def keep(path):
 
 
 # ---------------------------------------------------------------- metadata images
-def image(item_dir, kind, data, ctype, **extra):
-    """Write metadata/<content hash>.<ext> and return the entry that names it."""
+def image(item_dir, kind, data, ctype, folder="metadata", **extra):
+    """Write <folder>/<content hash>.<ext> and return the entry that names it: metadata/ for an
+    item, the person's own folder for a person."""
     ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[ctype]
     digest = hashlib.sha256(data).hexdigest()
     name = f"{digest}.{ext}"
-    write(os.path.join(item_dir, "metadata", name), data)
+    write(os.path.join(item_dir, folder, name), data)
     entry = {"kind": kind, "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
              "sizeBytes": len(data), "width": 1, "height": 1, "language": None,
              "sourceUrl": None, "fetchedAt": PROJECTED, "origin": "manual"}
@@ -515,7 +518,9 @@ def series():
         "titles": {"primary": "Example Show", "original": None, "sort": "example show", "qualifier": "US",
                    "localized": {"en": {"title": "Example Show", "sortTitle": "example show", "tagline": None,
                                         "overview": "A fictional series used to illustrate the library layout."}}},
-        "genres": ["Drama"], "tags": [], "rating": None, "contentRating": None, "credits": [],
+        "genres": ["Drama"], "tags": [], "rating": None, "contentRating": None,
+        "credits": [{"personId": uid("person", "mara-example"), "name": "Mara Example", "role": "actor",
+                     "character": "Captain Example", "order": 0, "tmdbPerson": None}],
         "series": {"status": "returning", "firstAirDate": "2024-01-10", "lastAirDate": "2024-03-06",
                    "network": None,
                    "seasons": [{"number": 1, "tmdbSeason": None, "name": "Season 1",
@@ -533,7 +538,7 @@ def series():
                    image(sdir, "poster", jpeg("season 1 poster"), "image/jpeg", season=1)],
         "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
         "fieldOrigins": {"titles.primary": "manual", "titles.qualifier": "filename", "series": "manual",
-                         "images": "manual"},
+                         "credits": "manual", "images": "manual"},
     })
     episode_item(sdir, sid, ep1, 1, "Pilot", "The first episode.",
                  {"aired": {"season": 1, "episode": 1, "episodeEnd": None},
@@ -543,11 +548,42 @@ def series():
                   "dvd": {"season": 1, "episode": 1, "episodeEnd": None}}, keeps_original=False)
 
 
+def person(pid, **fields):
+    """people/<aa>/<personId>/person.json and the images beside it: a projection, like metadata.json.
+    Nothing lists the person's credits — those are the items' own credits, by personId."""
+    pdir = os.path.join(ROOT, "people", pid[:2], pid)
+    images = [image(pdir, "profile", jpeg(f"profile {fields['name']}"), "image/jpeg", folder="")]
+    doc = {"schema": "zaentrum.library.person/2", "personId": pid, "asOf": PROJECTED, "projectedBy": "catalog example",
+           "name": fields.pop("name"), "sortName": None, "alsoKnownAs": [], "birthDate": None, "deathDate": None,
+           "birthPlace": None, "biography": {}, "externalIds": {}, "images": images,
+           "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
+           "fieldOrigins": {"name": "manual", "images": "manual"}}
+    doc.update(fields)
+    write(os.path.join(pdir, "person.json"), doc)
+
+
+def people():
+    """The people the items credit. The director is a real person, so his record holds only what is
+    known about him and no reference id is made up; the series' lead is fictional and fills every
+    field a person record has, a biography in two languages and a person's lock among them."""
+    person(uid("person", "ian-hubert"), name="Ian Hubert", sortName="Hubert, Ian",
+           biography={"en": "Director of the open movie Tears of Steel (2012)."},
+           fieldOrigins={"name": "manual", "sortName": "manual", "biography": "manual", "images": "manual"})
+    person(uid("person", "mara-example"), name="Mara Example", sortName="Example, Mara",
+           alsoKnownAs=["M. Example"], birthDate="1985-04", birthPlace="Example City",
+           biography={"en": "A fictional actor who plays the lead in Example Show.",
+                      "de": "Eine erfundene Schauspielerin, die in Example Show die Hauptrolle spielt."},
+           curation={"metadataLocked": False, "lockedFields": ["biography"], "notes": "biography written by hand"},
+           fieldOrigins={"name": "manual", "sortName": "manual", "alsoKnownAs": "manual", "birthDate": "manual",
+                         "birthPlace": "manual", "biography": "manual", "images": "manual"})
+
+
 def main():
     if os.path.isdir(ROOT):
         shutil.rmtree(ROOT)
     movie()
     series()
+    people()
     print("examples written to", os.path.normpath(ROOT))
 
 
