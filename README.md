@@ -499,8 +499,15 @@ the database **deleted** (remove the folder) or one it **lost** (restore it), an
 can say which. So the catalog export carries the database's deletion log, beside its rows:
 
 ```json
-{ "exportedAt": "…", "items": [ … ], "deletedItems": [ { "id": "<itemId>", "deletedAt": "<RFC 3339>", "deletedBy": "<who>" } ] }
+{ "exportedAt": "…", "items": [ … ],
+  "deletedItems": [ { "id": "<itemId>", "type": "movie", "deletedAt": "<RFC 3339>", "deletedBy": "<who>" },
+                    { "id": "<personId>", "type": "person", "deletedAt": "<RFC 3339>", "deletedBy": "<who>" } ] }
 ```
+
+An entry's `type` says what it deleted: an item, by its own type (`movie`, `series`, `episode`), or
+a person — the catalog deletes a person no title credits any more and logs them as one. An entry
+without a type is an item's, as every entry of an export from before people were logged is, and an
+entry of a type the format does not know proves nothing.
 
 `library-v2-rebuild.py --compare` sorts every item that exists on one side only into one of three
 classes, each listed with its ids:
@@ -526,10 +533,16 @@ People are compared as well. The database's people are the export's top-level `p
 carries one, and otherwise everyone its items credit — a `personId` and a name, which is all a catalog
 without person records knows — and only the fields the export carries are compared: every field of
 the people list, and each portrait by its bytes, kind, type, size, dimensions, primary flag, TMDB
-path and fetch time. The deletion log holds items only, so a person is never an orphan and never
-swept: a person only on storage is *lost* when an item on storage that is lost, or that the database
-holds, credits them, and *unreferenced* — listed, kept, not a failure — when nothing the database
-holds credits them.
+path and fetch time. A person only on storage is an **orphan** when the deletion log names them as a
+person and nothing in their folder is newer than that deletion — `person.json`'s `asOf`, its
+`databaseUpdatedAt` and TMDB `fetchedAt`, each image's `fetchedAt`, and the modification time of a
+file that states none — like an item's, not a failure. An item record on storage that still credits
+them is a note: that projection is stale, and the sweep keeps the person's folder until no item
+record credits them. Any other person only on storage is *lost* when an item on storage that is
+lost, or that the database holds, credits them, and *unreferenced* — listed, kept, not a failure,
+never swept — when nothing the database holds credits them; so is a person an untyped entry of an
+older export names, which is an item's. A person the database holds is present, whatever the log
+says.
 
 ### Telling a stale projection from a current one
 
@@ -559,7 +572,8 @@ reason, and with `--apply` removes it:
 
 | What | Proved by |
 |---|---|
-| a deleted item's folder | the export's deletion log names the id, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
+| a deleted item's folder | the export's deletion log names the id as an item's, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
+| a deleted person's folder | the export's deletion log names the id as a person's (`type: person`), the database does not hold them again — not in its people list, not credited by any of its items — nothing in the folder is newer than the deletion, the deletion is older than the grace, and no item record on storage still credits them: one that does keeps the folder until it is projected again, unless the same sweep removes that item's folder as a deleted item. It is checked last in the quarantine, against the credits on storage once every other target is settled |
 | an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it |
 | an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not another event, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
 | a removed extra's folder | an `extra-removed` event names it and is older than the grace, and nothing else names the extra — not `library.extras`, not another event, not the export: the whole folder, whatever it holds |
@@ -568,9 +582,10 @@ reason, and with `--apply` removes it:
 Everything must be older than the grace period (`--grace 24h` by default), because a write in flight
 looks exactly like garbage: a record is written before its database row, and an image before the
 projection that lists it. It never touches anything referenced, anything younger than the grace,
-anything it cannot classify, or a person's folder — the deletion log holds items only — and it lists
-what it left alone and why. Without `--export`, or with a `deletedItems` that is `null`, no item
-folder is swept at all.
+anything it cannot classify, or a person's folder the deletion log does not name as a person's, and
+it lists what it left alone and why. Without `--export`, or with a `deletedItems` that is `null`, no
+item or person folder is swept at all, and with a log none of whose entries carries a type — an
+export from before people were logged — no person's.
 
 `--apply` renames every target into a quarantine at the library root, `_swept/<YYYYMMDDTHHMMSSZ>/`,
 with a `sweep.json` that says where each came from — a rename on the same filesystem, never a copy.
@@ -585,6 +600,18 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-02 (g)** — the catalog deletes a person no title credits any more, and logs them. This
+  replaces "a person is never an orphan and never swept". Entries of the export's `deletedItems` gain
+  `type`: an item's own (`movie`, `series`, `episode`), or `person`; an entry without one is an
+  item's, as in an export from before. `library-v2-rebuild.py --compare` calls a person folder only on
+  storage whose id the log names as a person's, with nothing in it newer than that deletion —
+  `person.json`'s `asOf`, `databaseUpdatedAt` and TMDB `fetchedAt`, each image's `fetchedAt`, the time
+  of a file that states none — an **orphan**, and notes the item records on storage that still credit
+  them. `library-v2-sweep.py` removes such a folder through the quarantine once the deletion is older
+  than the grace and no item record on storage credits the person — re-checked last, once every other
+  target is settled, so a deleted item that credits a deleted person goes in the same sweep and an
+  item put back keeps them. A person an untyped entry names stays unreferenced and is never swept, as
+  before. No schema changes.
 - **2026-10-02 (f)** — a projection says how fresh it is. A person's biography and portraits change
   — a new role, a death, a new photo — and the database refreshes from TMDB first and projects after,
   but a projection could not say which state of the database it reflects, so a verification could
