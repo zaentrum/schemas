@@ -26,6 +26,11 @@
     {
       "if": { "not": { "properties": { "type": { "const": "episode" } }, "required": ["type"] } },
       "then": { "properties": { "library": { "not": { "required": ["numbering"] } } } }
+    },
+    {
+      "$comment": "Bonus material sits beside its movie or series, never on an episode.",
+      "if": { "properties": { "type": { "const": "episode" } }, "required": ["type"] },
+      "then": { "properties": { "library": { "not": { "required": ["extras"] } } } }
     }
   ],
   "unevaluatedProperties": false,
@@ -148,7 +153,7 @@
 
     "videos": {
       "type": "array",
-      "description": "Trailers, teasers and clips published elsewhere, by reference. A downloaded, packaged trailer is listed in the version's package.json instead.",
+      "description": "Trailers, teasers and clips published elsewhere, by reference: online, not on storage. A trailer that exists as a local file of its own is an extra of kind trailer (extras/<extraId>/extra.json), and a trailer packaged into a version's folder, as the layout v1 had it, is listed in that package.json.",
       "items": {
         "type": "object",
         "required": ["site", "key"],
@@ -218,6 +223,21 @@
               "season": { "type": ["integer", "null"], "minimum": 0 },
               "episode": { "type": "integer", "minimum": 0 },
               "episodeEnd": { "type": ["integer", "null"], "minimum": 0, "description": "Set when this one file covers several episodes." }
+            }
+          }
+        },
+        "extras": {
+          "type": "object",
+          "description": "Movie and series only: extraId -> what a person decided about how that extra is shown, each key an extras/<extraId>/ folder of this item. Listed only where a person decided something. A reader lists the extras by order, lowest first, and then those without one by extra.json's createdAt and then extraId — so with nothing listed here, every extra is shown in the order it was taken in. hidden keeps an extra off the list without removing it; label is what a viewer sees instead of the title extra.json was written with.",
+          "propertyNames": { "$ref": "defs.schema.json#/$defs/uuid" },
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "order": { "type": "integer", "minimum": 0 },
+              "hidden": { "type": "boolean" },
+              "label": { "type": "string", "minLength": 1 }
             }
           }
         }
