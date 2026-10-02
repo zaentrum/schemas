@@ -12,7 +12,8 @@ rule and checks the tool notices:
 
   round trip     rebuilding library/v2/examples gives the rows the example set states: four items,
                  the movie's two versions, the episode whose package was superseded, and the series
-                 with nothing to play
+                 with nothing to play — and the bonus material beside them as rows of its own, in the
+                 order a viewer sees it, with what never finished left out
   events         each kind changes the rebuilt rows as the README says, and removing the event
                  changes them back: a superseded package reappears, a removed version reappears, a
                  deleted original becomes a playback asset again, and a note changes nothing
@@ -27,16 +28,20 @@ rule and checks the tool notices:
                  to one that validates, with every record the same record and no media read; a dry
                  run changes nothing, a stopped run is finished by the next, a second run does
                  nothing, and whatever contradicts its records is refused and left as it was
-  proves itself  sha256sum -c passes in every write-once folder, and each version is one chain
+  proves itself  sha256sum -c passes in every write-once folder, and each version and packaged
+                 extra is one chain
   sweep          a dry run finds every kind of garbage and only it, --apply removes exactly that
                  through a quarantine it checks again — putting back what is referenced by then — and
                  finishes one an interrupted run left; whatever is referenced, younger than the
-                 grace, unclassifiable or a person's is left alone, with the reason
+                 grace, unclassifiable or a person's is left alone, with the reason; of an extra, only
+                 a package that never finished is ever garbage
   v1 -> v2       the v1 example tree converts, the result passes validate-library-v2.py and the
                  media check, the texts and the packages survive, and a second run does nothing
   catalog -> v2  an export, a package store and source files become a tree that validates; the
                  rebuild of that tree agrees with the export it came from; two runs write the same
-                 bytes; an item whose original is missing keeps its texts and loses its versions
+                 bytes; an item whose original is missing keeps its texts and loses its versions; a
+                 trailer the catalog downloaded becomes an extra of its movie or series, never an
+                 episode's, and its link stays a link
   media check    every check it makes fails on a tree that breaks it and passes on one that does not
   the pieces     the JPEG and PNG header parsing, the qh1 fingerprint and the generated ids
 """

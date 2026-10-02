@@ -30,8 +30,9 @@ library/v1/
   examples/                a movie and a series in the storage layout
 library/v2/
   item.schema.json, metadata.schema.json, person.schema.json, source.schema.json,
-  version.schema.json, package.schema.json, event.schema.json, defs.schema.json
-  examples/                a movie, a series, a deletion and the people they credit
+  version.schema.json, package.schema.json, event.schema.json, extra.schema.json,
+  defs.schema.json
+  examples/                a movie, a series, a deletion, their extras and the people they credit
 tools/
   publish-to-apicurio.sh           publish Avro schemas to a registry
   validate-library.py              validate a v1 library tree
@@ -202,17 +203,17 @@ occasions only, a deliberate rebuild and a deliberate verification.
 That makes every file single-writer and one-directional, which is why there is no `manifest.json`
 any more and no `rev`, `updatedAt` or `review` anywhere. A file is either a record of something
 that cannot change — `item.json`, `sources/<id>/source.json`, `versions/<id>/version.json`,
-`versions/<id>/package.json`, `events/<…>/event.json` — written once when the thing it describes is
-made and never touched again, or a projection of the database (`metadata.json`, and `person.json` for
-a person), replaced whole by the service that owns it. **A fact about the bytes is a record; a
-decision the database holds is a projection**, so what an original contained and what a package
-lost are written once, while which version plays by default, what a viewer's version picker says,
-how far to trust the reference ids and how the episodes are ordered live in `metadata.json` under
-`library`. Nothing is merged, so there is no
-conflict to resolve. The few facts that arise later get their own folder under `events/` instead of
-a rewrite: an original deleted, a version removed, a package superseded. Every version is a folder, so
-a re-package is a new folder rather than an edit, and a record always sits next to the bytes it
-describes.
+`versions/<id>/package.json`, `events/<…>/event.json`, `extras/<id>/extra.json` — written once when
+the thing it describes is made and never touched again, or a projection of the database
+(`metadata.json`, and `person.json` for a person), replaced whole by the service that owns it. **A
+fact about the bytes is a record; a decision the database holds is a projection**, so what an
+original contained and what a package lost are written once, while which version plays by default,
+what a viewer's version picker says, how far to trust the reference ids, how the episodes are
+ordered and how the extras are shown live in `metadata.json` under `library`. Nothing is merged, so
+there is no conflict to resolve. The few facts that arise later get their own folder under `events/`
+instead of a rewrite: an original deleted, a version removed, a package superseded. Every version is
+a folder, so a re-package is a new folder rather than an edit, and a record always sits next to the
+bytes it describes.
 
 ```
 movies/<aa>/<itemId>/
@@ -234,8 +235,14 @@ movies/<aa>/<itemId>/
   events/<timestamp>-<eventId8>-<kind>/
     event.json                     a fact that arose later, written once
     checksums.sha256               covers event.json, written with it
-series/<aa>/<seriesId>/            item.json, checksums.sha256, metadata.json, metadata/,
-                                   episodes/<episodeId>/
+  extras/<extraId>/
+    extra.json                     a piece of bonus material, written once
+    <original file>                the extra itself, when it is kept
+    hls/  subs/  trickplay/        its package, when it has one
+    checksums.sha256               extra.json and every file above, the original included
+    package.json  .complete        as a version's, when it is packaged
+series/<aa>/<seriesId>/            item.json, checksums.sha256, metadata.json, metadata/, extras/,
+                                   episodes/<episodeId>/ (no extras/ in an episode)
 people/<aa>/<personId>/
   person.json                      the database's person, projected
   <sha256>.jpg                     the portraits it lists, named by their own content hash
@@ -249,6 +256,24 @@ service that owns people, so a rebuild restores every person as the last project
 lists no credits — those are the items' own, by `personId` — and a credit whose person has no folder
 yet is a note, not an error: the person may simply not have been projected.
 
+**Bonus material lives beside its movie or series.** A featurette, a making-of, a deleted scene or a
+trailer that is a file of its own is never an item: it sits in `extras/<extraId>/` inside the
+folder of the movie or series it belongs to — never an episode's; a series' extra may name the
+season it belongs to, which must be one the series' `metadata.json` lists. `extra.json` records
+what it is — `kind` (`featurette`, `behind-the-scenes`, `making-of`, `deleted-scene`, `interview`,
+`trailer`, `teaser`, `gag-reel`, `short`, `other`), the `title` it came with and `localizedTitles`,
+`language`, `runtimeMs`, `seasonNumber`, the `originalFiles` kept in its folder, and, when the
+original was probed, the `container`, `streams`, `fidelity` and `essence` a source record carries,
+with the `probe` that found them. The folder is written once, like a version's: the original and/or
+a package (`hls/ subs/ trickplay/` and a `package.json` that is the same record a version's package
+is), with a `checksums.sha256` over `extra.json` and every file beside it. How a viewer sees the
+extras is a decision, so it is projected: `metadata.json`'s `library.extras` holds, per extraId, the
+`order`, a `hidden` flag and a `label` instead of the title; an extra nobody decided anything about
+is shown after the ordered ones, in the order the extras were taken in. `metadata.json`'s `videos[]`
+stays the place for videos published online, by reference, and a package's `trailers` stay the
+playback layout v1 had; a trailer that exists as a local file of its own is an extra of kind
+`trailer`.
+
 | Schema | Document | `schema` field |
 |---|---|---|
 | [`item.schema.json`](https://zaentrum.github.io/schemas/library/v2/item.schema.json) | `item.json` | `zaentrum.library.item/2` |
@@ -256,8 +281,9 @@ yet is a note, not an error: the person may simply not have been projected.
 | [`person.schema.json`](https://zaentrum.github.io/schemas/library/v2/person.schema.json) | `people/<aa>/<personId>/person.json` | `zaentrum.library.person/2` |
 | [`source.schema.json`](https://zaentrum.github.io/schemas/library/v2/source.schema.json) | `sources/<sourceId>/source.json` | `zaentrum.library.source/2` |
 | [`version.schema.json`](https://zaentrum.github.io/schemas/library/v2/version.schema.json) | `versions/<versionId>/version.json` | `zaentrum.library.version/2` |
-| [`package.schema.json`](https://zaentrum.github.io/schemas/library/v2/package.schema.json) | `versions/<versionId>/package.json` | `zaentrum.library.package/2` |
+| [`package.schema.json`](https://zaentrum.github.io/schemas/library/v2/package.schema.json) | `versions/<versionId>/package.json`, `extras/<extraId>/package.json` | `zaentrum.library.package/2` |
 | [`event.schema.json`](https://zaentrum.github.io/schemas/library/v2/event.schema.json) | `events/<timestamp>-<eventId8>-<kind>/event.json` | `zaentrum.library.event/2` |
+| [`extra.schema.json`](https://zaentrum.github.io/schemas/library/v2/extra.schema.json) | `extras/<extraId>/extra.json` | `zaentrum.library.extra/2` |
 | [`defs.schema.json`](https://zaentrum.github.io/schemas/library/v2/defs.schema.json) | shared definitions | — |
 
 ### A record proves itself
@@ -272,6 +298,7 @@ were written — with no database and no network:
 | `sources/<sourceId>/` | exactly `source.json`, the probe and the sidecars | with them, once |
 | `events/<…>/` | exactly `event.json` | with it, once |
 | `versions/<versionId>/` | `version.json` and every package file | by the packager, when the package completes |
+| `extras/<extraId>/` | `extra.json`, the originals and every package file | after every file it lists, once; when packaged, before `package.json` and `.complete` |
 
 A version is the one folder written in two steps: the analyzer writes `version.json`, and the
 packager closes the chain when the package completes — the checksums over `version.json` and every
@@ -292,6 +319,22 @@ and which may be deleted later. A version that has no package yet has no checksu
 purpose**: `metadata.json` and `person.json` are replaced whole, so a checksum written with one would
 be wrong after the next, and every image is named by the hash of its own bytes, so its name is its
 check.
+
+An extra is written whole, in one step, and keeps its original for as long as it exists — no event
+deletes part of one — so its checksums list the originals too, unlike a version's. A packaged extra
+closes the same chain a version does, `.complete` → `package.json` → `checksums.sha256` →
+`extra.json`, the originals and every package file, and the checksums never list the two links
+above them. Whether an extra is finished is told by its folder alone:
+
+| The folder holds | It is |
+|---|---|
+| `.complete`, naming its `package.json` | finished, packaged |
+| `checksums.sha256`, and no `package.json`, no `.complete`, no `hls/ subs/ trickplay/` | finished, the original only: the checksums file is written last, after the record and the originals, so it is the completion signal |
+| `hls/ subs/ trickplay/` but no `.complete` | a package that never finished, which the sweep collects |
+| no `checksums.sha256` and no package | an extra whose writer has not finished it: neither the database nor a rebuild uses it, and the sweep leaves it to the writer |
+
+Because the checksums are written once, an extra kept only as its original is never packaged in
+place; a package made later is a new extra folder.
 
 ### Applying events
 
@@ -315,11 +358,13 @@ subset of the gate and not necessarily all of it, because someone who measures a
 may accept less.
 
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
-outside a version folder, every write-once folder's checksums cover exactly its records and each
-version's chain holds, `package.json` exists exactly when `.complete` does, images are named by their
-own hash, events reference records that exist and a deletion accepts no more than the gate its
+outside a version or extra folder, every write-once folder's checksums cover exactly its records and
+each version's chain holds, `package.json` exists exactly when `.complete` does, images are named by
+their own hash, events reference records that exist and a deletion accepts no more than the gate its
 records compute, episodes do not contradict their own numbering, a person folder holds its record and
-the images it lists):
+the images it lists, extras sit under a movie or a series and never an episode, an extra's checksums
+list `extra.json` and every file beside it, its package carries no trailers, only a series' extra
+names a season and only one the series lists, and `library.extras` names extras that are there):
 
 ```sh
 pip install "jsonschema[format-nongpl]>=4.23" referencing
@@ -369,12 +414,23 @@ record's content, reads no media — a package file's digest is carried forward 
 packager wrote, so a file that changed since stays caught — and leaves anything that contradicts its
 records exactly as it was, as a conflict it reports. A run stopped anywhere is finished by the next,
 and a second run changes nothing. It writes no `people/`: `library-v2-from-catalog.py --people-only`
-adds those to an upgraded tree.
+adds those to an upgraded tree. It leaves every `extras/` folder as it is: there is nothing to
+migrate, because an extra was only ever written in the layout in which it proves itself.
 
 A rebuilt catalog is only as complete as the record: the tree holds no per-user state and no row
 modification times, the paths it hands back are the version folders the bytes moved into, and what
 a source record could not be told (an original that is already gone, a file nothing probed) stays
 empty rather than guessed.
+
+Bonus material becomes rows of its own, under `extras` in the rows JSON: what `extra.json` records,
+the `order`, `hidden` and `label` the projection decided, and its original and package as playback
+rows, in the order a viewer sees them; an extra that never finished is left out with a note. **The
+catalog has no extras table yet**, so these rows exist in the JSON only and `--compare` counts them
+without comparing them. `library-v2-from-catalog.py` writes a trailer the catalog downloaded — a link
+whose `localPath` is a file on the share — as an extra of kind `trailer` beside its movie or series,
+copied or moved in as `--media-mode` says, and keeps the link in `videos[]`; an episode's stays a
+link, and so does every trailer with `--media-mode none`. `extra.json` does not record which link a
+file was downloaded from, so the rebuilt link's `localPath` stays empty and `--compare` reports it.
 
 ### Telling an orphan from a loss
 
@@ -397,13 +453,14 @@ classes, each listed with its ids:
 | missing record | In the database, not on storage: the tree cannot restore it. Not counted with `--subset`. | yes |
 
 *Nothing newer* is the newest moment any record in the folder states — `item.json`'s `createdAt` and
-`migratedAt`, `metadata.json`'s `asOf`, every source's `takenAt`, version's and package's `createdAt`
-and event's `at`, and for a series its episodes' as well — and a record that states none counts with
-its file's modification time, so a folder never looks older than what is in it. An id that is in the
-log and in the database is present: the item that exists wins, and the log entry describes an
-earlier life. When `deletedItems` is `null` — a catalog that keeps no log yet — or absent, nothing
-can be called deleted, and every item only on storage is lost. `[]` is a log that says nothing was
-deleted. A field that disagrees between two rows both sides hold fails the compare too.
+`migratedAt`, `metadata.json`'s `asOf`, every source's `takenAt`, version's and package's `createdAt`,
+event's `at` and extra's `createdAt`, and for a series its episodes' as well — and a record that
+states none counts with its file's modification time, so a folder never looks older than what is in
+it. An id that is in the log and in the database is present: the item that exists wins, and the log
+entry describes an earlier life. When `deletedItems` is `null` — a catalog that keeps no log yet — or
+absent, nothing can be called deleted, and every item only on storage is lost. `[]` is a log that
+says nothing was deleted. A field that disagrees between two rows both sides hold fails the compare
+too.
 
 People are compared as well. The database's people are the export's top-level `people` list when it
 carries one, and otherwise everyone its items credit — a `personId` and a name, which is all a catalog
@@ -422,6 +479,7 @@ reason, and with `--apply` removes it:
 |---|---|
 | a deleted item's folder | the export's deletion log names the id, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
 | an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it |
+| an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
 | a dropped image | named by the hash of its own bytes, in an item's `metadata/` or beside a `person.json`, and not listed by a projection that is itself older than the grace |
 
 Everything must be older than the grace period (`--grace 24h` by default), because a write in flight
@@ -437,13 +495,30 @@ It then reads the export, the projections and the events again, puts back anythi
 then, and only after that deletes the quarantine. A quarantine an interrupted `--apply` left behind
 is finished by the next one; the validator names it until then. A file the validator would otherwise
 call unlisted — an image a projection dropped — is a note for the sweep, not an error, and so is a
-package that never finished.
+package that never finished, a version's or an extra's, and an extra its writer has not finished.
 
 ### Library v2 changelog
 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-02 (d)** — bonus material. A featurette, a making-of or a trailer that is a file of its
+  own had no place in the record. `extra.schema.json` is new: `extras/<extraId>/extra.json`
+  (`zaentrum.library.extra/2`), inside the folder of the movie or series it belongs to — never an
+  episode's, and never an item of its own — with `kind`, `title`, `localizedTitles`, `language`,
+  `runtimeMs`, a series' `seasonNumber`, the `originalFiles` kept beside it and, when the original
+  was probed, the `container`, `streams`, `fidelity`, `essence` and `probe` a source record carries.
+  The folder is written once, like a version's, holding the original and/or a package whose
+  `package.json` is the same record a version's is; its `checksums.sha256` lists `extra.json` and
+  every file beside it, the originals included, never itself, `package.json` or `.complete`. A
+  packaged extra is finished by its `.complete`, one kept only as its original by its checksums
+  file, written last. `metadata.json`'s `library` gains `extras` (movie and series only), per extraId
+  the `order`, `hidden` and `label` a person decided; an extra it does not list is shown after the
+  ordered ones, in the order the extras were taken in. `videos[]` stays the place for online videos
+  and a package's `trailers` stay as they are. The validator, the media check, the rebuild (rows
+  JSON only, not compared: the catalog has no extras table yet) and the sweep (an extra's package
+  that never finished, and nothing else in an extra) know extras; the upgrade leaves them alone, and
+  `library-v2-from-catalog.py` writes a downloaded trailer as an extra of kind `trailer`.
 - **2026-10-02 (c)** — garbage, and telling an orphan from a loss. Deleting an item never removed its
   folder, and a rebuild could not tell a folder the database deleted from one it lost. The catalog
   export now carries the database's deletion log, `deletedItems: [{id, deletedAt, deletedBy}]` —
