@@ -21,10 +21,16 @@ rule and checks the tool notices:
   compare        an item only on storage is an orphan when the deletion log explains it and lost
                  when it does not, an item only in the database is a missing record, and only the
                  last two fail; without a log nothing on storage can be called an orphan; a person
-                 only on storage takes the class of the items that credit them
+                 only on storage takes the class of the items that credit them; a projection whose
+                 row was modified since is stale and one that reflects a later state is ahead, and
+                 both fail, while one that does not say which state it reflects fails nothing
   people         a credited person gets a record that holds what the credit knows; a people list in
                  the export fills every field it carries; --people-only touches no item record; a
                  projection that drops a portrait removes it
+  people in full every field of the export's people list crosses into person.json and back into a
+                 row, --compare catches a change to each one, and a person who died and got a new
+                 portrait after being projected is stale until projected again; an entry of only an
+                 id and a name is a valid record, and what a record cannot hold stays out of it
   upgrade        a tree in the layout before 2026-10-02 (b) upgrades, piped into the pod's Python,
                  to one that validates, with every record the same record and no media read; a dry
                  run changes nothing, a stopped run is finished by the next, a second run does

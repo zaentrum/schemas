@@ -249,12 +249,31 @@ people/<aa>/<personId>/
 ```
 
 **People are a category of their own.** A credit carries only a `personId` and a name, and people
-are shared by every item that credits them, so a person's biography, dates, reference ids and
-portraits live once, in `people/<aa>/<personId>/person.json` beside `movies/` and `series/`, with the
-same id-based folder and shard. Like `metadata.json` it is a projection, replaced whole by the one
-service that owns people, so a rebuild restores every person as the last projection left them. It
-lists no credits — those are the items' own, by `personId` — and a credit whose person has no folder
-yet is a note, not an error: the person may simply not have been projected.
+are shared by every item that credits them, so a person's biography, dates, the department they are
+known for, reference ids and portraits live once, in `people/<aa>/<personId>/person.json` beside
+`movies/` and `series/`, with the same id-based folder and shard. Like `metadata.json` it is a
+projection, replaced whole by the one service that owns people, so a rebuild restores every person
+as the last projection left them. It lists no credits — those are the items' own, by `personId` —
+and a credit whose person has no folder yet is a note, not an error: the person may simply not have
+been projected. A credit's `name` is the name as recorded for that title, which may be the one the
+person went by then; the person's current name lives in `person.json`, and a reader prefers it
+whenever the person has a record.
+
+**A projection says how fresh it is.** The database refreshes from the reference source first and
+rewrites a projection after, and a person changes more than a title does — a new role, a death, a
+new photo — so a verification has to tell a projection that went stale from one that is current.
+Both projections carry, from the same definitions in `defs`, `databaseUpdatedAt` — the modification
+time of the database row the projection reflects, the row's own `modifiedAt` on the database's clock,
+where `asOf` says when the projection was written — and `sources`, per reference source (`tmdb` for
+now), when the database last fetched the entity from it (`fetchedAt`) and the day the source last
+reported a change to it (`changedAt`). A projection whose row was modified since is stale, and is
+fixed by projecting again, never by editing the file. Each image says whether it is the `primary`
+one of its kind — at most one of a kind in a projection, in a series one per kind for the series and
+one for each season — and where its bytes came from, in an `origin` of `source` (`tmdb`, `manual`,
+`file`, `legacy-catalog`), `ref` (the source's own name for it, such as TMDB's file path) and
+`fetchedAt`, so a refresh can tell the source replacing a photo from a person picking another, which
+it leaves as it is. A projection written before names the origin's source alone, as a string; that
+stays valid, a reader takes it as `{source: <it>}`, and the next projection writes the object.
 
 **Bonus material lives beside its movie or series.** A featurette, a making-of, a deleted scene or a
 trailer that is a file of its own is never an item: it sits in `extras/<extraId>/` inside the
@@ -369,7 +388,8 @@ outside a version or extra folder, every write-once folder's checksums cover exa
 each version's chain holds, `package.json` exists exactly when `.complete` does, images are named by
 their own hash, events reference records that exist and a deletion accepts no more than the gate its
 records compute, episodes do not contradict their own numbering, a person folder holds its record and
-the images it lists, extras sit under a movie or a series and never an episode, an extra's checksums
+the images it lists, at most one image of a kind is primary — in a series one per kind and season —
+extras sit under a movie or a series and never an episode, an extra's checksums
 list `extra.json` and every file beside it and its `originals` describe exactly its `originalFiles`
 — with `--check-media` at the size and `qh1` they record — its package carries no trailers, only a
 series' extra names a season and only one the series lists, `library.extras` names extras that are
@@ -426,10 +446,37 @@ and a second run changes nothing. It writes no `people/`: `library-v2-from-catal
 adds those to an upgraded tree. It leaves every `extras/` folder as it is: there is nothing to
 migrate, because an extra was only ever written in the layout in which it proves itself.
 
-A rebuilt catalog is only as complete as the record: the tree holds no per-user state and no row
-modification times, the paths it hands back are the version folders the bytes moved into, and what
-a source record could not be told (an original that is already gone, a file nothing probed) stays
-empty rather than guessed.
+The catalog export carries, beside its items, a top-level `people` list, and
+`library-v2-from-catalog.py` maps every field of it into `person.json`, `--people-only` included:
+
+```json
+{ "people": [ { "id": "…", "name": "…", "sortName": "…", "alsoKnownAs": ["…"],
+                "birthDate": "…", "deathDate": "…", "birthPlace": "…", "biography": { "<lang>": "…" },
+                "externalIds": { "tmdbPerson": "…", "imdb": "nm…" }, "knownForDepartment": "…",
+                "metadataLocked": false, "lockedFields": ["…"], "fieldOrigins": { "<field>": "tmdb" },
+                "tmdbFetchedAt": "…", "tmdbChangedAt": "…", "modifiedAt": "…",
+                "artwork": [ { "kind": "profile", "contentType": "…", "base64": "…", "sha256": "…",
+                               "width": 0, "height": 0, "isPrimary": true, "sourcePath": "/….jpg",
+                               "fetchedAt": "…" } ] } ] }
+```
+
+`modifiedAt` becomes `databaseUpdatedAt`, `tmdbFetchedAt` and `tmdbChangedAt` become `sources.tmdb`
+(only with a `tmdbFetchedAt`: a source entry says when it was fetched), `lockedFields` joins
+`metadataLocked` in `curation`, and `fieldOrigins` is the database's own record, in place of the
+catalog's. Each portrait is named by its own content, whose bytes decide its type and size whatever
+the row says; it is `primary` where `isPrimary` says so — at most one, the first the export lists —
+and its `origin` is TMDB with the `sourcePath` it was fetched from, or the catalog when the row names
+no path. An item's images are mapped the same way. An item row's `modifiedAt`
+becomes its `metadata.json`'s `databaseUpdatedAt`, and `sources.tmdb` is written when the row carries
+`tmdbFetchedAt`, which items do not yet. A person the list holds by id and name alone — or whom only
+a credit names, in a catalog without the list — is a valid record with nothing else in it, and what
+the export does not carry, or holds wrongly, is left out with a note rather than guessed. After the
+database changes, `--people-only` is how person records are projected again.
+
+A rebuilt catalog is only as complete as the record: the tree holds no per-user state, of a row's
+modification times only the one its projection reflects, the paths it hands back are the version
+folders the bytes moved into, and what a source record could not be told (an original that is
+already gone, a file nothing probed) stays empty rather than guessed.
 
 Bonus material becomes rows of its own, under `extras` in the rows JSON: what `extra.json` records,
 the `order`, `hidden` and `label` the projection decided, and its original and package as playback
@@ -465,21 +512,44 @@ classes, each listed with its ids:
 | missing record | In the database, not on storage: the tree cannot restore it. Not counted with `--subset`. | yes |
 
 *Nothing newer* is the newest moment any record in the folder states — `item.json`'s `createdAt` and
-`migratedAt`, `metadata.json`'s `asOf`, every source's `takenAt`, version's and package's `createdAt`,
-event's `at` and extra's `createdAt`, and for a series its episodes' as well — and a record that
-states none counts with its file's modification time, so a folder never looks older than what is in
-it. An id that is in the log and in the database is present: the item that exists wins, and the log
-entry describes an earlier life. When `deletedItems` is `null` — a catalog that keeps no log yet — or
-absent, nothing can be called deleted, and every item only on storage is lost. `[]` is a log that
-says nothing was deleted. A field that disagrees between two rows both sides hold fails the compare
-too.
+`migratedAt`, `metadata.json`'s `asOf`, its `databaseUpdatedAt` (on the database's clock, the one
+`deletedAt` is on) and its TMDB `fetchedAt`, every source's `takenAt`, version's and package's
+`createdAt`, event's `at` and extra's `createdAt`, and for a series its episodes' as well — and a
+record that states none counts with its file's modification time, so a folder never looks older than
+what is in it. An id that is in the log and in the database is present: the item that exists wins,
+and the log entry describes an earlier life. When `deletedItems` is `null` — a catalog that keeps no
+log yet — or absent, nothing can be called deleted, and every item only on storage is lost. `[]` is
+a log that says nothing was deleted. A field that disagrees between two rows both sides hold fails
+the compare too.
 
 People are compared as well. The database's people are the export's top-level `people` list when it
 carries one, and otherwise everyone its items credit — a `personId` and a name, which is all a catalog
-without person records knows — and only the fields the export carries are compared. The deletion log
-holds items only, so a person is never an orphan and never swept: a person only on storage is *lost*
-when an item on storage that is lost, or that the database holds, credits them, and *unreferenced* —
-listed, kept, not a failure — when nothing the database holds credits them.
+without person records knows — and only the fields the export carries are compared: every field of
+the people list, and each portrait by its bytes, kind, type, size, dimensions, primary flag, TMDB
+path and fetch time. The deletion log holds items only, so a person is never an orphan and never
+swept: a person only on storage is *lost* when an item on storage that is lost, or that the database
+holds, credits them, and *unreferenced* — listed, kept, not a failure — when nothing the database
+holds credits them.
+
+### Telling a stale projection from a current one
+
+A projection says which state of its database row it reflects, so `--compare` judges every item and
+every person both sides hold by it: the projection's `databaseUpdatedAt` against the export's
+`modifiedAt` for that row, to the second, the precision an export prints.
+
+| Class | What it means | Fails the compare |
+|---|---|---|
+| stale projection | The row was modified after the state its projection reflects: the database changed since. It is fixed by projecting again — `library-v2-from-catalog.py --people-only` does for people — never by editing the file. | yes |
+| projection ahead of the database | The projection reflects a later state of the row than the export holds: an export older than the tree, or a database restored from before it. | yes |
+
+The field differences of a stale projection are listed as well, marked as its, so a verification can
+tell the rows that only need projecting again from the current ones that really disagree. A
+projection that does not say which state it reflects — one written before 2026-10-02 (f) — is
+counted as of unknown freshness and fails nothing, a row the export gives no `modifiedAt` is not
+judged, and `--ignore-fields modifiedAt` judges none. The fields that came with freshness — an item
+row's `tmdbFetchedAt` and `tmdbChangedAt`, an image row's dimensions, primary flag and TMDB path — are
+compared where the export carries them, so an export from before them makes no tree that has them
+differ.
 
 ### Sweeping what a writer missed
 
@@ -515,6 +585,28 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-02 (f)** — a projection says how fresh it is. A person's biography and portraits change
+  — a new role, a death, a new photo — and the database refreshes from TMDB first and projects after,
+  but a projection could not say which state of the database it reflects, so a verification could
+  not tell a stale projection from a current one. `metadata.json` and `person.json` gain, from shared
+  definitions in `defs`, `databaseUpdatedAt`, the modification time of the row the projection
+  reflects, and `sources`, per reference source (`tmdb` for now) when the database last fetched the
+  entity (`fetchedAt`) and the day the source last reported a change to it (`changedAt`). The shared
+  image object gains `primary` — at most one of a kind in a projection, in a series one per kind and
+  season, a rule the validator holds — and its `origin` becomes an object, `{source: tmdb | manual |
+  file | legacy-catalog, ref, fetchedAt}`, so a refresh tells the source replacing an image from a
+  person picking another. `person.json` gains `knownForDepartment`, and a credit's `name` is
+  documented as the name as recorded for that title, a reader preferring the person's current name in
+  `person.json`. Every new field is optional and the string form of an image's origin, the source
+  alone, stays valid, so the trees written before validate as they are; the next projection writes
+  the new fields. `library-v2-from-catalog.py` maps the export's new `people` list in full into
+  `person.json`, and every row's `modifiedAt` (and `tmdbFetchedAt`, `tmdbChangedAt`) into its
+  projection; `library-v2-from-v1.py` writes the origin as the object. The rebuild gives all of it
+  back as rows, and `--compare` gains two classes, **stale projection** — the row was modified since,
+  fixed by projecting again, never by editing the file — and **projection ahead of the database**,
+  compares a person in every field the people list carries, and counts a projection's
+  `databaseUpdatedAt` and TMDB `fetchedAt` among the moments that tell an orphan from a loss, as the
+  sweep does.
 - **2026-10-02 (e)** — an extra says what it holds, where it came from, and when it is gone. An
   extra is written once, so these had to be in it before anything real is migrated. `extra.json`
   gains `originals`, required: for each of its `originalFiles`, the name, size and fixity (`qh1`, the
