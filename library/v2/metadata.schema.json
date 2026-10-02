@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v2/metadata.schema.json",
   "title": "metadata.json — the database's texts and images, projected",
-  "description": "Sits at the root of the item folder, next to item.json; the images it lists sit in metadata/ beside it. It is not a document anyone edits: it is what the catalog database held about this item at the moment asOf names, written by the one service that owns the item and replaced whole on every projection. There is no merge, so there is no conflict, and no revision to keep in step. A rebuild restores these texts and images exactly as the last projection left them. Per-user state — progress, lists, settings — is never here.\n\nThere is no checksums file beside it, on purpose: a projection is replaced whole, so a checksum written with one would be wrong after the next, and each image is named by the hash of its own bytes, so its name is its check. The records written once are the ones covered.",
+  "description": "Sits at the root of the item folder, next to item.json; the images it lists sit in metadata/ beside it. It is not a document anyone edits: it is what the catalog database held about this item at the moment asOf names — the item's row as databaseUpdatedAt says it was last modified, with the reference data as fresh as sources says — written by the one service that owns the item and replaced whole on every projection. There is no merge, so there is no conflict, and no revision to keep in step. A rebuild restores these texts and images exactly as the last projection left them. Per-user state — progress, lists, settings — is never here.\n\nThere is no checksums file beside it, on purpose: a projection is replaced whole, so a checksum written with one would be wrong after the next, and each image is named by the hash of its own bytes, so its name is its check. The records written once are the ones covered.",
   "type": "object",
   "required": ["schema", "itemId", "type", "asOf", "titles", "images"],
   "allOf": [
@@ -40,6 +40,8 @@
     "type": { "enum": ["movie", "series", "episode"] },
     "asOf": { "$ref": "defs.schema.json#/$defs/timestamp", "description": "The state of the database this file is a projection of. A later projection replaces the whole file." },
     "projectedBy": { "type": "string", "description": "The service that wrote it." },
+    "databaseUpdatedAt": { "$ref": "defs.schema.json#/$defs/databaseUpdatedAt" },
+    "sources": { "$ref": "defs.schema.json#/$defs/sources" },
 
     "titles": {
       "type": "object",

@@ -182,6 +182,28 @@
       "type": "object",
       "description": "Where each value of a projection came from, keyed by field path. Lists only fields that are set. Images carry their own origin.",
       "additionalProperties": { "enum": ["tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"] }
+    },
+    "databaseUpdatedAt": {
+      "$ref": "#/$defs/timestamp",
+      "description": "The modification time of the database row this projection reflects: the row's own modifiedAt, copied into the projection when it was written, so it is on the database's clock. asOf says when the projection was written; this says which state of the row it holds. Comparing it with the row is how a verification tells a stale projection from a current one: a row modified after it means the database changed since, and the projection is fixed by projecting again, never by editing the file. Absent from a projection that does not know it, such as one written before 2026-10-02 (f); its freshness is then unknown."
+    },
+    "sources": {
+      "type": "object",
+      "description": "How fresh the reference data in this projection is: for each reference source the database takes texts and images from, when it last fetched this entity from it and the date the source last reported a change to it. The database refreshes from the source first and projects afterwards, so a projection is as fresh as these say, and a source whose changedAt is later than the day of its fetchedAt has changed since. Keyed by the source: tmdb is the one there is, and a source the database comes to use is a new key here. Absent when the database never fetched the entity from one.",
+      "additionalProperties": false,
+      "properties": {
+        "tmdb": { "$ref": "#/$defs/sourceFetch" }
+      }
+    },
+    "sourceFetch": {
+      "type": "object",
+      "description": "One reference source's freshness, as the database recorded it.",
+      "required": ["fetchedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "fetchedAt": { "$ref": "#/$defs/timestamp", "description": "When the database last fetched this entity from the source." },
+        "changedAt": { "$ref": "#/$defs/date", "description": "The date the source last reported a change to this entity. A source dates its changes by day, so this is a date, not a moment. Absent when the source never reported one, or the database did not record it." }
+      }
     }
   }
 }

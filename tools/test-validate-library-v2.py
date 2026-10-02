@@ -538,6 +538,17 @@ CASES = [
     ("a season image on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(season=1)), "season-specific image on a non-series item", []),
     ("a season image of a season nothing describes", False, lambda r: edit(meta(series(r)), lambda d: d["images"][1].update(season=3)), "which metadata.json does not describe", []),
 
+    # ---- a projection says which state of its database row it reflects, and how fresh its reference data is
+    ("a projection's database state that is not a moment", False, lambda r: edit(meta(movie(r)), lambda d: d.update(databaseUpdatedAt="last week")), "$.databaseUpdatedAt", []),
+    ("a projection that does not say which state it reflects", True, lambda r: edit(meta(movie(r)), lambda d: d.pop("databaseUpdatedAt")), "OK", []),
+    ("a reference source the format does not know", False, lambda r: edit(meta(movie(r)), lambda d: d["sources"].update(tvdb={"fetchedAt": "2026-09-20T11:50:00Z"})), "'tvdb' was unexpected", []),
+    ("a source that does not say when it was fetched", False, lambda r: edit(meta(movie(r)), lambda d: d["sources"]["tmdb"].pop("fetchedAt")), "'fetchedAt' is a required property", []),
+    ("a source fetched at something that is not a moment", False, lambda r: edit(meta(movie(r)), lambda d: d["sources"]["tmdb"].update(fetchedAt="yesterday")), "$.sources.tmdb.fetchedAt", []),
+    ("a source's last change that is not a date", False, lambda r: edit(meta(movie(r)), lambda d: d["sources"]["tmdb"].update(changedAt="16 September")), "$.sources.tmdb.changedAt", []),
+    ("a source's freshness the format does not model", False, lambda r: edit(meta(movie(r)), lambda d: d["sources"]["tmdb"].update(etag="abc")), "'etag' was unexpected", []),
+    ("a source that never reported a change", True, lambda r: edit(meta(movie(r)), lambda d: d["sources"]["tmdb"].pop("changedAt")), "OK", []),
+    ("a projection never taken from a reference source", True, lambda r: edit(meta(movie(r)), lambda d: d.pop("sources")), "OK", []),
+
     # ---- sources
     ("a probe whose hash is wrong", False, lambda r: open(probe(r), "a").write(" "), "probe sha256 does not match", []),
     ("a probe missing", False, lambda r: os.remove(probe(r)), "probe file missing", []),
@@ -636,6 +647,9 @@ CASES = [
     ("a biography in something that is not a language", False, lambda r: edit(pjson(lead(r)), lambda d: d["biography"].update(English="x")), "$.biography", []),
     ("a title id as a person's imdb id", False, lambda r: edit(pjson(lead(r)), lambda d: d["externalIds"].update(imdb="tt2285752")), "does not match", []),
     ("a person name that is empty", False, lambda r: edit(pjson(lead(r)), lambda d: d.update(name="")), "$.name", []),
+    ("a person's database state that is not a moment", False, lambda r: edit(pjson(lead(r)), lambda d: d.update(databaseUpdatedAt="2026-09-20")), "$.databaseUpdatedAt", []),
+    ("a person's reference source the format does not know", False, lambda r: edit(pjson(lead(r)), lambda d: d["sources"].update(imdb={"fetchedAt": "2026-09-20T11:50:00Z"})), "'imdb' was unexpected", []),
+    ("a person's source fetched at something that is not a moment", False, lambda r: edit(pjson(lead(r)), lambda d: d["sources"]["tmdb"].update(fetchedAt="2026-09-20 11:50")), "$.sources.tmdb.fetchedAt", []),
     ("a credit to a person with no record is a note", True, lambda r: shutil.rmtree(director(r)), "who has no people/", []),
     ("a person nothing is known about but a name", True, bare_person, "OK", ["--check-media"]),
     ("a death known only to the year of the birth", True, lambda r: edit(pjson(lead(r)), lambda d: d.update(deathDate="1985")), "OK", []),

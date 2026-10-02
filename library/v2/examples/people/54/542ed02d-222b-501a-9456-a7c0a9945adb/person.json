@@ -3,6 +3,13 @@
   "personId": "542ed02d-222b-501a-9456-a7c0a9945adb",
   "asOf": "2026-09-20T12:00:00Z",
   "projectedBy": "catalog example",
+  "databaseUpdatedAt": "2026-09-20T11:55:00Z",
+  "sources": {
+    "tmdb": {
+      "fetchedAt": "2026-09-20T11:50:00Z",
+      "changedAt": "2026-09-16"
+    }
+  },
   "name": "Mara Example",
   "sortName": "Example, Mara",
   "alsoKnownAs": [

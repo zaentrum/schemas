@@ -20,7 +20,9 @@ every record the format has and the shapes a reader most needs to see:
   people/  the two people the items credit: the movie's director, with only what is known about
            him, and the series' lead, a fictional person with every field a person record has.
 
-Images are named by the hash of their own content. Every folder written once carries the
+Every projection says which state of its database row it reflects (databaseUpdatedAt), and the two
+that were taken from the reference source — the movie and the lead — say when and how fresh that is
+(sources). Images are named by the hash of their own content. Every folder written once carries the
 checksums.sha256 written with it — the item's over item.json, each source's over its record, probe
 and sidecars, each event's over event.json, each extra's over extra.json and every file beside it —
 and each version and packaged extra closes its chain: checksums over the record and the package,
@@ -41,6 +43,9 @@ REPACKAGED = "2026-09-19T13:00:00Z"   # a second package was made in a new versi
 SUPERSEDED = "2026-09-19T13:05:00Z"   # the package it replaces was recorded as superseded
 DELETED = "2026-09-20T08:15:00Z"      # an original was deleted
 REMOVED = "2026-09-20T09:30:00Z"      # a version was removed from the item
+TMDB_FETCHED = "2026-09-20T11:50:00Z"  # the database last fetched the movie and the lead from TMDB
+TMDB_CHANGED = "2026-09-16"            # the day TMDB last reported a change to them, before that fetch
+ROW_UPDATED = "2026-09-20T11:55:00Z"   # the database rows were last modified: the state every projection reflects
 PROJECTED = "2026-09-20T12:00:00Z"    # the database was projected into metadata.json
 EXTRA_TAKEN = "2026-09-19T08:00:00Z"  # bonus material was taken in beside its movie or series
 EXTRA_PACKAGED = "2026-09-19T08:40:00Z"  # and the featurette's package completed
@@ -485,6 +490,8 @@ def movie():
     write(os.path.join(mdir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": mid, "type": "movie",
         "asOf": PROJECTED, "projectedBy": "catalog example",
+        # the row as it was last modified, and when its texts were last taken from the reference source
+        "databaseUpdatedAt": ROW_UPDATED, "sources": {"tmdb": {"fetchedAt": TMDB_FETCHED, "changedAt": TMDB_CHANGED}},
         "titles": {"primary": "Tears of Steel", "original": "Tears of Steel", "sort": "tears of steel",
                    "qualifier": None,
                    "localized": {"en": {"title": "Tears of Steel", "sortTitle": "tears of steel", "tagline": None,
@@ -605,7 +612,7 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
 
     write(os.path.join(edir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": eid, "type": "episode",
-        "asOf": PROJECTED, "projectedBy": "catalog example",
+        "asOf": PROJECTED, "projectedBy": "catalog example", "databaseUpdatedAt": ROW_UPDATED,
         "titles": {"primary": title, "original": None, "sort": title.lower(), "qualifier": None,
                    "localized": {"en": {"title": title, "sortTitle": title.lower(), "tagline": None,
                                         "overview": overview}}},
@@ -637,7 +644,7 @@ def series():
     })
     write(os.path.join(sdir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": sid, "type": "series",
-        "asOf": PROJECTED, "projectedBy": "catalog example",
+        "asOf": PROJECTED, "projectedBy": "catalog example", "databaseUpdatedAt": ROW_UPDATED,
         "titles": {"primary": "Example Show", "original": None, "sort": "example show", "qualifier": "US",
                    "localized": {"en": {"title": "Example Show", "sortTitle": "example show", "tagline": None,
                                         "overview": "A fictional series used to illustrate the library layout."}}},
@@ -685,6 +692,7 @@ def person(pid, **fields):
     pdir = os.path.join(ROOT, "people", pid[:2], pid)
     images = [image(pdir, "profile", jpeg(f"profile {fields['name']}"), "image/jpeg", folder="")]
     doc = {"schema": "zaentrum.library.person/2", "personId": pid, "asOf": PROJECTED, "projectedBy": "catalog example",
+           "databaseUpdatedAt": ROW_UPDATED, **({"sources": fields.pop("sources")} if "sources" in fields else {}),
            "name": fields.pop("name"), "sortName": None, "alsoKnownAs": [], "birthDate": None, "deathDate": None,
            "birthPlace": None, "biography": {}, "externalIds": {}, "images": images,
            "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
@@ -696,11 +704,14 @@ def person(pid, **fields):
 def people():
     """The people the items credit. The director is a real person, so his record holds only what is
     known about him and no reference id is made up; the series' lead is fictional and fills every
-    field a person record has, a biography in two languages and a person's lock among them."""
+    field a person record has, a biography in two languages and a person's lock among them, and when
+    the example database last took her from the reference source. Her reference ids stay empty all
+    the same: a made-up one would be some real person's."""
     person(uid("person", "ian-hubert"), name="Ian Hubert", sortName="Hubert, Ian",
            biography={"en": "Director of the open movie Tears of Steel (2012)."},
            fieldOrigins={"name": "manual", "sortName": "manual", "biography": "manual", "images": "manual"})
     person(uid("person", "mara-example"), name="Mara Example", sortName="Example, Mara",
+           sources={"tmdb": {"fetchedAt": TMDB_FETCHED, "changedAt": TMDB_CHANGED}},
            alsoKnownAs=["M. Example"], birthDate="1985-04", birthPlace="Example City",
            biography={"en": "A fictional actor who plays the lead in Example Show.",
                       "de": "Eine erfundene Schauspielerin, die in Example Show die Hauptrolle spielt."},

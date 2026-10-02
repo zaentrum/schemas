@@ -4,6 +4,7 @@
   "type": "series",
   "asOf": "2026-09-20T12:00:00Z",
   "projectedBy": "catalog example",
+  "databaseUpdatedAt": "2026-09-20T11:55:00Z",
   "titles": {
     "primary": "Example Show",
     "original": null,

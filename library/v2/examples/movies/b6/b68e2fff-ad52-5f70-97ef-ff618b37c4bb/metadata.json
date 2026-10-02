@@ -4,6 +4,13 @@
   "type": "movie",
   "asOf": "2026-09-20T12:00:00Z",
   "projectedBy": "catalog example",
+  "databaseUpdatedAt": "2026-09-20T11:55:00Z",
+  "sources": {
+    "tmdb": {
+      "fetchedAt": "2026-09-20T11:50:00Z",
+      "changedAt": "2026-09-16"
+    }
+  },
   "titles": {
     "primary": "Tears of Steel",
     "original": "Tears of Steel",
