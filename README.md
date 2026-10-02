@@ -289,8 +289,8 @@ python tools/library-v2-from-catalog.py --export catalog.json --packages /…/pa
 # v1 item folders (manifest.json + metadata/) become v2 records, in place or into a new tree
 python tools/library-v2-from-v1.py --in /…/library --in-place [--dry-run]
 
-# the catalog contents a tree implies, with its events applied, and both directions against a export
-python tools/library-v2-rebuild.py /…/library --out rows.json [--compare catalog.json]
+# the catalog contents a tree implies, with its events applied, and both directions against an export
+python tools/library-v2-rebuild.py /…/library --out rows.json [--compare catalog.json [--subset]]
 
 # the checks that must run where the files are: they need no jsonschema
 python tools/library-v2-media-check.py /…/library [--checksums]
@@ -302,6 +302,31 @@ A rebuilt catalog is only as complete as the record: the tree holds no per-user 
 modification times, the paths it hands back are the version folders the bytes moved into, and what
 a source record could not be told (an original that is already gone, a file nothing probed) stays
 empty rather than guessed.
+
+### Telling an orphan from a loss
+
+Deleting an item deletes its folder — that is the writer's obligation, and a writer that misses it
+leaves a record the database does not know. Seen from the tree alone, such a folder could be an item
+the database **deleted** (remove the folder) or one it **lost** (restore it), and only the database
+can say which. So the catalog export carries the database's deletion log, beside its rows:
+
+```json
+{ "exportedAt": "…", "items": [ … ], "deletedItems": [ { "id": "<itemId>", "deletedAt": "<RFC 3339>", "deletedBy": "<who>" } ] }
+```
+
+`library-v2-rebuild.py --compare` sorts every item that exists on one side only into one of three
+classes, each listed with its ids:
+
+| Class | What it means | Fails the compare |
+|---|---|---|
+| orphan | On storage and in the deletion log, deleted after the record was created: the database deleted it, and the folder is safe to remove. An episode whose series was deleted is an orphan with it. | no |
+| lost | On storage, not in the database and not in its deletion log — or in the log but created after that deletion, which the log cannot explain: a restore candidate. | yes |
+| missing record | In the database, not on storage: the tree cannot restore it. Not counted with `--subset`. | yes |
+
+An export without `deletedItems` predates the log: every item only on storage is then *lost or
+orphan*, and fails the compare, because any of them may be a loss. A field that disagrees between
+two rows both sides hold fails it too. An id that is in the log and in the database again is compared
+as the live item it is.
 
 ### Library v2 changelog
 

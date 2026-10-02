@@ -20,9 +20,23 @@ Applying events, earliest first:
   package-superseded  the package it names is not the one to use; the successor is
   note                nothing
 
---compare reports both directions against a catalog export: rows the tree has that the database
-does not, rows the database has that the tree does not, and field by field where they disagree. It
-exits non-zero when anything differs, so it can gate a migration.
+--compare reports both directions against a catalog export, and says which of three things each
+difference about an item's existence is. Deleting an item is supposed to delete its folder; when a
+writer missed that, the tree holds a record the database does not, and only the database's deletion
+log (the export's top-level deletedItems: [{id, deletedAt, deletedBy}]) can say whether the database
+lost the item or deleted it:
+
+  orphan          on storage and in the deletion log, deleted after it was created: the database
+                  deleted it, so the folder is safe to remove (library-v2-sweep.py removes it). An
+                  episode whose series was deleted is an orphan with it.
+  lost            on storage, not in the database and not in its deletion log — or in the log but
+                  created after that deletion, which the log cannot explain: a restore candidate
+  missing record  in the database, not on storage: the tree cannot restore it
+
+An export without deletedItems predates the log, and then every item only on storage is 'lost or
+orphan': nothing can tell the two apart. Field by field it then reports where the rows both sides
+hold disagree. It exits non-zero for a lost item (or one that may be lost), a missing record and a
+field that disagrees — never for an orphan alone — so it can gate a migration.
 
 Fields that cannot agree by construction are ignored by default (--ignore-fields):
   id     a database key, not a fact about the item
@@ -351,24 +365,97 @@ def normalise(row):
     return out
 
 
-def compare(tree_rows, db_rows, ignore, subset=False):
-    """Both directions, field by field. Returns (lines, number of differences)."""
-    tree = {r["id"]: normalise(r) for r in tree_rows}
-    db = {r["id"]: normalise(r) for r in db_rows}
-    lines, n = [], 0
-    only_tree, only_db = sorted(set(tree) - set(db)), sorted(set(db) - set(tree))
-    for label, missing, source in (("only on storage", only_tree, tree),
-                                   ("only in the database", only_db, db)):
-        if not missing:
+def instant(value):
+    """A timestamp as an aware datetime, or None when it is not one."""
+    try:
+        t = datetime.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else None
+
+
+def deletion_log(export):
+    """The database's record of what it deleted, by item id — or None when the export predates the
+    log, which is not the same as a log that is empty."""
+    if "deletedItems" not in export:
+        return None
+    return {str(e["id"]): e for e in export.get("deletedItems") or [] if isinstance(e, dict) and e.get("id")}
+
+
+def deleted_after_creation(entry, created_at):
+    """Whether a deletion log entry explains a record created at created_at: only a deletion that
+    came after the creation can have deleted it."""
+    deleted = instant((entry or {}).get("deletedAt"))
+    created = instant(created_at)
+    return deleted is not None and (created is None or created <= deleted)
+
+
+def existence(tree, db, log):
+    """Which items exist on one side only, and why. tree and db are rows keyed by id; log is the
+    deletion log or None. Returns {class: [(id, note)]} for orphan, lost, unknown and missing."""
+    out = {"orphan": [], "lost": [], "unknown": [], "missing": []}
+    for iid in sorted(set(tree) - set(db)):
+        row = tree[iid]
+        if log is None:
+            out["unknown"].append((iid, "the export carries no deletion log"))
             continue
-        counted = not (subset and label == "only in the database")
-        lines.append(f"  {label}: {len(missing)} item(s)" + ("" if counted else ", which a subset is expected to be"))
-        for iid in missing[:5]:
-            lines.append(f"      {iid} {source[iid].get('title')!r}")
-        if len(missing) > 5:
-            lines.append(f"      … and {len(missing) - 5} more")
+        parent = row.get("parentId")
+        entry = log.get(iid) or (log.get(parent) if parent and parent not in db else None)
+        how = "deleted" if iid in log else "its series was deleted"
+        if entry is None:
+            out["lost"].append((iid, "not in the deletion log"))
+        elif deleted_after_creation(entry, row.get("createdAt")):
+            out["orphan"].append((iid, f"{how} {entry.get('deletedAt')} by {entry.get('deletedBy') or 'unknown'}"))
+        elif instant(entry.get("deletedAt")) is None:
+            out["lost"].append((iid, f"{how}, but the log entry has no deletedAt to prove it"))
+        else:
+            out["lost"].append((iid, f"{how} {entry.get('deletedAt')}, but created after that, at {row.get('createdAt')}"))
+    out["missing"] = [(iid, "not on storage") for iid in sorted(set(db) - set(tree))]
+    return out
+
+
+CLASSES = (
+    ("orphan", "orphan — on storage and in the deletion log: the database deleted it, safe to remove"),
+    ("lost", "lost — on storage, and the database neither holds it nor deleted it: restore candidates"),
+    ("unknown", "lost or orphan — on storage, not in the database, and no deletion log to tell which"),
+    ("missing", "missing record — in the database, not on storage"),
+)
+LISTED = 200
+
+
+def report_existence(lines, classes, rows_of, what, subset):
+    """Each class on its own, with every id. Returns how many of them count as differences."""
+    n = 0
+    for key, label in CLASSES:
+        found = classes[key]
+        if not found:
+            continue
+        counted = key in ("lost", "unknown") or (key == "missing" and not subset)
+        lines.append(f"  {label}: {len(found)} {what}"
+                     + ("" if counted or key == "orphan" else ", which a subset is expected to be"))
+        for iid, why in found[:LISTED]:
+            title = (rows_of(iid) or {}).get("title") or (rows_of(iid) or {}).get("name")
+            lines.append(f"      {iid} {title!r} — {why}")
+        if len(found) > LISTED:
+            lines.append(f"      … and {len(found) - LISTED} more")
         if counted:
-            n += len(missing)
+            n += len(found)
+    return n
+
+
+def compare(tree_rows, export, ignore, subset=False):
+    """Both directions, field by field. Returns (lines, number of differences, number of orphans)."""
+    tree = {r["id"]: normalise(r) for r in tree_rows}
+    db = {r["id"]: normalise(r) for r in export.get("items") or []}
+    log = deletion_log(export)
+    lines = []
+    classes = existence(tree, db, log)
+    stale = sorted(iid for iid in set(log or {}) & set(db))
+    n = report_existence(lines, classes, lambda iid: tree.get(iid) or db.get(iid), "item(s)", subset)
+    if stale:
+        lines.append(f"  in the deletion log but held by the database again: {len(stale)} item(s), "
+                     f"compared as the live items they are")
+        lines += [f"      {iid}" for iid in stale[:LISTED]]
     fields = {}
     for iid in sorted(set(tree) & set(db)):
         a, b = tree[iid], db[iid]
@@ -395,7 +482,7 @@ def compare(tree_rows, db_rows, ignore, subset=False):
             lines.append(f"      {iid}: storage {mine!r} != database {theirs!r}")
         if len(rows) > 5:
             lines.append(f"      … and {len(rows) - 5} more")
-    return lines, n
+    return lines, n, len(classes["orphan"])
 
 
 def diff_list(fields, iid, key, mine, theirs, ignore):
@@ -456,11 +543,12 @@ def main():
     ignore = {x.strip() for x in args.ignore_fields.split(",") if x.strip()}
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
-    lines, n = compare(r.items, export.get("items") or [], ignore, args.subset)
+    lines, n, orphans = compare(r.items, export, ignore, args.subset)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     for line in lines:
         print(line)
-    print("the tree and the database agree" if not n else f"{n} difference(s)")
+    tail = f"; {orphans} orphan(s) on storage are safe to remove" if orphans else ""
+    print(("the tree and the database agree" if not n else f"{n} difference(s)") + tail)
     return 1 if n else 0
 
 

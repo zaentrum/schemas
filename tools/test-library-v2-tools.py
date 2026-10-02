@@ -5,7 +5,7 @@ Run it with an interpreter that can import jsonschema — the cases that run val
 need it, and say so when it is missing. The tools themselves use nothing but the standard library,
 and these cases run them the way a pod does: as scripts, with arguments.
 
-  python tools/test-library-v2-tools.py
+  python tools/test-library-v2-tools.py [section words]   # words: run only the sections they name
 
 What it proves, and how each rule is shown to bite — every case makes the change that breaks the
 rule and checks the tool notices:
@@ -16,6 +16,9 @@ rule and checks the tool notices:
   events         each kind changes the rebuilt rows as the README says, and removing the event
                  changes them back: a superseded package reappears, a removed version reappears, a
                  deleted original becomes a playback asset again, and a note changes nothing
+  compare        an item only on storage is an orphan when the deletion log explains it and lost
+                 when it does not, an item only in the database is a missing record, and only the
+                 last two fail; without a log nothing on storage can be called an orphan
   v1 -> v2       the v1 example tree converts, the result passes validate-library-v2.py and the
                  media check, the texts and the packages survive, and a second run does nothing
   catalog -> v2  an export, a package store and source files become a tree that validates; the
@@ -285,6 +288,88 @@ def test_events(t):
                 "at": "2026-09-21T11:00:00Z", "by": "test", "kind": "note",
                 "reason": "something no other record holds"})
         t.eq("a note changes nothing", assets(rows_of(base)[0]), assets(before))
+
+
+# ---------------------------------------------------------------- an orphan, a loss, a missing record
+def test_compare(t):
+    """The export a tree is compared with starts as the rows the tree rebuilds to, so the two agree;
+    each case then changes what the database holds or remembers deleting, and checks the class the
+    item lands in, the id listed under it, and the exit code."""
+    rows, _ = rows_of(EXAMPLES)
+    movie = next(r for r in rows.values() if r["type"] == "movie")
+    series = next(r for r in rows.values() if r["type"] == "series")
+    episodes = sorted(iid for iid, r in rows.items() if r["type"] == "episode")
+
+    def compare(change, *extra):
+        export = {"exportedAt": "2026-10-01T12:00:00Z", "items": [dict(r) for r in rows.values()],
+                  "deletedItems": []}
+        change(export)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "catalog.json")
+            jwrite(path, export)
+            code, text = run(REBUILD, EXAMPLES, "--compare", path, "--text-language", "en", *extra)
+        return code, text
+
+    def section(text, label):
+        """The ids listed under one class of the report."""
+        out, inside = [], False
+        for line in text.splitlines():
+            if line.startswith("  ") and not line.startswith("      "):
+                inside = line.strip().startswith(label)
+            elif inside and line.startswith("      "):
+                out.append(line.split()[0])
+        return out
+
+    def drop(*ids):
+        return lambda e: e.update(items=[r for r in e["items"] if r["id"] not in ids])
+
+    def deleted(iid, at="2026-09-30T10:00:00Z", by="librarian"):
+        return lambda e: e["deletedItems"].append({"id": iid, "deletedAt": at, "deletedBy": by})
+
+    def both(*changes):
+        return lambda e: [c(e) for c in changes]
+
+    code, text = compare(lambda e: None)
+    t.ok("a tree and the export it rebuilds to agree", code == 0 and "the tree and the database agree" in text, text)
+
+    code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
+    t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",
+         code == 0 and section(text, "orphan") == [movie["id"]] and "1 orphan(s) on storage" in text, text)
+    t.ok("the orphan says when and by whom", "deleted 2026-09-30T10:00:00Z by librarian" in text, text)
+
+    code, text = compare(drop(movie["id"]))
+    t.ok("an item the database neither holds nor deleted is lost, and fails",
+         code == 1 and section(text, "lost —") == [movie["id"]] and not section(text, "orphan"), text)
+
+    code, text = compare(both(drop(movie["id"]), lambda e: e.pop("deletedItems")))
+    t.ok("without a deletion log nothing can be told apart, and it fails as a possible loss",
+         code == 1 and section(text, "lost or orphan") == [movie["id"]] and not section(text, "orphan"), text)
+
+    code, text = compare(lambda e: e["items"].append(
+        {"id": "00000000-0000-4000-8000-0000000000aa", "type": "movie", "title": "Only Here"}))
+    t.ok("an item only the database holds is a missing record, and fails",
+         code == 1 and section(text, "missing record") == ["00000000-0000-4000-8000-0000000000aa"], text)
+    code, text = compare(lambda e: e["items"].append(
+        {"id": "00000000-0000-4000-8000-0000000000aa", "type": "movie", "title": "Only Here"}), "--subset")
+    t.ok("and in a subset it is listed without failing",
+         code == 0 and section(text, "missing record") == ["00000000-0000-4000-8000-0000000000aa"], text)
+
+    code, text = compare(both(drop(series["id"], *episodes), deleted(series["id"])))
+    t.ok("deleting a series makes orphans of its episodes too",
+         code == 0 and sorted(section(text, "orphan")) == sorted([series["id"], *episodes]), text)
+    t.ok("and says the episodes went with their series", "its series was deleted" in text, text)
+
+    code, text = compare(both(drop(movie["id"]), deleted(movie["id"], at="2026-09-01T00:00:00Z")))
+    t.ok("a record created after the deletion the log names is lost, not an orphan",
+         code == 1 and section(text, "lost —") == [movie["id"]] and "created after that" in text, text)
+
+    code, text = compare(both(drop(movie["id"]), lambda e: e["deletedItems"].append({"id": movie["id"]})))
+    t.ok("a log entry with no deletedAt proves nothing, so the item is lost",
+         code == 1 and section(text, "lost —") == [movie["id"]] and "no deletedAt" in text, text)
+
+    code, text = compare(deleted(movie["id"]))
+    t.ok("an item the database deleted and holds again is live, and compared as one",
+         code == 0 and "held by the database again: 1" in text and not section(text, "orphan"), text)
 
 
 # ---------------------------------------------------------------- v1 -> v2
@@ -627,10 +712,15 @@ def hard_link(root):
 
 
 def main():
+    """Every section, or with arguments only the sections whose name contains one of them."""
     t = Tally()
+    wanted = sys.argv[1:]
     for section, fn in (("the pieces", test_pieces), ("the example tree", test_round_trip),
-                        ("applying events", test_events), ("v1 -> v2", test_from_v1),
+                        ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
+                        ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog), ("the media check", test_media_check)):
+        if wanted and not any(w in section for w in wanted):
+            continue
         print(f"\n--- {section}")
         try:
             fn(t)

@@ -4,7 +4,7 @@
 Each case copies library/v2/examples into a temporary folder, changes one thing, runs the
 validator, and checks the exit code and a phrase of the reason. Every rule the validator carries
 has a case here that fails without it. Run from anywhere; exits non-zero when any case behaves
-unexpectedly.
+unexpectedly. Words on the command line run only the cases whose names contain one of them.
 """
 import glob, hashlib, json, os, shutil, subprocess, sys, tempfile
 
@@ -364,8 +364,11 @@ CASES = [
 
 
 def main():
+    """Every case, or with arguments only the cases whose name contains one of them."""
+    wanted = sys.argv[1:]
+    cases = [c for c in CASES if not wanted or any(w in c[0] for w in wanted)]
     failures = 0
-    for name, expect_ok, change, phrase, extra in CASES:
+    for name, expect_ok, change, phrase, extra in cases:
         with tempfile.TemporaryDirectory() as tmp:
             root = os.path.join(tmp, "library")
             shutil.copytree(EXAMPLES, root)
@@ -378,8 +381,8 @@ def main():
             if not good:
                 failures += 1
                 print("      " + "\n      ".join(out.strip().splitlines()[-6:]))
-    print(f"{len(CASES) - failures}/{len(CASES)} cases behave as expected")
-    sys.exit(1 if failures else 0)
+    print(f"{len(cases) - failures}/{len(cases)} cases behave as expected")
+    sys.exit(1 if failures or not cases else 0)
 
 
 if __name__ == "__main__":
