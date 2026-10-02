@@ -10,10 +10,10 @@ missed. It finds five kinds of garbage, each proved by the records and the datab
 
   deleted item       an item folder whose id the export's deletion log names (deletedItems), that the
                      database does not hold again, and in which no record states a moment after that
-                     deletion — item.json's createdAt and migratedAt, metadata.json's asOf, every
-                     source's takenAt, version's and package's createdAt, event's at and extra's
-                     createdAt, and for a series its episodes' as well; a record that states none counts
-                     with its file's time. A series goes with its episodes, so one the database still
+                     deletion — item.json's createdAt and migratedAt, metadata.json's asOf, its
+                     databaseUpdatedAt and its TMDB fetchedAt, every source's takenAt, version's and
+                     package's createdAt, event's at and extra's createdAt, and for a series its
+                     episodes' as well; a record that states none counts with its file's time. A series goes with its episodes, so one the database still
                      holds keeps it.
   unfinished version a version folder without .complete. The whole folder when it has no version.json
                      — nothing can have known a version that never wrote its record — or when it keeps
@@ -71,7 +71,8 @@ EXTRA_TMP = ("extra.json.tmp", "package.json.tmp", "checksums.sha256.tmp", ".com
 QUARANTINE = "_swept"
 RECORD_MOMENTS = (
     ("item.json", ("createdAt", "provenance.migratedAt")),
-    ("metadata.json", ("asOf",)),
+    # databaseUpdatedAt is on the database's clock, the one the deletion log's deletedAt is on
+    ("metadata.json", ("asOf", "databaseUpdatedAt", "sources.tmdb.fetchedAt")),
     ("sources/*.json", ("takenAt", "probe.at")),
     ("sources/*/source.json", ("takenAt", "probe.at")),
     ("versions/*/version.json", ("createdAt",)),

@@ -49,9 +49,10 @@ lost the item or deleted it:
   missing record  in the database, not on storage: the tree cannot restore it
 
 "Nothing newer" is the newest moment any record in the folder states — item.json's createdAt and
-migratedAt, metadata.json's asOf, every source's takenAt, version's and package's createdAt,
-event's at and extra's createdAt, the episodes' too for a series — and a record that states none
-counts with its file's modification time. An id that is both in the log and in the database is present: the item that
+migratedAt, metadata.json's asOf, the databaseUpdatedAt of the row it reflects and when its TMDB
+data was fetched, every source's takenAt, version's and package's createdAt, event's at and extra's
+createdAt, the episodes' too for a series — and a record that states none counts with its file's
+modification time. An id that is both in the log and in the database is present: the item that
 exists wins. deletedItems null (a catalog that keeps no log yet) or absent means there is no log, and
 then nothing can be called deleted: every item only on storage is lost.
 
@@ -153,7 +154,8 @@ def deletion_gate(sources, package):
 # folder only when it came after every one of them.
 RECORD_MOMENTS = (
     ("item.json", ("createdAt", "provenance.migratedAt")),
-    ("metadata.json", ("asOf",)),
+    # databaseUpdatedAt is on the database's clock, the one the deletion log's deletedAt is on
+    ("metadata.json", ("asOf", "databaseUpdatedAt", "sources.tmdb.fetchedAt")),
     ("sources/*.json", ("takenAt", "probe.at")),
     ("sources/*/source.json", ("takenAt", "probe.at")),
     ("versions/*/version.json", ("createdAt",)),

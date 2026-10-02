@@ -706,9 +706,28 @@ def test_compare(t):
              code == 1 and section(text, "lost —") == [movie["id"]] and "holds a record of 2026-10-01T08:00:00Z" in text, text)
         jwrite(extra, dict(jload(extra), createdAt="2026-09-19T08:00:00Z"))
 
+        # a projection written before the deletion, of a row the database modified after it: on the
+        # database's own clock the row outlived the deletion, so the id was created again since
+        projection = os.path.join(tree, "movies", movie["id"][:2], movie["id"], "metadata.json")
+        written = jload(projection)
+        for what, field, value in (("reflects a row modified", "databaseUpdatedAt", "2026-10-01T08:00:00Z"),
+                                   ("holds TMDB data fetched", "sources", {"tmdb": {"fetchedAt": "2026-10-01T08:00:00Z"}})):
+            jwrite(projection, dict(written, **{field: value}))
+            code, text = compare(both(drop(movie["id"]), deleted(movie["id"])), tree=tree)
+            t.ok(f"a projection that {what} after the deletion keeps its item from being an orphan",
+                 code == 1 and section(text, "lost —") == [movie["id"]] and "holds a record of 2026-10-01T08:00:00Z" in text,
+                 text)
+        jwrite(projection, written)
+
         meta = os.path.join(tree, "movies", movie["id"][:2], movie["id"], "metadata.json")
         doc = jload(meta)
         doc.pop("asOf")
+        jwrite(meta, doc)
+        code, text = compare(both(drop(movie["id"]), deleted(movie["id"])), tree=tree)
+        t.ok("a projection without its asOf still states the moments of the row it reflects",
+             code == 0 and section(text, "orphan") == [movie["id"]], text)
+        for field in ("databaseUpdatedAt", "sources"):
+            doc.pop(field)
         jwrite(meta, doc)
         code, text = compare(both(drop(movie["id"]), deleted(movie["id"])), tree=tree)
         t.ok("a record that states no moment counts with its file's time, which is after the deletion",
@@ -1942,6 +1961,10 @@ def test_sweep(t):
     refused("a deleted item's folder that holds a record newer than the deletion",
             lambda r, e, w: export_edit(e, lambda d: d["deletedItems"][0].update(deletedAt="2026-09-19T00:00:00Z")),
             "created again since")
+    refused("a deleted item's folder whose projection reflects a row modified after the deletion",
+            lambda r, e, w: jwrite(os.path.join(w["gone"], "metadata.json"),
+                                   dict(jload(os.path.join(w["gone"], "metadata.json")), databaseUpdatedAt="2026-10-01T08:00:00Z")),
+            "holds a record of 2026-10-01T08:00:00Z", age_after=True)
     refused("a deleted item's folder that holds an extra taken in after the deletion",
             lambda r, e, w: [jwrite(x, dict(jload(x), createdAt="2026-10-01T08:00:00Z"))
                              for x in glob.glob(os.path.join(w["gone"], "extras", "*", "extra.json"))],
