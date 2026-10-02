@@ -815,7 +815,9 @@ def report_classes(lines, classes, labels, rows_of, what, counts):
 def person_ids(v):
     """A person's reference ids in the form person.json keys them, from either form an export uses."""
     if isinstance(v, dict):
-        return dict(v)
+        # An export keeps every key of the shape and writes null for an id it does not know;
+        # person.json leaves such a key out, so drop it here too or every gap reads as a difference.
+        return {k: str(x) for k, x in v.items() if x not in (None, "")}
     out = {}
     for e in v or []:
         field = PERSON_ID_FIELD.get(str((e or {}).get("source") or "").lower())

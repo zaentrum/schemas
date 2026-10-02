@@ -211,6 +211,13 @@ def extra_of(root, kind):
 def test_pieces(t):
     cat = load_tool(FROM_CATALOG)
 
+    # the catalog's export keeps every key of externalIds and writes null for an id it does not
+    # know; person.json leaves the key out, so the compare must not read the gap as a difference
+    reb = load_tool(REBUILD)
+    t.eq("an export's null reference id is no id at all, as person.json keeps it",
+         reb.person_ids({"tmdbPerson": "102", "imdb": None}), {"tmdbPerson": "102"})
+    t.eq("and an empty one neither", reb.person_ids({"tmdbPerson": "102", "imdb": ""}), {"tmdbPerson": "102"})
+
     # a JPEG that a naive scanner gets wrong: an APP0 header and a comment segment sit before the
     # SOF0 that actually carries the size, and the size is width != height so a swap shows up.
     jpeg = (b"\xff\xd8" + b"\xff\xe0" + (16).to_bytes(2, "big") + b"JFIF\x00" + b"\x00" * 9 +
