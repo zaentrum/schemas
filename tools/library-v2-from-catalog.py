@@ -17,8 +17,9 @@ asset with the package moved or copied in — and one folder per person the rows
                                        sources/<sourceId>/source.json  ffprobe.json  checksums.sha256
                                        versions/<versionId>/version.json  hls/ subs/ trickplay/
                                                              checksums.sha256  package.json  .complete
-  <out>/series/<aa>/<seriesId>/        item.json  checksums.sha256  metadata.json  metadata/
-                                       episodes/<episodeId>/ (as above)
+                                       extras/<extraId>/extra.json  <the trailer>  checksums.sha256
+  <out>/series/<aa>/<seriesId>/        item.json  checksums.sha256  metadata.json  metadata/  extras/
+                                       episodes/<episodeId>/ (as a movie, without extras/)
   <out>/people/<aa>/<personId>/        person.json  <sha256>.jpg
 
 Every folder written once gets the checksums.sha256 that covers it in the same step, and a version
@@ -44,6 +45,12 @@ the pod that mounts the share:
 
 What it can fill in, and what it cannot:
   * the identity, texts, images, people, chapters, segments and trailers come from the export;
+  * a trailer the catalog downloaded — one whose localPath is a file on the share — also becomes an
+    extra of kind trailer beside its movie or series, its file copied or moved in as --media-mode
+    says, its link kept in metadata.json's videos. An episode's stays a link, because an episode has
+    no extras, and so does every one with --media-mode none, because an extra holds its own file.
+    extra.json has no field for the link it came from, so a rebuild cannot give the link its
+    localPath back;
   * the container, streams, fidelity and essence of an original come from `ffprobe`, which is used
     when it is on PATH — without it a source record still carries the file's size, mtime and qh1
     fingerprint, and says in `probe.note` that nothing was probed;
@@ -74,6 +81,8 @@ PERSON_IDS = {"tmdb": ("tmdbPerson", r"[0-9]+"), "themoviedb": ("tmdbPerson", r"
 DATE_RE = re.compile(r"^([0-9]{4})(-[0-9]{2}(-[0-9]{2})?)?")
 SEGMENT_KINDS = {"intro", "recap", "credits", "preview", "commercial", "other"}
 EXT_OF = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+# The names an extra's folder keeps for itself, which an original beside them cannot have.
+EXTRA_RECORDS = {"extra.json", "package.json", "checksums.sha256", ".complete", "hls", "subs", "trickplay", ".", ".."}
 
 
 # ---------------------------------------------------------------- small helpers
@@ -730,7 +739,8 @@ class Build:
         self.probe_version = ffprobe_version() if have_ffprobe() else None
         self.notes = []
         self.skipped = []
-        self.counts = {"items": 0, "people": 0, "sources": 0, "versions": 0, "packages": 0, "images": 0, "probed": 0}
+        self.counts = {"items": 0, "people": 0, "sources": 0, "versions": 0, "packages": 0, "extras": 0, "images": 0,
+                       "probed": 0}
 
     def note(self, item_id, msg):
         self.notes.append(f"{item_id}: {msg}")
@@ -939,23 +949,14 @@ class Build:
         probe = ffprobe(path) if self.probe_version else None
         if probe:
             self.counts["probed"] += 1
-            fmt = probe.get("format") or {}
-            tags = {k: text(v) for k, v in (fmt.get("tags") or {}).items() if text(v)}
-            streams = [norm_stream(s) for s in probe.get("streams") or []]
-            infer_forced_by_size(streams)
+            facts = self.probed(probe)
             chapters = probe.get("chapters") or []
-            duration = fmt.get("duration")
-            rec["container"] = {"format": fmt.get("format_name") or "",
-                                "durationMs": int(float(duration) * 1000) if duration else None,
-                                "bitrate": num(fmt.get("bit_rate")), "title": tags.get("title"),
-                                "muxingApp": tags.get("muxing_application") or tags.get("encoder"),
-                                "writingApp": tags.get("writing_application"),
-                                "creationTime": tags.get("creation_time"), "tags": tags}
-            rec["fidelity"] = self.fidelity(streams, rec["container"])
-            rec["streams"] = streams
+            rec["container"] = facts["container"]
+            rec["fidelity"] = facts["fidelity"]
+            rec["streams"] = facts["streams"]
             rec["sidecars"] = []
             rec["covers"] = []
-            rec["essence"] = source_essence(streams, chapters)
+            rec["essence"] = facts["essence"]
             pf = f"sources/{sid}/ffprobe.json"
             raw = json_bytes(probe)
             rec["_probe"] = raw  # written with the record, under the checksums of its folder
@@ -978,6 +979,23 @@ class Build:
             rec["_chapters"] = []
             self.note(row["id"], f"{name} was not probed: streams, fidelity and essence stay empty")
         return rec, path
+
+    def probed(self, probe):
+        """What a probe found in a file, in the terms a source record and an extra share: its container,
+        every stream, whether it was already a re-encode, and its essence."""
+        fmt = probe.get("format") or {}
+        tags = {k: text(v) for k, v in (fmt.get("tags") or {}).items() if text(v)}
+        streams = [norm_stream(s) for s in probe.get("streams") or []]
+        infer_forced_by_size(streams)
+        duration = fmt.get("duration")
+        container = {"format": fmt.get("format_name") or "",
+                     "durationMs": int(float(duration) * 1000) if duration else None,
+                     "bitrate": num(fmt.get("bit_rate")), "title": tags.get("title"),
+                     "muxingApp": tags.get("muxing_application") or tags.get("encoder"),
+                     "writingApp": tags.get("writing_application"),
+                     "creationTime": tags.get("creation_time"), "tags": tags}
+        return {"container": container, "streams": streams, "fidelity": self.fidelity(streams, container),
+                "essence": source_essence(streams, probe.get("chapters") or [])}
 
     def fidelity(self, streams, container):
         v = next((x for x in streams if x["type"] == "video" and not x["dispositions"].get("attachedPic")), None)
@@ -1203,6 +1221,61 @@ class Build:
                 return max(peaks)
         return (num(asset.get("bitrateKbps")) or 0) * 1000 or None
 
+    # -------------------------------------------------- bonus material
+    def extras(self, row, d):
+        """A trailer the catalog downloaded — a link whose localPath is a file on this share — becomes an
+        extra of kind trailer beside its movie or series: extra.json, the file copied or moved in like
+        an original, and the checksums over both, written last because they say the extra is finished.
+        The link stays in metadata.json's videos, where it is still published. Returns how many."""
+        written, names = 0, set()
+        for t in row.get("trailers") or []:
+            local = str(t.get("localPath") or "").strip()
+            if not local:
+                continue
+            name = os.path.basename(local.replace("\\", "/"))
+            path = self.under(self.a.media, local, "media")
+            if row["type"] == "episode":
+                self.note(row["id"], f"trailer {name} stays a link: an episode has no extras, they are its series'")
+                continue
+            if not os.path.isfile(path):
+                self.note(row["id"], f"trailer {local} is not on this share, so it stays a link")
+                continue
+            if self.a.media_mode == "none":
+                self.note(row["id"], f"trailer {name} stays a link: --media-mode none leaves its file where it is, "
+                                     f"and an extra holds its own file")
+                continue
+            if name in EXTRA_RECORDS or name in names or name != text(name):
+                self.note(row["id"], f"trailer {name!r} cannot be an original's name in an extra's folder, so it stays a link")
+                continue
+            names.add(name)
+            xid = did(row["id"], "extra", name)
+            xp = os.path.join(d, "extras", xid)
+            doc = {"schema": "zaentrum.library.extra/2", "extraId": xid, "createdAt": self.as_of,
+                   "createdBy": "library-v2-from-catalog", "kind": "trailer",
+                   "title": text(t.get("title")) or os.path.splitext(name)[0], "localizedTitles": {},
+                   "language": None, "runtimeMs": None, "originalFiles": [name]}
+            probe = ffprobe(path) if self.probe_version else None
+            if probe:
+                self.counts["probed"] += 1
+                facts = self.probed(probe)
+                spoken = [x["language"] for x in facts["streams"] if x["type"] == "audio" and x.get("language")]
+                doc.update(language=spoken[0] if spoken else None, runtimeMs=facts["container"]["durationMs"], **facts,
+                           probe={"tool": "ffprobe", "version": self.probe_version, "at": self.as_of, "note": None})
+            else:
+                self.note(row["id"], f"trailer {name} was not probed: its streams, fidelity and essence stay empty")
+            digest = sha_file(path).split(":", 1)[1]
+            record = json_bytes(doc)
+            self.w.write(os.path.join(xp, "extra.json"), record)
+            if not self.w.place(path, os.path.join(xp, name), self.a.media_mode):
+                self.note(row["id"], f"trailer {name} could not be placed; its extra never finished")
+                continue
+            self.w.write(os.path.join(xp, "checksums.sha256"),
+                         "".join(f"{h}  {n}\n" for n, h in sorted([("extra.json", hashlib.sha256(record).hexdigest()),
+                                                                   (name, digest)])).encode())
+            written += 1
+        self.counts["extras"] += written
+        return written
+
     # -------------------------------------------------- one item
     def build(self, row, by_id, episodes):
         d = self.item_dir(row, by_id)
@@ -1242,6 +1315,7 @@ class Build:
                         version_ids.append(vid)
                     else:
                         self.note(row["id"], why)
+        self.extras(row, d)
         self.w.covered(d, {"item.json": json_bytes(item)})
         self.w.write_json(os.path.join(d, "metadata.json"),
                           self.metadata_json(row, d, version_ids, episodes))

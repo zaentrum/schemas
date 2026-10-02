@@ -822,8 +822,12 @@ def test_from_v1(t):
 
 
 # ---------------------------------------------------------------- catalog -> v2
-def fake_export(root, with_original=True):
-    """A catalog export, a package store and a source file, as the demo share holds them."""
+TRAILER = "Example Film - Trailer.mp4"
+
+
+def fake_export(root, with_original=True, trailer=False):
+    """A catalog export, a package store and a source file, as the demo share holds them; with
+    trailer, the trailer link was downloaded too, to media/trailers/."""
     media, packages = os.path.join(root, "media"), os.path.join(root, "packages")
     iid = "11111111-2222-4333-8444-555555555555"
     name = "Example Film (2024).mkv"
@@ -832,6 +836,10 @@ def fake_export(root, with_original=True):
     if with_original:
         with open(os.path.join(media, name), "wb") as f:
             f.write(original)
+    if trailer:
+        os.makedirs(os.path.join(media, "trailers"), exist_ok=True)
+        with open(os.path.join(media, "trailers", TRAILER), "wb") as f:
+            f.write(b"a downloaded trailer that no probe here can read\n" * 20)
     pkg = os.path.join(packages, "movies", iid[:2], iid)
     for rel, body in (("hls/master.m3u8", "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=4200000\nv0/playlist.m3u8\n"),
                       ("hls/v0/playlist.m3u8", "#EXTM3U\n#EXT-X-ENDLIST\n"),
@@ -882,7 +890,7 @@ def fake_export(root, with_original=True):
                             "format": "webvtt", "language": "ger", "label": "", "isDefault": True}],
         "trailers": [{"source": "tmdb", "site": "YouTube", "externalId": "abc123",
                       "url": "https://example.org/abc123", "title": "Trailer", "durationSec": 90,
-                      "localPath": None}],
+                      "localPath": f"/var/lib/katalog/media/trailers/{TRAILER}" if trailer else None}],
         "artwork": [{"kind": "poster", "contentType": "image/png", "fetchedAt": "2026-07-01T09:05:00Z",
                      "base64": base64.b64encode(png).decode()}]}]}
     path = os.path.join(root, "catalog.json")
@@ -988,6 +996,146 @@ def test_from_catalog(t):
                          "--out", out, "--dry-run")
         t.ok("a dry run writes nothing and moves nothing",
              code == 0 and not os.path.exists(out) and tree_files(share) == before, text)
+
+
+def fake_ffprobe(bin_dir):
+    """An ffprobe that reports one 1080p video and one English stereo audio stream for any file, so a
+    probed record can be written where no real probe could read the placeholder bytes."""
+    os.makedirs(bin_dir, exist_ok=True)
+    probe = {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "90.000", "bit_rate": "4000000", "tags": {}},
+             "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264", "profile": "High", "width": 1920,
+                          "height": 1080, "pix_fmt": "yuv420p", "avg_frame_rate": "24/1", "field_order": "progressive",
+                          "disposition": {"default": 1}, "tags": {}},
+                         {"index": 1, "codec_type": "audio", "codec_name": "aac", "channels": 2,
+                          "channel_layout": "stereo", "sample_rate": "48000", "disposition": {"default": 1},
+                          "tags": {"language": "eng"}}],
+             "chapters": []}
+    path = os.path.join(bin_dir, "ffprobe")
+    with open(path, "w") as f:
+        f.write(f"#!{sys.executable}\nimport sys\n"
+                f"print('ffprobe version 9.9-test') if '-version' in sys.argv else print({json.dumps(json.dumps(probe))})\n")
+    os.chmod(path, 0o755)
+    return dict(os.environ, PATH=bin_dir + os.pathsep + os.environ.get("PATH", ""))
+
+
+def run_with(env, *args):
+    r = subprocess.run([sys.executable, *[str(a) for a in args]], capture_output=True, text=True, env=env)
+    return r.returncode, r.stdout + r.stderr
+
+
+def test_from_catalog_extras(t):
+    """A trailer the catalog downloaded is a local file of its own: an extra of kind trailer beside its
+    movie or series, while its link stays a link."""
+    with tempfile.TemporaryDirectory() as tmp:
+        share = os.path.join(tmp, "share")
+        export, media, packages, iid, _ = fake_export(share, trailer=True)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        d = os.path.join(out, "movies", iid[:2], iid)
+        found = glob.glob(os.path.join(d, "extras", "*", "extra.json"))
+        x = jload(found[0]) if found else {}
+        xp = os.path.dirname(found[0]) if found else tmp
+        t.ok("a downloaded trailer becomes an extra of kind trailer beside its movie",
+             code == 0 and len(found) == 1 and x.get("kind") == "trailer", text)
+        t.eq("which keeps the file under its own name, with the title of its link",
+             (x.get("originalFiles"), x.get("title")), ([TRAILER], "Trailer"))
+        t.ok("copied in, so the share keeps its own",
+             os.path.isfile(os.path.join(xp, TRAILER)) and open(os.path.join(xp, TRAILER), "rb").read()
+             == open(os.path.join(media, "trailers", TRAILER), "rb").read())
+        t.eq("and finished by the checksums written last, over the record and the file",
+             sorted(listing(xp)) if os.path.isfile(os.path.join(xp, "checksums.sha256")) else None,
+             sorted(["extra.json", TRAILER]))
+        t.ok("a trailer nothing could probe says so rather than guessing", "probe" not in x and x.get("runtimeMs") is None
+             and "trailer Example Film - Trailer.mp4 was not probed" in text, text)
+        t.eq("its link is still a link", [(v["site"], v["key"]) for v in jload(os.path.join(d, "metadata.json"))["videos"]],
+             [("YouTube", "abc123")])
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", out)
+            t.ok("the tree passes validate-library-v2.py", code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("the tree passes validate-library-v2.py", "jsonschema is not importable here")
+        code, mtext = run(MEDIA_CHECK, "--checksums", out)
+        t.ok("and the media check", code == 0 and "'extras': 1" in mtext, mtext)
+        _, built = rows_of(out, "--text-language", "und")
+        t.eq("the rebuild gives the trailer back as an extra row, played from its folder",
+             [(r["itemId"], r["kind"], [a["kind"] for a in r["playbackAssets"]]) for r in built["extras"]],
+             [(iid, "trailer", ["primary"])])
+        code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und",
+                          "--ignore-fields", "id,path,hash,modifiedAt,codec,resolution,bitrateKbps,durationMs,sizeBytes")
+        t.ok("and agrees with the export but for the link's localPath, which no v2 record keeps",
+             code == 1 and "trailers.localPath: 1 difference(s)" in ctext and ctext.strip().endswith("1 difference(s)"), ctext)
+        again = os.path.join(tmp, "library-again")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", again)
+        t.ok("a second run into a fresh folder writes the same bytes", code == 0 and tree_files(out) == tree_files(again), text)
+        dry = os.path.join(tmp, "library-dry")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", dry, "--dry-run")
+        t.ok("and a dry run writes nothing", code == 0 and not os.path.exists(dry), text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"), trailer=True)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out,
+                         "--media-mode", "move")
+        xp = (glob.glob(os.path.join(out, "movies", "*", "*", "extras", "*")) or [tmp])[0]
+        t.ok("with --media-mode move the trailer moves into its extra",
+             code == 0 and os.path.isfile(os.path.join(xp, TRAILER))
+             and not os.path.exists(os.path.join(media, "trailers", TRAILER)), text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"), trailer=True)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out,
+                         "--media-mode", "none")
+        t.ok("with --media-mode none it stays a link: an extra holds its own file",
+             code == 0 and not glob.glob(os.path.join(out, "movies", "*", "*", "extras"))
+             and "--media-mode none leaves its file where it is" in text, text)
+        os.unlink(os.path.join(media, "trailers", TRAILER))
+        out = os.path.join(tmp, "library-gone")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        t.ok("and so does a trailer whose localPath is not on the share",
+             code == 0 and not glob.glob(os.path.join(out, "movies", "*", "*", "extras"))
+             and "is not on this share, so it stays a link" in text, text)
+
+    # ---- a series' trailer is the series' extra; an episode has none
+    with tempfile.TemporaryDirectory() as tmp:
+        media = os.path.join(tmp, "share", "media")
+        os.makedirs(os.path.join(media, "trailers"))
+        sid, eid = "aaaaaaaa-2222-4333-8444-555555555555", "bbbbbbbb-2222-4333-8444-555555555555"
+        for who in ("series", "episode"):
+            with open(os.path.join(media, "trailers", f"{who}.mp4"), "wb") as f:
+                f.write(f"the {who}'s trailer\n".encode() * 20)
+
+        def trailer_of(who):
+            return [{"source": "tmdb", "site": "YouTube", "externalId": who, "url": None, "title": None,
+                     "durationSec": None, "localPath": f"/var/lib/katalog/media/trailers/{who}.mp4"}]
+        export = os.path.join(tmp, "catalog.json")
+        jwrite(export, {"exportedAt": "2026-09-21T17:00:00Z", "deletedItems": [], "items": [
+            {"id": sid, "type": "series", "title": "Example Series", "createdAt": "2026-07-01T09:00:00Z",
+             "trailers": trailer_of("series")},
+            {"id": eid, "type": "episode", "title": "Pilot", "parentId": sid, "seasonNumber": 1, "episodeNumber": 1,
+             "createdAt": "2026-07-01T09:00:00Z", "trailers": trailer_of("episode")}]})
+        out = os.path.join(tmp, "library")
+        env = fake_ffprobe(os.path.join(tmp, "bin"))
+        code, text = run_with(env, FROM_CATALOG, "--export", export, "--packages", os.path.join(tmp, "share"),
+                              "--media", media, "--out", out)
+        sdir = os.path.join(out, "series", sid[:2], sid)
+        found = glob.glob(os.path.join(sdir, "extras", "*", "extra.json"))
+        x = jload(found[0]) if found else {}
+        t.ok("a series' downloaded trailer is the series' extra, of no particular season",
+             code == 0 and len(found) == 1 and x.get("kind") == "trailer" and "seasonNumber" not in x, text)
+        t.eq("titled by its file when its link has no title", x.get("title"), "series")
+        t.ok("an episode's stays a link, because an episode has no extras",
+             not os.path.exists(os.path.join(sdir, "episodes", eid, "extras"))
+             and "trailer episode.mp4 stays a link: an episode has no extras" in text, text)
+        t.eq("a trailer that was probed carries what the probe found, as a source record would",
+             (x.get("language"), x.get("runtimeMs"), (x.get("probe") or {}).get("version"),
+              [s["type"] for s in x.get("streams") or []], (x.get("essence") or {}).get("maxVideoHeight")),
+             ("en", 90000, "ffprobe version 9.9-test", ["video", "audio"], 1080))
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", out)
+            t.ok("and the tree passes validate-library-v2.py", code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("and the tree passes validate-library-v2.py", "jsonschema is not importable here")
 
 
 # ---------------------------------------------------------------- people
@@ -1973,7 +2121,8 @@ def main():
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
-                        ("catalog -> v2", test_from_catalog), ("people", test_people),
+                        ("catalog -> v2", test_from_catalog),
+                        ("a downloaded trailer -> an extra", test_from_catalog_extras), ("people", test_people),
                         ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("the media check", test_media_check)):
