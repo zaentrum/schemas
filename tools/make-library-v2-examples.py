@@ -7,17 +7,22 @@ every record the format has and the shapes a reader most needs to see:
   movies/  one movie in two versions. The first is package-only — its original was deleted, so
            version.json still names the file, the folder no longer holds it, and an
            events/<timestamp>-original-deleted.json record says what was accepted as lost. The
-           second keeps its original next to its package, and carries a quality ladder.
+           second keeps its original next to its package, and carries a quality ladder. Beside
+           them, a featurette in extras/, kept as its original and a package of its own, which the
+           projection puts first and labels.
   series/  one series with a season and two episodes. The first episode keeps its original and
            carries forced, full and SDH subtitles and a commentary track; the second was packaged
-           from an original that was never kept here, so its package is canonical.
+           from an original that was never kept here, so its package is canonical. Beside the
+           episodes, a behind-the-scenes extra of season 1, kept only as its original, which the
+           projection says nothing about.
   people/  the two people the items credit: the movie's director, with only what is known about
            him, and the series' lead, a fictional person with every field a person record has.
 
 Images are named by the hash of their own content. Every folder written once carries the
 checksums.sha256 written with it — the item's over item.json, each source's over its record, probe
-and sidecars, each event's over event.json — and each version closes its chain: checksums over
-version.json and the package, package.json with their hash, .complete with the hash of package.json.
+and sidecars, each event's over event.json, each extra's over extra.json and every file beside it —
+and each version and packaged extra closes its chain: checksums over the record and the package,
+package.json with their hash, .complete with the hash of package.json.
 Originals and images are small placeholders and rendition folders are empty; hashes, sizes and
 checksums are computed, never typed. The tree passes validate-library-v2.py --check-checksums.
 """
@@ -35,6 +40,8 @@ SUPERSEDED = "2026-09-19T13:05:00Z"   # the package it replaces was recorded as 
 DELETED = "2026-09-20T08:15:00Z"      # an original was deleted
 REMOVED = "2026-09-20T09:30:00Z"      # a version was removed from the item
 PROJECTED = "2026-09-20T12:00:00Z"    # the database was projected into metadata.json
+EXTRA_TAKEN = "2026-09-19T08:00:00Z"  # bonus material was taken in beside its movie or series
+EXTRA_PACKAGED = "2026-09-19T08:40:00Z"  # and the featurette's package completed
 
 # A fixed 1x1 JPEG and a fixed 1x1 transparent PNG, as bytes rather than generated, so the fixture
 # hashes do not depend on the library build that happens to run the generator.
@@ -228,14 +235,16 @@ def trickplay_files(folder, duration_ms):
 TRICKPLAY = {"vttPath": "trickplay/thumbnails.vtt", "spritePattern": "trickplay/sprite-%04d.jpg",
              "intervalSec": 10, "thumbWidth": 320, "thumbHeight": 180, "gridCols": 10, "gridRows": 10}
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
+EXTRA_DIRS = ("hls", "subs", "trickplay")
 
 
-def checksums(vdir):
-    """checksums.sha256 over version.json and the package files of a version folder, and the record
-    for it. The original is not listed — its source record holds its fixity, and it may be deleted
-    later — and neither is anything above this file in the chain."""
-    files = ["version.json"]
-    for d in PACKAGE_DIRS:
+def checksums(vdir, record="version.json", originals=(), folders=PACKAGE_DIRS):
+    """checksums.sha256 over the record and the package files of a version or an extra folder, and
+    the record for it. A version's original is not listed — its source record holds its fixity, and
+    it may be deleted later — but an extra's is: an extra is written whole and keeps it. Nothing above
+    this file in the chain is listed."""
+    files = [record, *originals]
+    for d in folders:
         for root, dirs, names in os.walk(os.path.join(vdir, d)):
             dirs.sort()
             files += [os.path.relpath(os.path.join(root, n), vdir) for n in sorted(names)]
@@ -274,10 +283,11 @@ def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, ori
 
 
 def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, size_bytes,
-                   subtitles=(), recipe=None, created=PACKAGED):
-    """version.json and the package files must already be written: the checksums cover them. Closes
+                   subtitles=(), recipe=None, created=PACKAGED, record="version.json", originals=(),
+                   folders=PACKAGE_DIRS):
+    """The record and the package files must already be written: the checksums cover them. Closes
     the chain: checksums, then package.json with their hash, then .complete with package.json's."""
-    record = {
+    doc = {
         "schema": "zaentrum.library.package/2", "packageId": pid, "createdAt": created,
         "packagedBy": "packager example", "state": "complete", "role": role, "durationMs": duration_ms,
         "recipe": recipe or {"video": "hevc re-encode", "audio": "aac-lc 2ch 192k", "subtitles": None},
@@ -286,11 +296,11 @@ def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, size_
         "fidelity": {"lossless": not losses, "losses": list(losses),
                      "droppedSourceStreams": sorted({l["sourceStreamIndex"] for l in losses
                                                      if l["kind"].endswith("-dropped") and l["sourceStreamIndex"] is not None})},
-        "essence": pkg_essence, "checksums": checksums(vdir),
+        "essence": pkg_essence, "checksums": checksums(vdir, record, originals, folders),
     }
-    data = write(os.path.join(vdir, "package.json"), record)
+    data = write(os.path.join(vdir, "package.json"), doc)
     write(os.path.join(vdir, ".complete"), (sha(data) + "\n").encode())
-    return record
+    return doc
 
 
 def event(item_dir, at, kind, by="librarian example", **fields):
@@ -301,6 +311,33 @@ def event(item_dir, at, kind, by="librarian example", **fields):
     folder = os.path.join(item_dir, "events", f"{stamp}-{record['eventId'][:8]}-{kind}")
     write(os.path.join(folder, "event.json"), record)
     sums(folder, ["event.json"])
+    return record
+
+
+def extra(item_dir, xid, kind, title, original, runtime_ms, streams, src_essence, fingerprint,
+          localized=None, season=None, package=None):
+    """extras/<xid>/: extra.json and its original beside it, as the probe found it, and with package
+    a package of its own. An extra is written whole, in one step: the checksums over extra.json and
+    every file beside it come last — the completion signal of an extra that keeps only its original —
+    or, for a packaged one, the chain closes over them. package(xdir, record) writes the package files
+    and closes the chain."""
+    xdir = os.path.join(item_dir, "extras", xid)
+    write(os.path.join(xdir, original), b"placeholder for the original file of " + original.encode() + b"\n")
+    record = {
+        "schema": "zaentrum.library.extra/2", "extraId": xid, "createdAt": EXTRA_TAKEN, "createdBy": "ingest example",
+        "kind": kind, "title": title, "localizedTitles": dict(localized or {}), "language": "en",
+        "runtimeMs": runtime_ms, **({"seasonNumber": season} if season is not None else {}),
+        "originalFiles": [original],
+        "container": {"format": "matroska,webm", "durationMs": runtime_ms, "bitrate": None, "title": None,
+                      "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
+        "streams": streams, "fidelity": {"class": "original", "fingerprint": fingerprint, "evidence": []},
+        "essence": src_essence, "probe": {"tool": "ffprobe", "version": None, "at": EXTRA_TAKEN, "note": None},
+    }
+    write(os.path.join(xdir, "extra.json"), record)
+    if package is None:
+        sums(xdir, ["extra.json", original])
+    else:
+        package(xdir, record)
     return record
 
 
@@ -388,6 +425,32 @@ def movie():
     event(mdir, REMOVED, "version-removed", versionId=uid(mid, "version", "sdr-duplicate"),
           reason="an SDR duplicate of the theatrical cut, kept by mistake")
 
+    # --- bonus material: a featurette, kept as its original and as a package of its own. Its
+    # checksums list the original too, because an extra is written whole and keeps it.
+    featurette = uid(mid, "extra", "on-location")
+
+    def featurette_package(xdir, record):
+        ren = renditions(1920, 800, False, 2)
+        for r in ren["video"] + ren["audio"]:
+            keep(os.path.join(xdir, r["dir"]))
+        write(os.path.join(xdir, "subs", "0.vtt"), b"WEBVTT\n")
+        trickplay_files(xdir, record["runtimeMs"])
+        package_record(xdir, uid(mid, "package", "on-location"), "derived", record["runtimeMs"], ren,
+                       essence(maxVideoHeight=800, subtitleLanguages=["en"], subtitleTracks=1), [], 150000000,
+                       subtitles=[{"id": "sub0", "path": "subs/0.vtt", "language": "eng", "title": "",
+                                   "default": False, "forced": False, "format": "webvtt", "visible": True,
+                                   "sourceStreamIndex": 2, "purpose": "dialogue", "purposeFrom": "assumed",
+                                   "variant": None}],
+                       recipe={"video": "hevc re-encode", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt"},
+                       created=EXTRA_PACKAGED, record="extra.json", originals=record["originalFiles"],
+                       folders=EXTRA_DIRS)
+
+    extra(mdir, featurette, "featurette", "On Location in Amsterdam",
+          "Tears of Steel (2012) - On Location in Amsterdam.mkv", 300000,
+          [video(0, "h264", 1920, 800), audio(1, "aac", 2, "stereo"), subtitle(2, None, events=120)],
+          essence(maxVideoHeight=800, subtitleLanguages=["en"], subtitleTracks=1), "h264/high/8bit/sdr/1920x800",
+          localized={"de": "Drehort Amsterdam", "nl": "Op locatie in Amsterdam"}, package=featurette_package)
+
     write(os.path.join(mdir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": mid, "type": "movie",
         "asOf": PROJECTED, "projectedBy": "catalog example",
@@ -406,6 +469,9 @@ def movie():
             "match": {"status": "matched", "decidedBy": "tmdb", "decidedAt": PROJECTED, "confidence": 1.0,
                       "evidence": [{"signal": "tmdb", "value": "133701"}]},
             "reference": {"runtimeMs": 720000, "runtimeSource": "tmdb"},
+            # How a viewer sees the extras is a decision, so it is projected rather than recorded:
+            # the featurette is listed first, under a shorter label than the title it came with.
+            "extras": {featurette: {"order": 1, "hidden": False, "label": "On Location"}},
         },
         "images": [image(mdir, "poster", jpeg("poster"), "image/jpeg"),
                    image(mdir, "backdrop", jpeg("backdrop"), "image/jpeg"),
@@ -566,6 +632,14 @@ def series():
         "fieldOrigins": {"titles.primary": "manual", "titles.qualifier": "filename", "series": "manual",
                          "credits": "manual", "images": "manual"},
     })
+    # Bonus material of the series sits in the series' own folder, never in an episode's, and may
+    # name the season it belongs to. This one keeps only its original, so its checksums, written
+    # last, are what say it is finished; the projection decides nothing about it, so it is shown in
+    # the order the extras were taken in.
+    extra(sdir, uid(sid, "extra", "behind-the-scenes", "season-1"), "behind-the-scenes",
+          "Behind the Scenes of Season 1", "Example Show (US) - Season 1 - Behind the Scenes.mkv", 1260000,
+          [video(0, "h264", 1920, 1080), audio(1, "aac", 2, "stereo")], essence(maxVideoHeight=1080),
+          "h264/high/8bit/sdr/1920x1080", season=1)
     episode_item(sdir, sid, ep1, 1, "Pilot", "The first episode.",
                  {"aired": {"season": 1, "episode": 1, "episodeEnd": None},
                   "dvd": {"season": 1, "episode": 2, "episodeEnd": None}}, keeps_original=True)

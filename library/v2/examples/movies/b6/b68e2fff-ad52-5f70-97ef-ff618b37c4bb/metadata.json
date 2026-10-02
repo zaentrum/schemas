@@ -56,6 +56,13 @@
     "reference": {
       "runtimeMs": 720000,
       "runtimeSource": "tmdb"
+    },
+    "extras": {
+      "b859d931-1df7-5c71-9ecb-27ef457db863": {
+        "order": 1,
+        "hidden": false,
+        "label": "On Location"
+      }
     }
   },
   "images": [

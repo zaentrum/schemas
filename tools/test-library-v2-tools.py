@@ -331,13 +331,15 @@ def test_proves_itself(t):
         kind = ("item" if os.path.isfile(os.path.join(f, "item.json")) else
                 "source" if os.path.isfile(os.path.join(f, "source.json")) else
                 "event" if os.path.isfile(os.path.join(f, "event.json")) else
-                "version" if os.path.isfile(os.path.join(f, "version.json")) else "other")
+                "version" if os.path.isfile(os.path.join(f, "version.json")) else
+                "extra" if os.path.isfile(os.path.join(f, "extra.json")) else "other")
         kinds[kind] = kinds.get(kind, 0) + 1
     items = len(glob.glob(os.path.join(EXAMPLES, "**", "item.json"), recursive=True))
-    t.eq("every item, source, event and version folder has its checksums, and nothing else does",
+    t.eq("every item, source, event, version and extra folder has its checksums, and nothing else does",
          kinds, {"item": items, "source": len(glob.glob(os.path.join(EXAMPLES, "**", "source.json"), recursive=True)),
                  "event": len(glob.glob(os.path.join(EXAMPLES, "**", "event.json"), recursive=True)),
-                 "version": len(glob.glob(os.path.join(EXAMPLES, "**", ".complete"), recursive=True))})
+                 "version": len(glob.glob(os.path.join(EXAMPLES, "**", "versions", "*", ".complete"), recursive=True)),
+                 "extra": len(glob.glob(os.path.join(EXAMPLES, "**", "extra.json"), recursive=True))})
     tool = shutil.which("sha256sum") and ["sha256sum", "-c", "--quiet"] or \
         shutil.which("shasum") and ["shasum", "-a", "256", "-c", "--quiet"]
     if tool:
@@ -356,11 +358,17 @@ def test_proves_itself(t):
     for mark in glob.glob(os.path.join(EXAMPLES, "**", ".complete"), recursive=True):
         vp = os.path.dirname(mark)
         package = jload(os.path.join(vp, "package.json"))
+        record = "version.json" if os.path.isfile(os.path.join(vp, "version.json")) else "extra.json"
         chain &= open(mark).read().strip() == "sha256:" + digest(os.path.join(vp, "package.json"))
         chain &= package["checksums"]["sha256"] == "sha256:" + digest(os.path.join(vp, "checksums.sha256"))
-        chain &= "version.json" in listing(vp) and not {".complete", "package.json", "checksums.sha256"} & set(listing(vp))
-    t.ok("each version is one chain: .complete names package.json, which names checksums.sha256, which lists "
-         "version.json and never a link above it", chain)
+        chain &= record in listing(vp) and not {".complete", "package.json", "checksums.sha256"} & set(listing(vp))
+    t.ok("each version and each packaged extra is one chain: .complete names package.json, which names "
+         "checksums.sha256, which lists the record it was made for and never a link above it", chain)
+    extras = [os.path.dirname(p) for p in glob.glob(os.path.join(EXAMPLES, "**", "extra.json"), recursive=True)]
+    t.ok("an extra's checksums list its originals too, as a version's never do: an extra is written whole and keeps them",
+         extras and all(set(jload(os.path.join(x, "extra.json"))["originalFiles"]) <= set(listing(x)) for x in extras)
+         and not any(n.endswith(".mkv") for vp in glob.glob(os.path.join(EXAMPLES, "**", "versions", "*"), recursive=True)
+                     for n in listing(vp)), extras)
     listed = [n for f in folders for n in listing(f)]
     t.ok("and no checksums file covers a projection or an image: those are replaced whole, or named by their hash",
          not {"metadata.json", "person.json"} & set(listed)
