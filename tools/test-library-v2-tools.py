@@ -1633,6 +1633,80 @@ def test_media_check(t):
          lambda r: os.link(glob.glob(os.path.join(r, "people", "*", "*", "*.jpg"))[0],
                            os.path.join(os.path.dirname(r), "elsewhere")), "hard links")
 
+    # ---- bonus material: finished or saying it is not, its files there and every one of them covered
+    def featurette(root):
+        """The movie's extra, kept as its original and as a package of its own."""
+        return glob.glob(os.path.join(movie(root), "extras", "*"))[0]
+
+    def bts(root):
+        """The series' extra, kept only as its original."""
+        return glob.glob(os.path.join(root, "series", "*", "*", "extras", "*"))[0]
+
+    def x_original(xp):
+        return os.path.join(xp, jload(os.path.join(xp, "extra.json"))["originalFiles"][0])
+
+    def package_only(r):
+        xp = featurette(r)
+        os.unlink(x_original(xp))
+        change(os.path.join(xp, "extra.json"), originalFiles=[])
+        relist(xp, [n for n in listing(xp) if os.path.isfile(os.path.join(xp, n))])
+
+    def nothing_kept(r):
+        xp = bts(r)
+        os.unlink(x_original(xp))
+        change(os.path.join(xp, "extra.json"), originalFiles=[])
+        write_sums(xp, ["extra.json"])
+
+    def recorded_as(r, **fields):
+        xp = featurette(r)
+        change(os.path.join(xp, "package.json"),
+               checksums=dict(jload(os.path.join(xp, "package.json"))["checksums"], **fields))
+        close(xp)
+
+    case("an extra's original that is not there", False, lambda r: os.unlink(x_original(bts(r))),
+         "an original extra.json names is missing")
+    case("an extra's original whose bytes changed", False, lambda r: open(x_original(featurette(r)), "ab").write(b"x"),
+         "On Location in Amsterdam.mkv: does not match its checksum", ("--checksums",))
+    case("a file of an extra that its checksums do not list", False,
+         lambda r: open(os.path.join(featurette(r), "hls", "v0", "seg-0001.m4s"), "wb").write(b"x"),
+         "is a file of this extra that checksums.sha256 does not list")
+    case("an extra's checksums listing a file that is not there", False,
+         lambda r: os.unlink(os.path.join(featurette(r), "subs", "0.vtt")), "lists subs/0.vtt, which is not a file of this extra")
+    case("an extra record changed after it was written", False,
+         lambda r: change(os.path.join(bts(r), "extra.json"), title="Another"), "extra.json: does not match the checksum")
+    case("an extra's checksums listing its package record", False,
+         lambda r: relist(featurette(r), listing(featurette(r)) + ["package.json"]), "lists package.json, a link of the chain")
+    case("an extra's checksums file that is gone", False,
+         lambda r: os.unlink(os.path.join(featurette(r), "checksums.sha256")), "the checksums file of a finished extra is missing")
+    case("an extra's checksums file that is not the one package.json recorded", False,
+         lambda r: open(os.path.join(featurette(r), "checksums.sha256"), "a").write(f"{'0' * 64}  hls/extra\n"),
+         "does not match the sha256 package.json wrote down")
+    case("an extra's checksums counted otherwise than they list", False,
+         lambda r: recorded_as(r, files=jload(os.path.join(featurette(r), "package.json"))["checksums"]["files"] + 1),
+         "files, package.json says")
+    case("an extra's checksums total that leaves out its original", False,
+         lambda r: recorded_as(r, bytes=jload(os.path.join(featurette(r), "package.json"))["checksums"]["bytes"]
+                               - os.path.getsize(x_original(featurette(r)))), "the files it lists total")
+    case("an extra's package without its .complete marker", False,
+         lambda r: os.unlink(os.path.join(featurette(r), ".complete")), "only package.json")
+    case("an extra's package record changed after it completed", False,
+         lambda r: change(os.path.join(featurette(r), "package.json"), packagedBy="someone else"),
+         "does not name this package.json")
+    case("an extra's rendition folder that is gone", False,
+         lambda r: shutil.rmtree(os.path.join(featurette(r), "hls", "a0")), "rendition folder hls/a0 is missing")
+    case("an extra with neither an original nor a package", False, nothing_kept, "holds neither an original nor a package")
+    case("extras in an episode", False,
+         lambda r: os.makedirs(os.path.join(glob.glob(os.path.join(r, "series", "*", "*", "episodes", "*"))[0], "extras")),
+         "an episode has no extras")
+    case("a file among the extra folders", False,
+         lambda r: open(os.path.join(os.path.dirname(bts(r)), "loose.json"), "w").write("{}"), "not an extras/<extraId>/ folder")
+    case("an extra that never finished, as a note", True, lambda r: os.unlink(os.path.join(bts(r), "checksums.sha256")),
+         "an extra that never finished")
+    case("an extra whose package never finished, as a note for the sweep", True,
+         lambda r: [os.unlink(os.path.join(featurette(r), n)) for n in (".complete", "package.json", "checksums.sha256")],
+         "an extra whose package never finished")
+    case("an extra kept only as its package", True, package_only, "OK", ("--checksums",))
+
 
 def rename_image(d):
     meta = jload(os.path.join(d, "metadata.json"))

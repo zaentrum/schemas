@@ -29,6 +29,12 @@ What it checks, for every item folder:
   * every image in metadata/ is named by the hash of its own content, has the recorded size, and is
     listed exactly once, with nothing unlisted beside it — and the same for the images in a person's
     folder under people/, beside the person.json that lists them;
+  * every extras/<extraId>/ folder, under a movie or a series and never an episode, is finished or
+    says it is not: a packaged extra has its .complete, which names its package.json, whose
+    rendition folders, subtitles and trickplay are there; one that keeps only its original has its
+    checksums.sha256. Either way the checksums list exactly extra.json, the originals it names and
+    every file of its package, never a link of the chain above them, with extra.json's digest
+    always and every other with --checksums; an extra that never finished is a note;
   * no file is a hard link shared with another path, because a library of links is not portable.
 
 Projections — metadata.json and person.json — carry no checksums: they are replaced whole, and an
@@ -42,6 +48,7 @@ import argparse, hashlib, json, os, re, sys
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
+EXTRA_DIRS = ("hls", "subs", "trickplay")
 EXT_TYPE = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 IMAGE_NAME = re.compile(r"^([0-9a-f]{64})\.(jpg|png|webp)$")
 SUMS = "checksums.sha256"
@@ -77,11 +84,11 @@ def qh1(p):
     return "sha256:" + h.hexdigest()
 
 
-def package_files(vp):
+def package_files(vp, folders=PACKAGE_DIRS):
     """Every file of the package in a version folder, relative to it. The records, the chain above
     them and the original beside them are not part of the package."""
     out = []
-    for d in PACKAGE_DIRS:
+    for d in folders:
         for root, dirs, files in os.walk(os.path.join(vp, d)):
             dirs[:] = sorted(x for x in dirs if not OS_ARTEFACTS.match(x))
             out += [os.path.relpath(os.path.join(root, f), vp) for f in sorted(files) if not OS_ARTEFACTS.match(f)]
@@ -108,7 +115,7 @@ class Check:
         self.problems = []
         self.notes = []
         self.counts = {"items": 0, "people": 0, "versions": 0, "packages": 0, "originals": 0, "deleted": 0,
-                       "images": 0, "files": 0, "bytes": 0}
+                       "images": 0, "extras": 0, "files": 0, "bytes": 0}
 
     def err(self, where, msg):
         self.problems.append(f"{where}: {msg}")
@@ -142,7 +149,7 @@ class Check:
                 self.err(f, f"does not match the checksum {SUMS} recorded for it: changed after it was written")
 
     # -------------------------------------------------- one item
-    def item(self, d):
+    def item(self, d, kind):
         item = self.load(os.path.join(d, "item.json"))
         if item is None:
             return
@@ -160,6 +167,7 @@ class Check:
             if name in removed:
                 continue
             self.version(vp, name, sources, events)
+        self.extras(d, kind)
         self.hard_links(d)
 
     def events(self, d):
@@ -311,19 +319,20 @@ class Check:
         if has_package:
             self.package(vp, self.load(os.path.join(vp, "package.json")), marker)
 
-    def package(self, vp, pkg, marker):
-        if pkg is None:
-            return
-        self.counts["packages"] += 1
-        if marker:
-            with open(os.path.join(vp, ".complete"), "rb") as f:
-                body = f.read().decode("utf-8", "replace").strip()
-            if not COMPLETE.match(body):
-                self.err(os.path.join(vp, ".complete"), f"holds {body[:40]!r}, not sha256:<hex> of package.json, "
-                                                        f"the head of the chain that covers this version ({UPGRADE})")
-            elif body != sha_file(os.path.join(vp, "package.json")):
-                self.err(os.path.join(vp, ".complete"),
-                         "does not name this package.json: package.json changed after the package completed")
+    def head(self, vp, what="version"):
+        """.complete, the head of the chain: sha256:<hex> of the package.json beside it."""
+        with open(os.path.join(vp, ".complete"), "rb") as f:
+            body = f.read().decode("utf-8", "replace").strip()
+        if not COMPLETE.match(body):
+            self.err(os.path.join(vp, ".complete"), f"holds {body[:40]!r}, not sha256:<hex> of package.json, "
+                                                    f"the head of the chain that covers this {what}"
+                                                    + (f" ({UPGRADE})" if what == "version" else ""))
+        elif body != sha_file(os.path.join(vp, "package.json")):
+            self.err(os.path.join(vp, ".complete"),
+                     "does not name this package.json: package.json changed after the package completed")
+
+    def playable(self, vp, pkg):
+        """Every rendition folder, subtitle, trickplay and trailer the package in vp names is there."""
         ren = pkg.get("renditions") or {}
         for r in (ren.get("video") or []) + (ren.get("audio") or []):
             if not os.path.isdir(os.path.join(vp, r.get("dir") or "")):
@@ -337,6 +346,14 @@ class Check:
         for t in pkg.get("trailers") or []:
             if not os.path.isfile(os.path.join(vp, t.get("manifestPath") or "")):
                 self.err(vp, f"trailer {t.get('manifestPath')} is missing")
+
+    def package(self, vp, pkg, marker):
+        if pkg is None:
+            return
+        self.counts["packages"] += 1
+        if marker:
+            self.head(vp)
+        self.playable(vp, pkg)
         cs = pkg.get("checksums") or {}
         f = os.path.join(vp, cs.get("file") or "checksums.sha256")
         if not os.path.isfile(f):
@@ -373,6 +390,95 @@ class Check:
                 if sha_file(os.path.join(vp, rel)).split(":", 1)[1] != listed[rel]:
                     self.err(os.path.join(vp, rel), "does not match its checksum")
 
+    # -------------------------------------------------- bonus material
+    def extras(self, d, kind):
+        """extras/<extraId>/ beside a movie's versions or a series' episodes; an episode has none."""
+        base = os.path.join(d, "extras")
+        if not os.path.isdir(base):
+            return
+        if kind == "episode":
+            self.err(base, "an episode has no extras: bonus material belongs to its series")
+            return
+        for name in listdir(base):
+            xp = os.path.join(base, name)
+            if not os.path.isdir(xp) or not UUID_RE.match(name):
+                self.err(xp, "not an extras/<extraId>/ folder")
+                continue
+            self.extra(xp)
+
+    def extra(self, xp):
+        """One extra: finished — by its .complete when it has a package, by its checksums file when it
+        keeps only its original — and every file it holds covered by those checksums."""
+        x = self.load(os.path.join(xp, "extra.json"))
+        if x is None:
+            return
+        self.counts["extras"] += 1
+        originals = [n for n in x.get("originalFiles") or [] if isinstance(n, str)]
+        has_package = os.path.isfile(os.path.join(xp, "package.json"))
+        marker = os.path.isfile(os.path.join(xp, ".complete"))
+        if has_package != marker:
+            self.err(xp, "a finished package is package.json and .complete together, and here only "
+                         + ("package.json" if has_package else ".complete") + " is there")
+            return
+        pkg = None
+        if marker:
+            pkg = self.load(os.path.join(xp, "package.json"))
+            if pkg is None:
+                return
+            self.head(xp, "extra")
+            self.playable(xp, pkg)
+        elif any(os.path.exists(os.path.join(xp, n)) for n in EXTRA_DIRS):
+            self.notes.append(f"{xp}: an extra whose package never finished: no .complete beside it; "
+                              f"library-v2-sweep.py collects it once it is older than the grace period")
+            return
+        elif not os.path.isfile(os.path.join(xp, SUMS)):
+            self.notes.append(f"{xp}: an extra that never finished: no checksums.sha256 beside it")
+            return
+        elif not originals:
+            self.err(xp, "an extra that holds neither an original nor a package")
+        self.extra_covered(xp, originals, None if pkg is None else (pkg.get("checksums") or {}))
+
+    def extra_covered(self, xp, originals, cs):
+        """checksums.sha256 lists exactly extra.json, the originals and every file of the package —
+        never itself, package.json or .complete — with the count and size package.json recorded."""
+        f = os.path.join(xp, SUMS)
+        if not os.path.isfile(f):
+            self.err(f, "the checksums file of a finished extra is missing")
+            return
+        if cs is not None and cs.get("sha256") and sha_file(f) != cs["sha256"]:
+            self.err(f, "the checksums file does not match the sha256 package.json wrote down")
+        listed, bad = read_sums(f)
+        for line in bad[:3]:
+            self.err(f, f"not a sha256sum line: {line[:80]!r}")
+        for name in CHAIN:
+            if name in listed:
+                self.err(f, f"lists {name}, a link of the chain above it: each link holds the hash of the one below")
+        xj = os.path.join(xp, "extra.json")
+        if "extra.json" in listed and sha_file(xj).split(":", 1)[1] != listed["extra.json"]:
+            self.err(xj, f"does not match the checksum {SUMS} recorded for it: changed after it was written")
+        for name in originals:
+            if not os.path.isfile(os.path.join(xp, name)):
+                self.err(os.path.join(xp, name), "an original extra.json names is missing")
+        on_disk = sorted([n for n in ["extra.json", *originals] if os.path.isfile(os.path.join(xp, n))]
+                         + package_files(xp, EXTRA_DIRS))
+        for rel in sorted(set(on_disk) - set(listed)):
+            self.err(os.path.join(xp, rel), "is a file of this extra that checksums.sha256 does not list")
+        for rel in sorted(set(listed) - set(on_disk) - set(CHAIN) - set(originals)):
+            self.err(f, f"lists {rel}, which is not a file of this extra")
+        present = [rel for rel in listed if rel in set(on_disk)]
+        total = sum(os.path.getsize(os.path.join(xp, rel)) for rel in present)
+        self.counts["files"] += len(present)
+        self.counts["bytes"] += total
+        if cs is not None:
+            if cs.get("files") is not None and len(listed) != cs["files"]:
+                self.err(f, f"lists {len(listed)} files, package.json says {cs['files']}")
+            if len(present) == len(listed) and cs.get("bytes") is not None and total != cs["bytes"]:
+                self.err(f, f"the files it lists total {total} bytes, package.json says {cs['bytes']}")
+        if self.hash_everything:
+            for rel in present:
+                if rel != "extra.json" and sha_file(os.path.join(xp, rel)).split(":", 1)[1] != listed[rel]:
+                    self.err(os.path.join(xp, rel), "does not match its checksum")
+
     def hard_links(self, d):
         """A library is portable only when its files are its own: a hard link ties one to another
         path, where something else can change or delete it."""
@@ -404,12 +510,12 @@ class Check:
                     d = os.path.join(sd, iid)
                     if not os.path.isdir(d):
                         continue
-                    self.item(d)
+                    self.item(d, "movie" if category == "movies" else "series")
                     found += 1
                     ed = os.path.join(d, "episodes")
                     for eid in (listdir(ed) if os.path.isdir(ed) else []):
                         if os.path.isdir(os.path.join(ed, eid)):
-                            self.item(os.path.join(ed, eid))
+                            self.item(os.path.join(ed, eid), "episode")
                             found += 1
         base = os.path.join(root, "people")
         for shard in (listdir(base) if os.path.isdir(base) else []):
