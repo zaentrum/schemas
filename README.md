@@ -204,10 +204,11 @@ any more and no `rev`, `updatedAt` or `review` anywhere. A file is either a reco
 that cannot change — `item.json`, `sources/<id>/source.json`, `versions/<id>/version.json`,
 `versions/<id>/package.json`, `events/<…>/event.json` — written once when the thing it describes is
 made and never touched again, or a projection of the database (`metadata.json`, and `person.json` for
-a person), replaced whole by the service that owns it. **A fact about the bytes is a record; a decision the database holds is a projection**, so
-what an original contained and what a package lost are written once, while which version plays by
-default, what a viewer's version picker says, how far to trust the reference ids and how the
-episodes are ordered live in `metadata.json` under `library`. Nothing is merged, so there is no
+a person), replaced whole by the service that owns it. **A fact about the bytes is a record; a
+decision the database holds is a projection**, so what an original contained and what a package
+lost are written once, while which version plays by default, what a viewer's version picker says,
+how far to trust the reference ids and how the episodes are ordered live in `metadata.json` under
+`library`. Nothing is merged, so there is no
 conflict to resolve. The few facts that arise later get their own folder under `events/` instead of
 a rewrite: an original deleted, a version removed, a package superseded. Every version is a folder, so
 a re-package is a new folder rather than an edit, and a record always sits next to the bytes it
@@ -331,10 +332,10 @@ python tools/make-library-v2-examples.py                      # regenerate libra
 
 ### Writing and reading a tree
 
-These tools put the record on storage, read it back and keep it. They are plain standard-library Python 3.11
-and need no network, so they run where the share is mounted — piped into a pod if that is the only
-place it is reachable (`oc exec -i deploy/packager -- python3 - <args> < tool.py`). The database
-export they read is produced on the client side, so nothing needs a driver or a credential.
+These tools put the record on storage, read it back and keep it. They are plain standard-library
+Python 3.11 and need no network, so they run where the share is mounted — piped into a pod if that
+is the only place it is reachable (`oc exec -i deploy/packager -- python3 - <args> < tool.py`). The
+database export they read is produced on the client side, so nothing needs a driver or a credential.
 
 ```sh
 # a catalog's rows, its package store and its originals become item folders, and its people folders
