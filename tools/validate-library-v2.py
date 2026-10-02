@@ -6,15 +6,15 @@ Usage:
 
 ROOT is a folder holding movies/, series/ and people/. In v2 the database is the working copy and
 this tree is the record that can rebuild it: every file is either written once (item, source,
-version, package, event) or replaced whole by the one service that owns it (metadata, person).
-Nothing here is merged, so the rules below are about records agreeing with each other and with the
-bytes beside them, never about a document being up to date.
+version, package, event, extra) or replaced whole by the one service that owns it (metadata,
+person). Nothing here is merged, so the rules below are about records agreeing with each other and
+with the bytes beside them, never about a document being up to date.
 
   layout       only movies/, series/ and people/ at the root; shard folders of two characters; itemId
                and personId equal the folder name and its shard; an item folder holds only item.json,
-               checksums.sha256, metadata.json, metadata/, sources/, versions/, events/ (a series:
-               episodes/ instead of sources/ and versions/) — so no media can sit in the item folder;
-               every source and every event is a folder of its own
+               checksums.sha256, metadata.json, metadata/, sources/, versions/, events/, extras/ (a
+               series: episodes/ instead of sources/ and versions/; an episode: no extras/) — so no
+               media can sit in the item folder; every source and every event is a folder of its own
   covered      every write-once folder proves its records: an item folder's checksums.sha256 lists
                exactly item.json, a source folder's lists exactly source.json, its probe and its
                sidecars, an event folder's exactly event.json, and each digest matches the file; a
@@ -46,14 +46,23 @@ bytes beside them, never about a document being up to date.
                deletion gate — the essence of the version's sources minus that of its package,
                computed here because no record holds it; a package-superseded event names a
                successor that exists in another version folder
+  extras       bonus material sits in extras/<extraId>/ inside its movie or series, never an
+               episode; each folder is named by its extraId and holds extra.json, the originals it
+               names and/or a package (hls/ subs/ trickplay/); its checksums.sha256 lists extra.json
+               and every file beside it, the originals included, and never itself, package.json or
+               .complete; a packaged extra closes the chain a version does and carries no trailers,
+               one that keeps only its original is finished by its checksums file, and one that never
+               finished is a note; only a series' extra names a season, and only one the series'
+               metadata lists; library.extras names extras that are there
   checksums    the checksums file matches its recorded hash and file count
   --check-media  no file under an item folder is a hard link shared with another path; every
                original a version names is there with its size and qh1, unless an original-deleted
                event covers it — in which case it must NOT be there; every rendition folder,
-               subtitle and trickplay sheet the package names exists and the cues cover the
-               duration; checksums.sha256 lists exactly version.json and the package's files, with
-               their total size
-  --check-checksums  also hash every package file (implies --check-media)
+               subtitle and trickplay sheet a package names exists and the cues cover the duration;
+               checksums.sha256 lists exactly version.json and the package's files, with their total
+               size, and an extra's lists files of that total
+  --check-checksums  also hash every package file and every file an extra's checksums list
+               (implies --check-media)
 
 The schemas are loaded from the library/v2 folder next to this tool by default; pass
 --schemas https://zaentrum.github.io/schemas/library/v2 to use the published copies.
@@ -65,17 +74,20 @@ from jsonschema.exceptions import best_match
 from referencing import Registry, Resource
 
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "library", "v2")
-NAMES = ["defs", "item", "metadata", "person", "source", "version", "package", "event"]
-DOCUMENTS = ["item", "metadata", "person", "source", "version", "package", "event"]
+NAMES = ["defs", "item", "metadata", "person", "source", "version", "package", "event", "extra"]
+DOCUMENTS = ["item", "metadata", "person", "source", "version", "package", "event", "extra"]
 BASE = "https://zaentrum.github.io/schemas/library/v2/"
 
 CATEGORIES = (("movies", "movie"), ("series", "series"))
 ROOT_ENTRIES = {"movies", "series", "people"}
 SUMS = "checksums.sha256"
-ITEM_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "sources", "versions", "events"}
-SERIES_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "episodes", "events"}
+ITEM_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "sources", "versions", "events", "extras"}
+SERIES_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "episodes", "events", "extras"}
 VERSION_ENTRIES = {"version.json", "package.json", SUMS, ".complete", "hls", "subs", "trickplay", "trailers"}
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
+# An extra's package is the folders of a version's, without trailers: a trailer of its own is an extra.
+EXTRA_DIRS = ("hls", "subs", "trickplay")
+EXTRA_ENTRIES = {"extra.json", "package.json", SUMS, ".complete", *EXTRA_DIRS}
 # Each link of a version's chain holds the hash of the next one down, so none of them can be listed by
 # the checksums file it sits above.
 CHAIN = (".complete", "package.json", SUMS)
@@ -216,16 +228,23 @@ def read_sums(path):
     return entries, bad
 
 
-def package_files(vp):
+def package_files(vp, folders=PACKAGE_DIRS):
     """Every file of the package in a version folder, relative to it: the rendition, subtitle,
     trickplay and trailer folders. The records, the chain above them and the original beside them are
     not part of the package."""
     out = []
-    for d in PACKAGE_DIRS:
+    for d in folders:
         for root, dirs, files in os.walk(os.path.join(vp, d)):
             dirs[:] = sorted(x for x in dirs if not OS_ARTEFACTS.match(x))
             out += [os.path.relpath(os.path.join(root, f), vp) for f in sorted(files) if not OS_ARTEFACTS.match(f)]
     return sorted(out)
+
+
+def extra_files(xp, originals):
+    """Every file an extra's checksums must list, relative to its folder: extra.json, the originals
+    that are there and every file of its package. Only the chain above them is left out."""
+    named = [n for n in ["extra.json", *originals] if os.path.isfile(os.path.join(xp, n))]
+    return sorted(named + package_files(xp, EXTRA_DIRS))
 
 
 def walk_keys(o):
@@ -304,7 +323,7 @@ class Checker:
         self.notes = []
         self.root_dir = None
         self.counts = {"movie": 0, "series": 0, "episode": 0, "people": 0, "versions": 0, "packages": 0,
-                       "sources": 0, "images": 0, "events": 0}
+                       "sources": 0, "images": 0, "events": 0, "extras": 0}
 
     def err(self, where, msg):
         self.errors.append(f"{where}: {msg}")
@@ -391,9 +410,12 @@ class Checker:
         self.counts[expect_type] += 1
         self.covered(d, {"item.json"}, "item.json")
 
-        allowed = set(SERIES_ENTRIES if expect_type == "series" else ITEM_ENTRIES)
+        allowed = SERIES_ENTRIES if expect_type == "series" else ITEM_ENTRIES
         for name in listdir(d):
-            if name not in allowed:
+            if name == "extras" and expect_type == "episode":
+                self.err(os.path.join(d, name), "an episode has no extras: bonus material belongs to its series, "
+                                                "in the series' own extras/ folder, where it may name its season")
+            elif name not in allowed:
                 self.err(os.path.join(d, name), f"unexpected entry in a {expect_type} folder"
                                                 f"{'; media belongs in versions/<versionId>/' if expect_type != 'series' else ''}")
         events = self.events(d)
@@ -402,9 +424,11 @@ class Checker:
         if expect_type != "series":
             sources = self.sources(d)
             versions, packages = self.versions(d, sources, events, removed)
-        meta = self.metadata(d, item, versions, removed)
+        extras = self.extras(d) if expect_type != "episode" else {}
+        meta = self.metadata(d, item, versions, removed, extras)
         if not valid:
             return  # the rules that span files assume the documented shape
+        self.extra_seasons(d, expect_type, extras, meta)
 
         ids = item.get("externalIds") or {}
         if expect_type == "movie" and set(ids) & {"tmdbTv", "tmdbSeason", "tmdbEpisode"}:
@@ -423,7 +447,7 @@ class Checker:
             self.hard_links(d)
 
     # ------------------------------------------------------------ metadata.json + metadata/
-    def metadata(self, d, item, versions=(), removed=()):
+    def metadata(self, d, item, versions=(), removed=(), extras=()):
         where = os.path.join(d, "metadata.json")
         meta, valid = self.document("metadata", where)
         if meta is None:
@@ -450,7 +474,7 @@ class Checker:
             for name in listdir(md):
                 if name not in listed:
                     self.unlisted(os.path.join(md, name), "metadata.json")
-        self.projected_decisions(where, meta, versions, removed)
+        self.projected_decisions(where, meta, versions, removed, extras)
         self.credits(where, meta)
         return meta
 
@@ -511,9 +535,9 @@ class Checker:
                 self.note(where, f"credit {c['name']!r} ({c['role']}) names person {pid}, who has no "
                                  f"people/{pid[:2]}/{pid}/person.json yet")
 
-    def projected_decisions(self, where, meta, versions, removed):
+    def projected_decisions(self, where, meta, versions, removed, extras=()):
         """metadata.library holds what the database decided about this item's storage, so every
-        version it names has to be one that is really there."""
+        version and every extra it names has to be one that is really there."""
         lib = meta.get("library") or {}
         primary = lib.get("primaryVersionId")
         if primary and primary not in versions:
@@ -523,6 +547,9 @@ class Checker:
             if vid not in versions:
                 self.err(where, f"library.versionLabels names {vid}, which is "
                                 + ("a removed version" if vid in removed else "no version folder"))
+        for xid in sorted(lib.get("extras") or {}):
+            if xid not in extras:
+                self.err(where, f"library.extras names {xid}, which is no extras/<extraId>/ folder of this item")
 
     # ------------------------------------------------------------ events/
     def events(self, d):
@@ -708,13 +735,15 @@ class Checker:
             self.media(vp, v, pkg, sources, gone, whole)
         return v, pkg
 
-    def package(self, vp, v, pkg):
+    def package(self, vp, v, pkg, what="version"):
+        """A package and the record it was made for, v: a version's or an extra's."""
         where = os.path.join(vp, "package.json")
         if pkg["fidelity"]["lossless"] != (not pkg["fidelity"]["losses"]):
             self.err(where, "fidelity.lossless must be true exactly when losses is empty")
         if (pkg["role"] == "canonical") != (not v["originalFiles"]):
-            self.err(where, "role must be 'canonical' exactly when the version keeps no original "
-                            "(version.json originalFiles is empty); a deletion afterwards is an event, not a rewrite")
+            self.err(where, f"role must be 'canonical' exactly when the {what} keeps no original "
+                            f"({what}.json originalFiles is empty)"
+                            + ("; a deletion afterwards is an event, not a rewrite" if what == "version" else ""))
         audio = pkg["renditions"]["audio"]
         video = pkg["renditions"]["video"]
         subs = pkg.get("subtitles") or []
@@ -746,21 +775,20 @@ class Checker:
         elif len(read_checksums(f)) != cs["files"]:
             self.err(where, f"checksums file lists {len(read_checksums(f))} files, the record says {cs['files']}")
 
-    def chain(self, vp):
-        """.complete -> package.json -> checksums.sha256 -> version.json and every package file. The
-        records are checked always; the package files, which can be many and large, with
-        --check-media and --check-checksums."""
+    def head(self, vp, what="version"):
+        """.complete, the head of the chain: sha256:<hex> of the package.json beside it, and nothing else."""
         mark = os.path.join(vp, ".complete")
         with open(mark, "rb") as f:
             body = f.read().decode("utf-8", "replace").strip()
         if not COMPLETE.match(body):
             self.err(mark, f"holds {body[:40]!r}, not sha256:<hex> of package.json, the head of the chain "
-                           f"that covers this version ({UPGRADE})")
+                           f"that covers this {what}" + (f" ({UPGRADE})" if what == "version" else ""))
         elif body != sha_file(os.path.join(vp, "package.json")):
             self.err(mark, "does not name this package.json: package.json changed after the package completed")
-        sums = os.path.join(vp, SUMS)
-        if not os.path.isfile(sums):
-            return  # package() says so
+
+    def chain_links(self, sums):
+        """The sha256sum file sums as {name: digest}, with what is wrong with it said: a line that is
+        not one, and a link of the chain listed below itself."""
         listed, bad = read_sums(sums)
         for line in bad[:3]:
             self.err(sums, f"not a sha256sum line: {line[:80]!r}")
@@ -769,6 +797,17 @@ class Checker:
         for name in CHAIN:
             if name in listed:
                 self.err(sums, f"lists {name}, {why[name]}: a link of the chain cannot be listed below itself")
+        return listed
+
+    def chain(self, vp):
+        """.complete -> package.json -> checksums.sha256 -> version.json and every package file. The
+        records are checked always; the package files, which can be many and large, with
+        --check-media and --check-checksums."""
+        self.head(vp)
+        sums = os.path.join(vp, SUMS)
+        if not os.path.isfile(sums):
+            return  # package() says so
+        listed = self.chain_links(sums)
         vj = os.path.join(vp, "version.json")
         if "version.json" not in listed:
             self.err(sums, f"does not list version.json, the record its package was made for ({UPGRADE})")
@@ -795,22 +834,7 @@ class Checker:
         if pkg is None:
             return
         where = os.path.join(vp, "package.json")
-        ren = pkg["renditions"]
-        if not ren["video"]:
-            self.err(where, "a package needs at least one video rendition")
-        for r in ren["video"] + ren["audio"]:
-            if not os.path.isdir(os.path.join(vp, r["dir"])):
-                self.err(where, f"rendition dir {r['dir']} missing")
-        for sub in pkg.get("subtitles") or []:
-            if not os.path.isfile(os.path.join(vp, sub["path"])):
-                self.err(where, f"subtitle {sub['path']} missing")
-        tp = pkg.get("trickplay")
-        if tp:
-            vtt = os.path.join(vp, tp["vttPath"])
-            if not os.path.isfile(vtt):
-                self.err(where, f"trickplay {tp['vttPath']} missing")
-            else:
-                self.trickplay(where, tp, vtt, pkg["durationMs"])
+        self.playable(vp, pkg)
         cs = pkg["checksums"]
         if os.path.isfile(os.path.join(vp, cs["file"])):
             listed = read_checksums(os.path.join(vp, cs["file"]))
@@ -827,6 +851,27 @@ class Checker:
                 for rel in present:
                     if sha_file(os.path.join(vp, rel)).split(":", 1)[1] != listed[rel]:
                         self.err(where, f"{rel} does not match its checksum")
+
+    def playable(self, vp, pkg):
+        """Every rendition folder, subtitle and trickplay sheet the package in vp names is there, and
+        the trickplay cues cover its duration."""
+        where = os.path.join(vp, "package.json")
+        ren = pkg["renditions"]
+        if not ren["video"]:
+            self.err(where, "a package needs at least one video rendition")
+        for r in ren["video"] + ren["audio"]:
+            if not os.path.isdir(os.path.join(vp, r["dir"])):
+                self.err(where, f"rendition dir {r['dir']} missing")
+        for sub in pkg.get("subtitles") or []:
+            if not os.path.isfile(os.path.join(vp, sub["path"])):
+                self.err(where, f"subtitle {sub['path']} missing")
+        tp = pkg.get("trickplay")
+        if tp:
+            vtt = os.path.join(vp, tp["vttPath"])
+            if not os.path.isfile(vtt):
+                self.err(where, f"trickplay {tp['vttPath']} missing")
+            else:
+                self.trickplay(where, tp, vtt, pkg["durationMs"])
 
     def trickplay(self, where, tp, vtt, duration_ms):
         """Every sprite sheet the VTT names exists, and the cues cover the whole duration."""
@@ -857,6 +902,128 @@ class Checker:
         if linked:
             self.err(d, f"{len(linked)} file(s) are hard links shared with another path, e.g. {linked[0]}; "
                         f"the library must hold independent files")
+
+    # ------------------------------------------------------------ extras/
+    def extras(self, d):
+        """extras/<extraId>/, each a write-once folder: extra.json, the originals it keeps and/or a
+        package, and the checksums written with them. Returns {extraId: the record, or None when it
+        does not hold to its schema} for every extra folder that holds an extra.json."""
+        base = os.path.join(d, "extras")
+        found = {}
+        if not os.path.isdir(base):
+            return found
+        for name in listdir(base):
+            p = os.path.join(base, name)
+            if not os.path.isdir(p):
+                self.err(p, "every extra is a folder under extras/: extras/<extraId>/ holding extra.json")
+                continue
+            if not UUID.match(name):
+                self.err(p, "an extra folder is named by its extraId")
+                continue
+            xp = os.path.join(p, "extra.json")
+            if not os.path.isfile(xp):
+                self.err(p, "an extra folder without its extra.json record")
+                continue
+            x, valid = self.document("extra", xp)
+            found[name] = x if valid else None
+            if x is None or not valid:
+                continue
+            self.counts["extras"] += 1
+            if x["extraId"] != name:
+                self.err(xp, f"extraId {x['extraId']} does not match folder {name}")
+            self.extra(p, x)
+        return found
+
+    def extra(self, xp, x):
+        """What one extra folder holds, whether it finished, and the checksums that cover it. A
+        packaged extra is finished by its .complete, one that keeps only its original by its checksums
+        file, written last; anything else never finished, and is a note, as a package that never
+        finished is."""
+        for name in listdir(xp):
+            if name not in EXTRA_ENTRIES and name not in x["originalFiles"]:
+                self.err(os.path.join(xp, name), "not a record, the package or an original this extra names")
+        marker = os.path.isfile(os.path.join(xp, ".complete"))
+        has_package = os.path.isfile(os.path.join(xp, "package.json"))
+        if has_package != marker:
+            self.err(xp, "package.json exists exactly when .complete does, and here only "
+                         + ("package.json" if has_package else ".complete") + " is present")
+            return
+        pkg = None
+        if not marker:
+            if any(os.path.exists(os.path.join(xp, n)) for n in EXTRA_DIRS):
+                self.note(xp, f"an extra whose package never finished: no .complete beside it; {SWEEP}")
+                return
+            if not os.path.isfile(os.path.join(xp, SUMS)):
+                self.note(xp, "an extra that never finished: no checksums.sha256 beside it, so neither the "
+                              "database nor a rebuild uses it until the writer that took it in finishes it")
+                return
+            if not x["originalFiles"]:
+                self.err(os.path.join(xp, "extra.json"), "an extra that holds neither an original nor a package")
+        else:
+            pkg, ok = self.document("package", os.path.join(xp, "package.json"))
+            pkg = pkg if ok else None
+            if pkg is not None:
+                self.package(xp, x, pkg, what="extra")
+                if pkg.get("trailers"):
+                    self.err(os.path.join(xp, "package.json"), "an extra's package lists no trailers: a trailer "
+                                                               "that is a file of its own is an extra of kind trailer")
+            self.head(xp, "extra")
+        self.extra_covered(xp, x)
+        if self.check_media and pkg is not None:
+            self.playable(xp, pkg)
+            self.extra_total(xp, pkg)
+
+    def extra_covered(self, xp, x):
+        """checksums.sha256 lists extra.json and every file beside it — the originals and every file of
+        the package — and nothing else: never itself, package.json or .complete, the links above it.
+        Listing is a walk of the folder; of the digests, extra.json's is checked always and the rest,
+        which can be large, with --check-checksums."""
+        sums = os.path.join(xp, SUMS)
+        if not os.path.isfile(sums):
+            return  # package() says so; an extra without a package and without checksums never finished
+        listed = self.chain_links(sums)
+        for name in x["originalFiles"]:
+            if not os.path.isfile(os.path.join(xp, name)):
+                self.err(os.path.join(xp, name), "an original extra.json names is not here: an extra keeps its "
+                                                 "originals for as long as it exists")
+        present = extra_files(xp, x["originalFiles"])
+        for rel in sorted(set(present) - set(listed)):
+            self.err(sums, f"does not list {rel}: an extra's checksums cover extra.json and every file beside it")
+        for rel in sorted(set(listed) - set(present) - set(CHAIN) - set(x["originalFiles"])):
+            self.err(sums, f"lists {rel}, which is not a file of this extra")
+        xj = os.path.join(xp, "extra.json")
+        if "extra.json" in listed and sha_file(xj).split(":", 1)[1] != listed["extra.json"]:
+            self.err(xj, f"does not match the checksum {SUMS} recorded for it: changed after it was written")
+        if self.check_checksums:
+            for rel in sorted(set(present) & set(listed) - {"extra.json"}):
+                if sha_file(os.path.join(xp, rel)).split(":", 1)[1] != listed[rel]:
+                    self.err(os.path.join(xp, rel), "does not match its checksum")
+
+    def extra_total(self, xp, pkg):
+        """The files an extra's checksums list add up to the size its package record says."""
+        cs = pkg["checksums"]
+        sums = os.path.join(xp, cs["file"])
+        if not os.path.isfile(sums):
+            return
+        listed = read_checksums(sums)
+        present = [rel for rel in listed if os.path.isfile(os.path.join(xp, rel))]
+        total = sum(os.path.getsize(os.path.join(xp, rel)) for rel in present)
+        if len(present) == len(listed) and total != cs["bytes"]:
+            self.err(os.path.join(xp, "package.json"),
+                     f"the files {cs['file']} lists total {total} bytes, the record says {cs['bytes']}")
+
+    def extra_seasons(self, d, expect_type, extras, meta):
+        """A season is something only a series has, and an extra can only belong to one its projection
+        knows."""
+        seasons = {s["number"] for s in ((meta or {}).get("series") or {}).get("seasons") or []}
+        for xid, x in sorted(extras.items()):
+            if not x or "seasonNumber" not in x:
+                continue
+            where = os.path.join(d, "extras", xid, "extra.json")
+            if expect_type != "series":
+                self.err(where, f"names season {x['seasonNumber']}, but only a series' extra belongs to a season")
+            elif meta is not None and x["seasonNumber"] not in seasons:
+                self.err(where, f"season {x['seasonNumber']}, which the series' metadata.json does not list")
 
     # ------------------------------------------------------------ events against the records
     def event_subjects(self, events, sources, versions, packages, removed):
