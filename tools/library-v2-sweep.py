@@ -6,20 +6,27 @@ Usage:
 
 Deleting an item deletes its folder, a writer that dies leaves a version folder unfinished, and a
 projection that drops an image leaves the file behind — and nothing but this collects what a writer
-missed. It finds three kinds of garbage, each proved by the records and the database, never guessed:
+missed. It finds four kinds of garbage, each proved by the records and the database, never guessed:
 
   deleted item       an item folder whose id the export's deletion log names (deletedItems), that the
                      database does not hold again, and in which no record states a moment after that
                      deletion — item.json's createdAt and migratedAt, metadata.json's asOf, every
-                     source's takenAt, version's and package's createdAt and event's at, and for a series
-                     its episodes' as well; a record that states none counts with its file's time. A
-                     series goes with its episodes, so one the database still holds keeps it.
+                     source's takenAt, version's and package's createdAt, event's at and extra's
+                     createdAt, and for a series its episodes' as well; a record that states none counts
+                     with its file's time. A series goes with its episodes, so one the database still
+                     holds keeps it.
   unfinished version a version folder without .complete. The whole folder when it has no version.json
                      — nothing can have known a version that never wrote its record — or when it keeps
                      no original and nothing names it: not the item's metadata.json, not an event other
                      than version-removed, not the export (this needs --export). When it keeps an
                      original, only the unfinished package beside it: hls/ subs/ trickplay/ trailers/,
                      package.json, checksums.sha256 and their temporary files.
+  unfinished extra   an extras/<extraId>/ folder without .complete that holds a package — hls/ subs/
+                     trickplay/ or package.json — the same way: the whole folder when it has no
+                     extra.json, or keeps no original and nothing names it (not the item's
+                     metadata.json under library.extras, not the export); when it keeps an original,
+                     only the unfinished package beside it, its checksums with it. An extra that holds
+                     no package is never garbage: finished by its checksums, or its writer's to finish.
   dropped image      an image in an item's metadata/ or beside a person's person.json that the
                      projection does not list, named by the hash of its own bytes.
 
@@ -52,6 +59,10 @@ ANY_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 IMAGE_NAME = re.compile(r"^([0-9a-f]{64})\.(jpg|png|webp)$")
 PACKAGE_PARTS = ("hls", "subs", "trickplay", "trailers", "package.json", "checksums.sha256")
 RECORDS_TMP = ("version.json.tmp", "package.json.tmp", "checksums.sha256.tmp", ".complete.tmp")
+# What makes an extra a packaged one; beside them an unfinished package also leaves its checksums,
+# which list files that go with it.
+EXTRA_PARTS = ("hls", "subs", "trickplay", "package.json")
+EXTRA_TMP = ("extra.json.tmp", "package.json.tmp", "checksums.sha256.tmp", ".complete.tmp")
 QUARANTINE = "_swept"
 RECORD_MOMENTS = (
     ("item.json", ("createdAt", "provenance.migratedAt")),
@@ -62,6 +73,8 @@ RECORD_MOMENTS = (
     ("versions/*/package.json", ("createdAt",)),
     ("events/*.json", ("at",)),
     ("events/*/event.json", ("at",)),
+    ("extras/*/extra.json", ("createdAt",)),
+    ("extras/*/package.json", ("createdAt",)),
 )
 
 
@@ -205,6 +218,20 @@ class References:
             return "the export names it"
         return None
 
+    def extra_named(self, item_dir, xid):
+        """What names an extra and so keeps its folder: the item's projection, the database. No event
+        names an extra."""
+        try:
+            lib = load(os.path.join(item_dir, "metadata.json")).get("library") or {}
+            if xid in (lib.get("extras") or {}):
+                return "metadata.json names it"
+        except (OSError, ValueError, AttributeError):
+            if os.path.exists(os.path.join(item_dir, "metadata.json")):
+                return "metadata.json cannot be read, so it may name it"
+        if xid in self.mentioned:
+            return "the export names it"
+        return None
+
     def listed(self, projection):
         """The image files a projection lists, or None when it cannot be read."""
         try:
@@ -261,7 +288,7 @@ class Sweep:
                         for eid in (listdir(ed) if os.path.isdir(ed) else []):
                             e = os.path.join(ed, eid)
                             if os.path.isdir(e) and not self.deleted_item(e, eid, False):
-                                self.inside(e)
+                                self.inside(e, episode=True)
         base = os.path.join(self.root, "people")
         for shard in (listdir(base) if os.path.isdir(base) else []):
             sd = os.path.join(base, shard)
@@ -269,13 +296,21 @@ class Sweep:
                 if os.path.isdir(os.path.join(sd, pid)):
                     self.images(os.path.join(sd, pid), os.path.join(sd, pid, "person.json"), keep={"person.json"})
 
-    def inside(self, d):
+    def inside(self, d, episode=False):
         """What an item folder that stays may still hold that is garbage."""
         base = os.path.join(d, "versions")
         for name in (listdir(base) if os.path.isdir(base) else []):
             vp = os.path.join(base, name)
             if os.path.isdir(vp) and not os.path.isfile(os.path.join(vp, ".complete")):
                 self.unfinished(d, vp, name)
+        base = os.path.join(d, "extras")
+        if os.path.isdir(base) and episode:
+            self.leave(base, "an extras/ folder under an episode, which has none: the sweep cannot classify it")
+        elif os.path.isdir(base):
+            for name in listdir(base):
+                xp = os.path.join(base, name)
+                if os.path.isdir(xp) and not os.path.isfile(os.path.join(xp, ".complete")):
+                    self.unfinished_extra(d, xp, name)
         if os.path.isdir(os.path.join(d, "metadata")):
             self.images(os.path.join(d, "metadata"), os.path.join(d, "metadata.json"))
 
@@ -364,6 +399,56 @@ class Sweep:
             self.target(os.path.join(vp, n), "unfinished package",
                         f"no .complete: the package never finished beside the original {kept[0]}, which stays")
 
+    # -------------------------------------------------- (b') an extra whose package never finished
+    def unfinished_extra(self, item_dir, xp, xid):
+        """An extra without .complete is garbage only when it was packaged and the package never
+        finished — like an unfinished version. One with no package is either finished, by its
+        checksums, or a writer's to finish; the sweep removes nothing else in an extra."""
+        entries = listdir(xp)
+        if not any(n in EXTRA_PARTS for n in entries):
+            if not os.path.isfile(os.path.join(xp, "checksums.sha256")):
+                self.leave(xp, "an extra that never finished and holds no package: the sweep removes nothing "
+                               "else in an extra")
+            return
+        xj = os.path.join(xp, "extra.json")
+        originals = []
+        if os.path.isfile(xj):
+            try:
+                x = load(xj)
+                if x.get("extraId") != xid:
+                    raise ValueError("it names another extra")
+                originals = [n for n in x.get("originalFiles") or [] if isinstance(n, str)]
+            except (OSError, ValueError, AttributeError) as e:
+                self.leave(xp, f"an unfinished extra whose extra.json cannot be read ({e})")
+                return
+        known = set(EXTRA_PARTS) | set(EXTRA_TMP) | {"extra.json", "checksums.sha256"} | set(originals)
+        unknown = [n for n in entries if n not in known]
+        if unknown:
+            self.leave(xp, f"an unfinished extra holding {unknown[0]}, which the sweep cannot classify")
+            return
+        young = self.young(xp)
+        if young:
+            self.leave(xp, f"an unfinished extra written to within the grace period ({young})")
+            return
+        named = self.refs.extra_named(item_dir, xid)
+        if named:
+            self.leave(xp, f"an unfinished extra, but {named}")
+            return
+        kept = [n for n in originals if os.path.isfile(os.path.join(xp, n))]
+        if not os.path.isfile(xj):
+            self.target(xp, "unfinished extra", "no .complete and no extra.json: nothing can have known it")
+            return
+        if not kept:
+            if self.refs.export is None:
+                self.leave(xp, "an unfinished extra that wrote its record: without --export the sweep cannot tell "
+                               "whether the database knows it")
+                return
+            self.target(xp, "unfinished extra", "no .complete, no original, and nothing names it")
+            return
+        for n in [n for n in entries if n in EXTRA_PARTS or n in EXTRA_TMP or n == "checksums.sha256"]:
+            self.target(os.path.join(xp, n), "unfinished extra package",
+                        f"no .complete: the extra's package never finished beside the original {kept[0]}, which stays")
+
     # -------------------------------------------------- (c) an image a projection dropped
     def images(self, folder, projection, keep=frozenset()):
         listed = self.refs.listed(projection)
@@ -410,6 +495,12 @@ class Sweep:
                 return "its version has finished since"
             named = self.refs.version_named(item_dir, vid)
             return named
+        if t["class"] in ("unfinished extra", "unfinished extra package"):
+            i = parts.index("extras")
+            item_dir, xid = os.path.join(self.root, *parts[:i]), parts[i + 1]
+            if t["class"] == "unfinished extra package" and os.path.exists(os.path.join(item_dir, "extras", xid, ".complete")):
+                return "its extra has finished since"
+            return self.refs.extra_named(item_dir, xid)
         if t["class"] == "dropped image":
             folder = os.path.dirname(where)
             projection = os.path.join(folder, "person.json") if parts[0] == "people" else \

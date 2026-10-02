@@ -1430,6 +1430,10 @@ def test_sweep(t):
     refused("a deleted item's folder that holds a record newer than the deletion",
             lambda r, e, w: export_edit(e, lambda d: d["deletedItems"][0].update(deletedAt="2026-09-19T00:00:00Z")),
             "created again since")
+    refused("a deleted item's folder that holds an extra taken in after the deletion",
+            lambda r, e, w: [jwrite(x, dict(jload(x), createdAt="2026-10-01T08:00:00Z"))
+                             for x in glob.glob(os.path.join(w["gone"], "extras", "*", "extra.json"))],
+            "holds a record of 2026-10-01T08:00:00Z", age_after=True)
     refused("a deleted series one of whose episodes the database still holds",
             lambda r, e, w: export_edit(e, lambda d: (
                 d["deletedItems"].append({"id": next(x["id"] for x in d["items"] if x["type"] == "series"),
@@ -1572,6 +1576,149 @@ def test_sweep(t):
                  code == 1 and "could not be renamed into the quarantine" in text and os.path.isfile(where["dropped image"]), text)
     else:
         t.skip("a target that cannot be renamed is left where it is", "permissions do not bind root")
+
+
+# ---------------------------------------------------------------- sweeping an extra that never finished
+X_BESIDE = "44444444-0000-4000-8000-00000000000e"         # an extra's package that never finished beside its original
+X_RECORDED = "55555555-0000-4000-8000-00000000000e"       # a packaged extra that wrote its record and kept no original
+X_NOTHING_WROTE = "66666666-0000-4000-8000-00000000000e"  # part of an extra's package, and no record
+X_UNPACKAGED = "77777777-0000-4000-8000-00000000000e"     # an extra with no package whose writer never finished
+
+
+def extra_garbage(tmp, age=True):
+    """The examples with every kind of extra that never finished beside the movie's featurette, and
+    the export of a database that holds every item they hold. Returns the tree, the export's path and
+    where each extra is."""
+    root = os.path.join(tmp, "library")
+    shutil.copytree(EXAMPLES, root)
+    movie = glob.glob(os.path.join(root, "movies", "*", "*"))[0]
+    featurette = glob.glob(os.path.join(movie, "extras", "*"))[0]
+    record = jload(os.path.join(featurette, "extra.json"))
+    original = record["originalFiles"][0]
+
+    def copy(xid, drop, **fields):
+        xp = os.path.join(movie, "extras", xid)
+        shutil.copytree(featurette, xp)
+        for name in drop:
+            p = os.path.join(xp, name)
+            shutil.rmtree(p) if os.path.isdir(p) else os.unlink(p)
+        if os.path.isfile(os.path.join(xp, "extra.json")):
+            jwrite(os.path.join(xp, "extra.json"), dict(record, extraId=xid, **fields))
+        return xp
+
+    where = {"featurette": featurette, "bts": glob.glob(os.path.join(root, "series", "*", "*", "extras", "*"))[0],
+             "movie": movie, "original": original,
+             "beside": copy(X_BESIDE, (".complete", "package.json")),
+             "recorded": copy(X_RECORDED, (".complete", "package.json", "checksums.sha256", original), originalFiles=[]),
+             "nothing wrote": copy(X_NOTHING_WROTE, (".complete", "package.json", "checksums.sha256", original,
+                                                     "extra.json", "subs", "trickplay")),
+             "unpackaged": copy(X_UNPACKAGED, (".complete", "package.json", "checksums.sha256", "hls", "subs", "trickplay"))}
+    rows, _ = rows_of(EXAMPLES)
+    export = os.path.join(tmp, "catalog.json")
+    jwrite(export, {"exportedAt": "2026-10-01T12:00:00Z", "items": list(rows.values()), "deletedItems": []})
+    if age:
+        aged(root)
+    return root, export, where
+
+
+def test_sweep_extras(t):
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = extra_garbage(tmp)
+        expected = sorted([os.path.join(where["beside"], n) for n in ("checksums.sha256", "hls", "subs", "trickplay")]
+                          + [where["recorded"], where["nothing wrote"]])
+        before = stamps(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.eq("a dry run finds the package of every extra that never finished, and nothing else in an extra",
+             swept(text, root), expected)
+        t.ok("and says why each one is garbage",
+             "no .complete and no extra.json: nothing can have known it" in text
+             and "no .complete, no original, and nothing names it" in text
+             and "the extra's package never finished beside the original" in text, text)
+        t.ok("an extra that holds no package is left alone, finished or not, and the one that never finished is said",
+             any(line.startswith(os.path.relpath(where["unpackaged"], root)) and "holds no package" in line
+                 for line in left_alone(text)) and not any(where["featurette"] in p or where["bts"] in p
+                                                          for p in swept(text, root)), text)
+        t.ok("and the dry run changes nothing", code == 0 and stamps(root) == before, text)
+
+        code, text = run_piped(SWEEP, root, "--export", export, "--apply")
+        t.ok("--apply, piped into a pod's Python, removes exactly those", code == 0
+             and not any(os.path.lexists(e) for e in expected) and "removed 6 target(s)" in text
+             and not os.path.exists(os.path.join(root, "_swept")), text)
+        t.ok("the record and the original beside the unfinished package stay",
+             os.path.isfile(os.path.join(where["beside"], "extra.json"))
+             and os.path.isfile(os.path.join(where["beside"], where["original"])))
+        after = stamps(root)
+        t.ok("and every finished extra is exactly as it was",
+             all(after.get(k) == v for k, v in before.items()
+                 if os.path.join(root, k).startswith((where["featurette"] + os.sep, where["bts"] + os.sep))))
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("and a second sweep finds nothing", code == 0 and swept(text, root) == [], text)
+
+    def refused(name, change, phrase, what="recorded", export_too=True, age_after=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, export, where = extra_garbage(tmp)
+            change(root, export, where)
+            if age_after:
+                aged(root)
+            code, text = run(SWEEP, root, *(("--export", export) if export_too else ()))
+            t.ok(f"the sweep leaves alone {name}", code == 0 and where[what] not in swept(text, root)
+                 and any(phrase in line for line in left_alone(text)), text)
+
+    def decide(w, decision):
+        meta = os.path.join(w["movie"], "metadata.json")
+        doc = jload(meta)
+        doc["library"]["extras"][X_RECORDED] = decision
+        jwrite(meta, doc)
+
+    def mention(export):
+        doc = jload(export)
+        doc["items"][0]["playbackAssets"].append({"id": "x", "kind": "packaged", "path": f"/library/extras/{X_RECORDED}/package.json"})
+        jwrite(export, doc)
+
+    refused("an unfinished extra the projection names", lambda r, e, w: decide(w, {"hidden": True}),
+            "metadata.json names it", age_after=True)
+    refused("an unfinished extra the database names", lambda r, e, w: mention(e), "the export names it")
+    refused("an unfinished extra written to within the grace",
+            lambda r, e, w: os.utime(os.path.join(w["recorded"], "extra.json"), None), "written to within the grace period")
+    refused("an unfinished extra holding a file the sweep cannot classify",
+            lambda r, e, w: open(os.path.join(w["recorded"], "notes.txt"), "w").write("x"), "cannot classify", age_after=True)
+    refused("an unfinished extra whose record cannot be read",
+            lambda r, e, w: open(os.path.join(w["recorded"], "extra.json"), "w").write("not JSON"), "cannot be read",
+            age_after=True)
+    refused("an unfinished extra that wrote its record, without an export to say the database does not know it",
+            lambda r, e, w: None, "without --export the sweep cannot tell", export_too=False)
+    def under_episode(r, e, w):
+        w["episode's"] = os.path.join(glob.glob(os.path.join(r, "series", "*", "*", "episodes", "*"))[0], "extras",
+                                      X_NOTHING_WROTE)
+        shutil.copytree(w["nothing wrote"], w["episode's"])
+
+    refused("an extras/ folder under an episode", under_episode, "an extras/ folder under an episode",
+            what="episode's", age_after=True)
+
+    # ---- checked again in the quarantine, against what is true by then
+    sw = load_tool(SWEEP)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for name, late, why in (
+            ("an unfinished extra the projection names by the time it is checked is put back",
+             lambda w: decide(w, {"order": 3}), "metadata.json names it"),
+            ("an extra whose package finished by the time it is checked gets its package back",
+             lambda w: open(os.path.join(w["beside"], ".complete"), "w").write("sha256:" + "0" * 64 + "\n"),
+             "its extra has finished since")):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, export, where = extra_garbage(tmp)
+            s = sw.Sweep(root, sw.References(root, export), 86400, now)
+            s.run()
+            a = sw.Apply(s)
+            check = a.finish
+
+            def checked_late(q, late=late, where=where, check=check):
+                late(where)
+                check(q)
+            a.finish = checked_late
+            a.run(now)
+            back = where["recorded"] if "projection" in name else os.path.join(where["beside"], "hls")
+            t.ok(name, os.path.exists(back) and any(why in n for n in a.put_back)
+                 and not os.path.exists(os.path.join(root, "_swept")), a.put_back)
 
 
 # ---------------------------------------------------------------- the media check
@@ -1824,6 +1971,7 @@ def main():
                         ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog), ("people", test_people),
                         ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
+                        ("sweeping an extra that never finished", test_sweep_extras),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):
             continue
