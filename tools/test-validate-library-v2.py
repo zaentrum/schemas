@@ -151,6 +151,52 @@ def move_person(root, p, new_id, shard=None):
     shutil.move(p, target)
 
 
+def featurette(root):
+    """The movie's featurette: an extra kept as its original and as a package of its own."""
+    return only("movies/*/*/extras/*", root)
+
+
+def bts(root):
+    """The series' behind-the-scenes extra of season 1: kept only as its original."""
+    return only("series/*/*/extras/*", root)
+
+
+def xjson(xp):
+    return os.path.join(xp, "extra.json")
+
+
+def x_original(xp):
+    return os.path.join(xp, json.load(open(xjson(xp)))["originalFiles"][0])
+
+
+def x_decision(root, xid, decision):
+    """The movie's projection deciding something about the extra xid."""
+    edit(meta(movie(root)), lambda d: d["library"]["extras"].update({xid: decision}))
+
+
+def package_only(root):
+    """The featurette with its original gone and its package the only copy, written that way."""
+    xp = featurette(root)
+    os.remove(x_original(xp))
+    edit(xjson(xp), lambda d: d.update(originalFiles=[]))
+    edit(pkg(xp), lambda d: d.update(role="canonical"))
+
+
+def nothing_kept(root):
+    """The series' extra with its original gone and its checksums written again over its record alone."""
+    xp = bts(root)
+    os.remove(x_original(xp))
+    edit_raw(xjson(xp), lambda d: d.update(originalFiles=[]))
+    write_sums(xp, ["extra.json"])
+
+
+def unfinished_extra_package(root):
+    """The featurette as a packager that died left it: its record, its original and part of a
+    package, and no package.json, checksums or .complete."""
+    for name in (".complete", "package.json", "checksums.sha256"):
+        os.remove(os.path.join(featurette(root), name))
+
+
 def bare_person(root):
     """A person the database knows nothing about but a name: the smallest record there is."""
     p = director(root)
@@ -201,6 +247,8 @@ def recover(path):
     if name == "version.json":
         if os.path.isfile(pkg(folder)):
             rechecksum(folder)
+    elif name == "extra.json" and os.path.isfile(pkg(folder)):
+        rechecksum_extra(folder)
     elif name == "package.json":
         close(folder)
     elif os.path.isfile(sums(folder)) and name not in ("metadata.json", "person.json"):
@@ -228,6 +276,17 @@ def rechecksum(vp):
         sha256="sha256:" + digest(sums(vp)), files=len(files),
         bytes=sum(os.path.getsize(os.path.join(vp, r)) for r in files)))
     close(vp)
+
+
+def rechecksum_extra(xp):
+    """Rewrite an extra's checksums over extra.json, the originals that are there and its package
+    files, the package record's hash of them, and .complete, after one of them changed."""
+    files = ["extra.json"] + [n for n in json.load(open(xjson(xp)))["originalFiles"] if os.path.isfile(os.path.join(xp, n))]
+    for d in ("hls", "subs", "trickplay"):
+        for root, dirs, names in os.walk(os.path.join(xp, d)):
+            dirs.sort()
+            files += [os.path.relpath(os.path.join(root, n), xp) for n in sorted(names)]
+    relist(xp, files)
 
 
 def new_event(item_dir, doc, name=None):
@@ -548,6 +607,63 @@ CASES = [
     ("a file beside a projection that claims a hash it does not have", False, lambda r: open(os.path.join(movie(r), "metadata", "a" * 64 + ".jpg"), "wb").write(b"\xff\xd8 other bytes"), "not named by the hash of its own content", []),
     ("a package that never finished is a note", True, unfinished_package, "a package that never finished", []),
     ("a quarantine an interrupted sweep left", False, lambda r: os.makedirs(os.path.join(r, "_swept", "20261002T120000Z")), "the quarantine of a library-v2-sweep.py --apply that did not finish", []),
+
+    # ---- bonus material: inside its movie or series, never an item of its own and never an episode's
+    ("an extra of a kind the format does not know", False, lambda r: edit(xjson(featurette(r)), lambda d: d.update(kind="bonus")), "'bonus' is not one of", []),
+    ("an extra without a title", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("title")), "'title' is a required property", []),
+    ("an extra record carrying updatedAt", False, lambda r: edit(xjson(bts(r)), lambda d: d.update(updatedAt="2026-09-20T12:00:00Z")), "'updatedAt' was unexpected", []),
+    ("what the probe found, without the probe", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("probe")), "'probe' is a dependency of", []),
+    ("a probe without what it found", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("essence")), "'essence' is a dependency of 'probe'", []),
+    ("an extra's title in something that is not a language", False, lambda r: edit(xjson(featurette(r)), lambda d: d["localizedTitles"].update(Dutch="x")), "$.localizedTitles", []),
+    ("an original named like a record of its folder", False, lambda r: edit(xjson(bts(r)), lambda d: d.update(originalFiles=["checksums.sha256"])), "should not be valid under", []),
+    ("extras in an episode", False, lambda r: os.makedirs(os.path.join(episode(r, 1), "extras")), "an episode has no extras", []),
+    ("an extra that is a file", False, lambda r: open(os.path.join(series(r), "extras", "loose.json"), "w").write("{}"), "every extra is a folder under extras/", []),
+    ("an extra folder not named by its id", False, lambda r: shutil.move(bts(r), os.path.join(series(r), "extras", "behind-the-scenes")), "an extra folder is named by its extraId", []),
+    ("an extra stored under another extra's id", False, lambda r: edit(xjson(bts(r)), lambda d: d.update(extraId=NOWHERE)), "does not match folder", []),
+    ("an extra folder without its record", False, lambda r: os.remove(xjson(bts(r))), "an extra folder without its extra.json record", []),
+    ("a stray entry in an extra folder", False, lambda r: open(os.path.join(bts(r), "notes.txt"), "w").write("x"), "not a record, the package or an original this extra names", []),
+
+    # ---- an extra proves itself: its checksums list extra.json and every file beside it, the originals included
+    ("an extra record changed after it was written", False, lambda r: edit_raw(xjson(bts(r)), lambda d: d.update(title="Another Title")), "extra.json: does not match the checksum checksums.sha256 recorded for it", []),
+    ("an extra's checksums leaving out its original", False, lambda r: write_sums(bts(r), ["extra.json"]), "does not list Example Show (US) - Season 1", []),
+    ("an extra's original missing", False, lambda r: os.remove(x_original(bts(r))), "an original extra.json names is not here", []),
+    ("an extra's original changed after it was written", False, lambda r: open(x_original(featurette(r)), "ab").write(b"x"), "On Location in Amsterdam.mkv: does not match its checksum", ["--check-checksums"]),
+    ("a package file of an extra its checksums do not list", False, lambda r: open(os.path.join(featurette(r), "hls", "v0", "seg-0001.m4s"), "wb").write(b"x"), "does not list hls/v0/seg-0001.m4s", []),
+    ("an extra's checksums listing a file that is not there", False, lambda r: os.remove(os.path.join(featurette(r), "subs", "0.vtt")), "lists subs/0.vtt, which is not a file of this extra", []),
+    ("an extra's checksums listing its package record", False, lambda r: relist(featurette(r), listing(featurette(r)) + ["package.json"]), "lists package.json, which holds the hash of this file", []),
+    ("an extra's checksums listing the marker above them", False, lambda r: relist(featurette(r), listing(featurette(r)) + [".complete"]), "lists .complete, which is written after it", []),
+    ("an extra's package record changed after it completed", False, lambda r: edit_raw(pkg(featurette(r)), lambda d: d.update(packagedBy="someone else")), "does not name this package.json", []),
+    ("an extra's marker that is not a hash", False, lambda r: open(os.path.join(featurette(r), ".complete"), "w").write("packager example\n"), "the head of the chain that covers this extra", []),
+    ("an extra's package without its marker", False, lambda r: os.remove(os.path.join(featurette(r), ".complete")), "package.json exists exactly when .complete does", []),
+    ("an extra's marker without its package", False, lambda r: os.remove(pkg(featurette(r))), "package.json exists exactly when .complete does", []),
+    ("an extra with neither an original nor a package", False, nothing_kept, "holds neither an original nor a package", []),
+    ("an extra that never finished is a note", True, lambda r: os.remove(sums(bts(r))), "an extra that never finished", []),
+    ("an extra whose package never finished is a note", True, unfinished_extra_package, "an extra whose package never finished", []),
+
+    # ---- an extra's package is a version's, and carries no trailers
+    ("an extra's package canonical while it keeps its original", False, lambda r: edit(pkg(featurette(r)), lambda d: d.update(role="canonical")), "role must be 'canonical' exactly when the extra keeps no original", []),
+    ("an extra's package listing trailers", False, lambda r: edit(pkg(featurette(r)), lambda d: d.update(trailers=[{"id": "t0", "source": "packager", "durationMs": 1000, "manifestPath": "hls/master.m3u8"}])), "an extra's package lists no trailers", []),
+    ("an extra's rendition folder missing", False, lambda r: (shutil.rmtree(os.path.join(featurette(r), "hls", "a0")), rechecksum_extra(featurette(r))), "rendition dir hls/a0 missing", ["--check-media"]),
+    ("an extra's checksums total that is not its files'", False, lambda r: edit(pkg(featurette(r)), lambda d: d["checksums"].update(bytes=d["checksums"]["bytes"] - 1)), "the record says", ["--check-media"]),
+
+    # ---- a season is a series' to give
+    ("a season on a movie's extra", False, lambda r: edit(xjson(featurette(r)), lambda d: d.update(seasonNumber=1)), "only a series' extra belongs to a season", []),
+    ("an extra in a season the series does not list", False, lambda r: edit(xjson(bts(r)), lambda d: d.update(seasonNumber=3)), "season 3, which the series' metadata.json does not list", []),
+
+    # ---- how a viewer sees the extras is the projection's
+    ("a decision about an extra that does not exist", False, lambda r: x_decision(r, NOWHERE, {"hidden": True}), "library.extras names", []),
+    ("a decision about another item's extra", False, lambda r: x_decision(r, os.path.basename(bts(r)), {"order": 2}), "library.extras names", []),
+    ("a decision about an extra the format does not model", False, lambda r: x_decision(r, os.path.basename(featurette(r)), {"pinned": True}), "'pinned' was unexpected", []),
+    ("a decision about an extra that decides nothing", False, lambda r: x_decision(r, os.path.basename(featurette(r)), {}), "should be non-empty", []),
+    ("decisions about extras on an episode", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"].update(extras={NOWHERE: {"hidden": True}})), "must not have extras", []),
+
+    # ---- what an extra may also be
+    ("an extra kept only as its package", True, package_only, "OK", ["--check-checksums"]),
+    ("an extra nothing probed", True, lambda r: edit(xjson(featurette(r)), lambda d: [d.pop(k) for k in ("container", "streams", "fidelity", "essence", "probe")]), "OK", ["--check-checksums"]),
+    ("a series' extra of no particular season", True, lambda r: edit(xjson(bts(r)), lambda d: d.pop("seasonNumber")), "OK", []),
+    ("an item whose database decided nothing about its extras", True, lambda r: edit(meta(movie(r)), lambda d: d["library"].pop("extras")), "OK", []),
+    ("operating-system files in extra folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
+                                                               (os.path.join(movie(r), "extras"), featurette(r), os.path.join(featurette(r), "hls"), bts(r))], "OK", ["--check-checksums"]),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
