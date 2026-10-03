@@ -27,6 +27,16 @@ Every folder written once gets the checksums.sha256 that covers it in the same s
 closes its chain last: checksums over version.json and the package, package.json with their hash,
 .complete with package.json's.
 
+Credits: each of an item's people entries is a credit of its metadata.json — personId, name, role
+and, each null where the export says nothing, as an export from before credits were general does,
+the job in the source's own words, the character, the billing order within the role and a series'
+episode count. They are listed by role — actor, creator, director, writer, producer, composer,
+cinematographer, editor, in that order, and any other role after them, alphabetically — then by
+billing order, a credit without one last, then by name and personId: the export lists credits in no
+particular order, and the same credits must make the same file. A credit whose role is not a token
+is left out with a note, and so is an order or an episode count that is not a whole number, or a
+count below nothing.
+
 People: a catalog without person records knows only what its credits say, a personId and a name, so
 that is what person.json holds and every other field stays empty. When the export carries a
 top-level people list, each entry's fields are used under the names person.json gives them — id,
@@ -101,6 +111,10 @@ PERSON_IMAGE_KINDS = {"profile"}
 PERSON_IDS = {"tmdb": ("tmdbPerson", r"[0-9]+"), "themoviedb": ("tmdbPerson", r"[0-9]+"),
               "tmdb-person": ("tmdbPerson", r"[0-9]+"), "tmdbperson": ("tmdbPerson", r"[0-9]+"),
               "imdb": ("imdb", r"nm[0-9]+"), "tvdb": ("tvdb", r"[0-9]+"), "wikidata": ("wikidata", r"Q[0-9]+")}
+# A credit's role is a token of an open vocabulary. These are the roles a reader knows, in the order
+# it lists them; any other token is a role too, listed after them.
+ROLES = ("actor", "creator", "director", "writer", "producer", "composer", "cinematographer", "editor")
+ROLE_RE = re.compile(r"[a-z][a-z0-9-]{0,39}")
 DATE_RE = re.compile(r"^([0-9]{4})(-[0-9]{2}(-[0-9]{2})?)?")
 TIMESTAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")
 # Where a projection's field came from, as fieldOrigins in defs.schema.json names it.
@@ -203,6 +217,15 @@ def text(v):
         return None
     s = str(v).replace("\r", " ").replace("\n", " ").strip()
     return s or None
+
+
+def credit_order(c):
+    """Where a credit stands in a projection: by role — the ones a reader knows in the order it lists
+    them, any other after them, alphabetically — then by billing order, a credit without one last,
+    then by name and personId. The export lists credits in no particular order; sorting them is what
+    makes the same credits the same file."""
+    rank = ROLES.index(c["role"]) if c["role"] in ROLES else len(ROLES)
+    return (rank, c["role"], c["order"] is None, c["order"] or 0, c["name"], c["personId"])
 
 
 def ratio(v):
@@ -884,9 +907,19 @@ class Build:
             pid = text(p.get("personId"))
             if not pid or not re.fullmatch(r"[0-9a-f-]{36}", pid):
                 continue
-            credits.append({"personId": pid, "name": text(p.get("name")) or "", "role": text(p.get("role")) or "actor",
-                            "character": None, "order": None, "tmdbPerson": None})
-        doc["credits"] = credits
+            name, role = text(p.get("name")) or "", text(p.get("role")) or "actor"
+            if not ROLE_RE.fullmatch(role):
+                self.note(row["id"], f"{name or pid!r} is credited as {role!r}, which is not a role token "
+                                     f"('actor', 'production-designer'), so the credit is dropped")
+                continue
+            # an export from before credits were general carries none of these: each stays null
+            credits.append({"personId": pid, "name": name, "role": role, "job": text(p.get("job")),
+                            "character": text(p.get("character")),
+                            "order": self.whole(row["id"], f"the billing order of {name!r} as {role}", p.get("order")),
+                            "episodeCount": self.whole(row["id"], f"the episode count of {name!r} as {role}",
+                                                       p.get("episodeCount"), least=0),
+                            "tmdbPerson": None})
+        doc["credits"] = sorted(credits, key=credit_order)
         if row["type"] == "movie":
             doc["collection"] = None
         if row["type"] == "series":
@@ -1005,6 +1038,21 @@ class Build:
             self.note(owner, f"{field} {v!r} is not a moment, dropped")
             return None
         return s
+
+    def whole(self, owner, what, v, least=None):
+        """A whole number as a record holds one, or None when the export holds none — with a note
+        when it holds something else, a fraction or a count below least: a record never carries a
+        guess. 3.0 is 3."""
+        if v is None:
+            return None
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        if isinstance(v, int) and not isinstance(v, bool) and -(1 << 63) <= v < (1 << 63) \
+                and (least is None or v >= least):
+            return v
+        self.note(owner, f"{what} {v!r} is not a whole number" + (f" of at least {least}" if least is not None else "")
+                  + ", dropped")
+        return None
 
     def freshness(self, owner, entry):
         """How fresh a projection is, from the row it projects: the row's modifiedAt is the

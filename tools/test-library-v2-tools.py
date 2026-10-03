@@ -58,6 +58,11 @@ rule and checks the tool notices:
                  bytes; an item whose original is missing keeps its texts and loses its versions; a
                  trailer the catalog downloaded becomes an extra of its movie or series, never an
                  episode's, and its link stays a link
+  credits        every field of an export's credits crosses into metadata.json — the job in the
+                 source's own words, the character, the billing order, a series' episode count — in
+                 the order a reader shows them, whatever order the export lists them in; an export
+                 from before credits were general still works, and a role, an order or a count a
+                 record cannot hold is left out with a note
   media check    every check it makes fails on a tree that breaks it and passes on one that does not
   the pieces     the JPEG and PNG header parsing, the qh1 fingerprint and the generated ids
 """
@@ -1383,6 +1388,155 @@ def test_from_catalog_extras(t):
             t.ok("and the tree passes validate-library-v2.py", code == 0 and vtext.strip().endswith("OK"), vtext)
         else:
             t.skip("and the tree passes validate-library-v2.py", "jsonschema is not importable here")
+
+
+# ---------------------------------------------------------------- credits
+CREDITED_SERIES = "22222222-3333-4444-8555-777777777777"
+
+
+def cid(n):
+    """The id of the nth person the credit cases credit."""
+    return f"c1000000-0000-4000-8000-{n:012x}"
+
+
+def credited(pid, name, role, job=None, character=None, order=None, episodeCount=None):
+    """One of an item's people entries as the catalog exports it once credits are general."""
+    return {"personId": pid, "name": name, "role": role, "job": job, "character": character, "order": order,
+            "episodeCount": episodeCount}
+
+
+def recorded(entry):
+    """The credit metadata.json holds for one such entry: every field of it, and no TMDB person id."""
+    return dict(entry, tmdbPerson=None)
+
+
+def movie_credits():
+    """A movie's credits in the order a reader shows them: by role — the ones it knows first, in their
+    order, any other after them alphabetically, so casting comes after editor — then by billing order,
+    a credit without one last, then by name, and namesakes by their personId."""
+    return [
+        credited(cid(1), "First Lead", "actor", character="The Hero", order=0),
+        credited(cid(2), "Second Lead", "actor", character="The Friend", order=1),
+        credited(cid(7), "Sam Same", "actor", character="A Twin", order=2),
+        credited(cid(8), "Sam Same", "actor", character="The Other Twin", order=2),
+        credited(cid(6), "An Extra", "actor", character="Passer-by"),
+        credited(cid(5), "Bea Bystander", "actor", character="Passer-by"),
+        credited(DIRECTOR, "A Director", "director", "Director", order=0),
+        credited(cid(3), "Ari Author", "writer", "Novel", order=0),
+        credited(cid(4), "Wren Writer", "writer", "Screenplay, Story", order=1),
+        credited(DIRECTOR, "A Director", "writer", "Screenplay", order=2),
+        credited(cid(10), "Pia Producer", "producer", "Executive Producer, Producer", order=0),
+        credited(cid(9), "Cam Composer", "composer", "Original Music Composer", order=0),
+        credited(cid(11), "Ed Editor", "editor", "Editor", order=0),
+        credited(cid(13), "Cas Ting", "casting", "Casting"),
+        credited(cid(12), "Pat Designer", "production-designer", "Production Design", order=0),
+    ]
+
+
+def series_credits():
+    """A series' credits in that order: a character joined across its episodes, how many episodes credit
+    each person, and a count of none."""
+    return [
+        credited(cid(1), "First Lead", "actor", character="The Hero / The Hero's Double", order=0, episodeCount=10),
+        credited(cid(14), "Guest Star", "actor", character="A Visitor", order=5, episodeCount=1),
+        credited(cid(15), "Cree Ator", "creator"),
+        credited(cid(15), "Cree Ator", "writer", "Story, Teleplay", order=0, episodeCount=4),
+        credited(cid(16), "Dee Photography", "cinematographer", "Director of Photography", order=0, episodeCount=0),
+    ]
+
+
+def credits_export(share, shuffle=lambda xs: list(reversed(xs))):
+    """fake_export's catalog with the movie's credits general and a series beside it, each item's
+    people listed in the order shuffle gives them — the reverse of a reader's, by default."""
+    export, media, packages, iid, _ = fake_export(share)
+    e = jload(export)
+    e["items"][0]["people"] = shuffle(movie_credits())
+    e["items"].append({"id": CREDITED_SERIES, "type": "series", "title": "Example Series", "createdAt": "2026-07-01T09:00:00Z",
+                       "people": shuffle(series_credits())})
+    jwrite(export, e)
+    return export, media, packages, iid
+
+
+def credits_of(out, iid, kind="movies"):
+    return jload(os.path.join(out, kind, iid[:2], iid, "metadata.json"))["credits"]
+
+
+def test_credits(t):
+    """Every field of the export's credits, into metadata.json in the order a reader shows them,
+    whatever order the export lists them in; an export from before credits were general still works,
+    and what a record cannot hold stays out of it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid = credits_export(os.path.join(tmp, "share"))
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        t.eq("a credit carries every field the export has: the job in the source's own words, the character, "
+             "the billing order within the role and a series' episode count",
+             (code, credits_of(out, iid), credits_of(out, CREDITED_SERIES, "series")),
+             (0, [recorded(c) for c in movie_credits()], [recorded(c) for c in series_credits()]))
+        t.eq("listed by role, the ones a reader knows in their order and any other after them alphabetically, then "
+             "by billing order, none last, then by name, and namesakes by their personId",
+             [(c["role"], c["name"], c["personId"][-2:]) for c in credits_of(out, iid)],
+             [(c["role"], c["name"], c["personId"][-2:]) for c in movie_credits()])
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", out)
+            t.ok("the tree passes validate-library-v2.py", code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("the tree passes validate-library-v2.py", "jsonschema is not importable here")
+
+        # the order the export lists them in makes no difference
+        for how, shuffle in (("in a reader's order", list), ("interleaved", lambda xs: xs[1::2] + xs[::2])):
+            again, other = os.path.join(tmp, f"again-{how}"), os.path.join(tmp, f"share-{how}")
+            export2, media2, packages2, _ = credits_export(other, shuffle)
+            code, text = run(FROM_CATALOG, "--export", export2, "--packages", packages2, "--media", media2, "--out", again)
+            t.ok(f"the same credits listed {how} write the same projections, byte for byte",
+                 code == 0 and all(open(os.path.join(again, k, i[:2], i, "metadata.json"), "rb").read() ==
+                                   open(os.path.join(out, k, i[:2], i, "metadata.json"), "rb").read()
+                                   for k, i in (("movies", iid), ("series", CREDITED_SERIES))), text)
+
+    # ---- an export from before credits were general: a person, a name and a role
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"))
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        t.eq("an export whose credits carry only a person, a name and a role still works, every other field null",
+             (code, credits_of(out, iid)),
+             (0, [{"personId": DIRECTOR, "name": "A Director", "role": "director", "job": None, "character": None,
+                   "order": None, "episodeCount": None, "tmdbPerson": None}]))
+
+    # ---- what a record cannot hold is left out, with a note
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"))
+        e = jload(export)
+        e["items"][0]["people"] = [
+            credited(cid(1), "Shouted Role", "Director", "Director", order=0),
+            credited(cid(2), "Spaced Role", "production designer", "Production Design", order=0),
+            credited(cid(3), "Half Order", "actor", character="", order=1.5),
+            credited(cid(4), "Text Order", "actor", character="Someone", order="3"),
+            credited(cid(5), "Float Order", "actor", character="Someone Else", order=2.0),
+            credited(cid(6), "Fewer Than None", "writer", "Story,\nTeleplay", order=0, episodeCount=-2),
+            credited(cid(7), "Some Episodes", "writer", "Screenplay", order=1, episodeCount=2.5)]
+        jwrite(export, e)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        got = {c["name"]: c for c in credits_of(out, iid)}
+        t.ok("a role that is not a token is no credit at all, and the run says so",
+             code == 0 and not {"Shouted Role", "Spaced Role"} & set(got)
+             and "'Shouted Role' is credited as 'Director', which is not a role token" in text
+             and "'Spaced Role' is credited as 'production designer', which is not a role token" in text, text)
+        t.eq("a billing order that is not a whole number is dropped, and one written as 2.0 is 2",
+             [(got[n]["order"]) for n in ("Half Order", "Text Order", "Float Order")], [None, None, 2])
+        t.ok("and the run says which", "the billing order of 'Half Order' as actor 1.5 is not a whole number, dropped" in text
+             and "the billing order of 'Text Order' as actor '3' is not a whole number, dropped" in text, text)
+        t.eq("an episode count below nothing, or not a whole number, is dropped, and the run says so",
+             ([got[n]["episodeCount"] for n in ("Fewer Than None", "Some Episodes")],
+              "the episode count of 'Fewer Than None' as writer -2 is not a whole number of at least 0, dropped" in text,
+              "the episode count of 'Some Episodes' as writer 2.5 is not a whole number of at least 0, dropped" in text),
+             ([None, None], True, True))
+        t.eq("a job and a character are one line, and an empty one is none",
+             (got["Fewer Than None"]["job"], got["Half Order"]["character"]), ("Story, Teleplay", None))
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, out)
+            t.ok("and what is written is a valid record", code == 0, vtext)
 
 
 # ---------------------------------------------------------------- people
@@ -3088,7 +3242,8 @@ def main():
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog),
-                        ("a downloaded trailer -> an extra", test_from_catalog_extras), ("people", test_people),
+                        ("a downloaded trailer -> an extra", test_from_catalog_extras),
+                        ("credits: a role, the source's own words, one order", test_credits), ("people", test_people),
                         ("the people list in full", test_people_in_full),
                         ("projecting again, and nothing else", test_projections_only),
                         ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
