@@ -7,13 +7,15 @@ Usage:
 
 The database is the working copy and this tree is the record that can rebuild it. This reads the
 records, applies the item's events in the order they happened, and writes the rows a catalog would
-hold: the items and their texts, the images, the credits, the chapters and segments, one playback
-asset per package and one per original that is still there, the subtitles the package carries, and
-the people under people/ with their biographies, dates, reference ids and portraits — which one is
-primary, and the path TMDB lists each under — and for every row the state of the database row its
-projection reflects (modifiedAt, from databaseUpdatedAt) and when TMDB was last asked (tmdbFetchedAt,
-tmdbChangedAt, from sources). It needs no network and no other service, it can run against a copy,
-and running it twice gives the same answer.
+hold: the items and their texts, the images, the credits — each person's role, the job in the
+source's own words, the character, the billing order and a series' episode count, under the names
+the export gives them — the chapters and segments, one playback asset per package and one per
+original that is still there, the subtitles the package carries, and the people under people/ with
+their biographies, dates, reference ids and portraits — which one is primary, and the path TMDB
+lists each under — and for every row the state of the database row its projection reflects
+(modifiedAt, from databaseUpdatedAt) and when TMDB was last asked (tmdbFetchedAt, tmdbChangedAt,
+from sources). It needs no network and no other service, it can run against a copy, and running it
+twice gives the same answer.
 
 The bonus material beside a movie or series becomes rows of its own, under extras in the rows
 JSON: kind, title, language, runtime and season as extra.json recorded them, the order, hidden
@@ -92,7 +94,12 @@ projection is stale. It exits non-zero for a lost item or person, a missing reco
 is stale or ahead and a field that disagrees — never for an orphan, an unreferenced person or an
 unknown freshness alone — so it can gate a migration. An item row's tmdbFetchedAt and tmdbChangedAt,
 and an image row's dimensions, primary flag and TMDB path, are compared where the export carries
-them: an export from before them makes no tree that has them differ.
+them: an export from before them makes no tree that has them differ. So are a credit's job,
+character, billing order and episode count; a credit is matched by its person and role, so one whose
+name or job changed is that credit changed, and namesakes in one role stay apart. A tree from before
+credits were general is compared in every field the export carries: where the database knows a
+value the tree lacks, the difference reads storage None — the database knowing more, which
+projecting again fixes — and a value the database does not know either is no difference.
 
 Fields that cannot agree by construction are ignored by default (--ignore-fields):
   id     a database key, not a fact about the item
@@ -125,6 +132,8 @@ PERSON_ID_FIELD = {"tmdb": "tmdbPerson", "themoviedb": "tmdbPerson", "tmdb-perso
 PERSON_FIELDS = ("name", "sortName", "alsoKnownAs", "birthDate", "deathDate", "birthPlace", "knownForDepartment",
                  "biography", "externalIds", "artwork", "metadataLocked", "lockedFields", "fieldOrigins",
                  "tmdbFetchedAt", "tmdbChangedAt", "modifiedAt")
+# A credit as an item row's people list holds it, under the export's names.
+CREDIT_FIELDS = ("personId", "name", "role", "job", "character", "order", "episodeCount")
 DAY_RE = re.compile(r"^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?")
 
 
@@ -508,8 +517,9 @@ class Rebuild:
             "externalIds": [{"source": EXTERNAL_ID_SOURCE.get(k, k), "externalId": v}
                             for k, v in sorted((item.get("externalIds") or {}).items())],
             "genres": list(meta.get("genres") or []), "tags": list(meta.get("tags") or []),
-            "people": [{"personId": c["personId"], "name": c.get("name"), "role": c.get("role")}
-                       for c in meta.get("credits") or []],
+            # a credit from before credits were general has no job and no episode count: null, as the
+            # export writes a field it does not know
+            "people": [{k: c.get(k) for k in CREDIT_FIELDS} for c in meta.get("credits") or []],
             "chapters": [], "segments": [], "playbackAssets": [], "subtitleAssets": [],
             "trailers": [{"source": v.get("origin"), "site": v.get("site"), "externalId": v.get("key"),
                           "url": v.get("url"), "title": v.get("name"),
@@ -639,7 +649,9 @@ LIST_KEYS = {
     "playbackAssets": lambda x: x.get("kind"),
     "subtitleAssets": lambda x: (x.get("language"), os.path.basename(str(x.get("path") or ""))),
     "artwork": lambda x: x.get("sha256"),
-    "people": lambda x: (x.get("name"), x.get("role")),
+    # a credit is one person in one role: a credited name or a job that changed is that credit changed,
+    # never one lost and another gained, and two namesakes in one role stay two credits
+    "people": lambda x: (x.get("personId"), x.get("role")),
     "chapters": lambda x: x.get("startMs"),
     "segments": lambda x: (x.get("kind"), x.get("startMs")),
     "externalIds": lambda x: x.get("source"),
@@ -647,9 +659,12 @@ LIST_KEYS = {
 }
 SET_FIELDS = ("genres", "tags")
 # The lists whose entries are compared only in the fields the database's entry carries: an image row
-# gained its dimensions, its primary flag and its TMDB path with the people list, and an export from
-# before them does not make every image on storage differ.
-CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath")}
+# gained its dimensions, its primary flag and its TMDB path with the people list, and a credit its job,
+# character, billing order and episode count when credits became general, and an export from before
+# them does not make every image or credit on storage differ. A tree from before them is compared in
+# all of them: the export's value against none, the database knowing more until it is projected again.
+CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath"),
+                        "people": ("job", "character", "order", "episodeCount")}
 # The fields of an item row compared only when the export's row carries them, for the same reason:
 # items do not carry them yet.
 CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt")

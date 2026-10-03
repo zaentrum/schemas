@@ -62,7 +62,10 @@ rule and checks the tool notices:
                  source's own words, the character, the billing order, a series' episode count — in
                  the order a reader shows them, whatever order the export lists them in; an export
                  from before credits were general still works, and a role, an order or a count a
-                 record cannot hold is left out with a note
+                 record cannot hold is left out with a note; the rebuild gives every field back, and
+                 --compare matches a credit by its person and role and catches a change to each
+                 field, an export from before makes no tree differ, and a tree from before reads as
+                 the database knowing more until it is projected again
   media check    every check it makes fails on a tree that breaks it and passes on one that does not
   the pieces     the JPEG and PNG header parsing, the qh1 fingerprint and the generated ids
 """
@@ -1452,7 +1455,7 @@ def credits_export(share, shuffle=lambda xs: list(reversed(xs))):
     e = jload(export)
     e["items"][0]["people"] = shuffle(movie_credits())
     e["items"].append({"id": CREDITED_SERIES, "type": "series", "title": "Example Series", "createdAt": "2026-07-01T09:00:00Z",
-                       "people": shuffle(series_credits())})
+                       "metadataLocked": False, "people": shuffle(series_credits())})
     jwrite(export, e)
     return export, media, packages, iid
 
@@ -1537,6 +1540,82 @@ def test_credits(t):
         if have_jsonschema():
             code, vtext = run(VALIDATOR, out)
             t.ok("and what is written is a valid record", code == 0, vtext)
+
+    # ---- the rebuild gives every field back, and --compare compares them both ways
+    ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid = credits_export(os.path.join(tmp, "share"))
+        out = os.path.join(tmp, "library")
+        run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        rows, _ = rows_of(out, "--text-language", "und")
+        t.eq("the rebuild gives every credit back, each field under the export's name, in the order on storage",
+             (rows[iid]["people"], rows[CREDITED_SERIES]["people"]), (movie_credits(), series_credits()))
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", ignore)
+        t.ok("and the tree agrees with the export it came from, which lists the credits otherwise, two namesakes in "
+             "one role among them: a credit is matched by its person and role",
+             code == 0 and "the tree and the database agree" in text, text)
+
+        pristine = jload(export)
+
+        def against(change, tree=out):
+            """--compare of tree against the export with change made to it."""
+            e = json.loads(json.dumps(pristine))
+            change(e)
+            path = os.path.join(tmp, "changed.json")
+            jwrite(path, e)
+            return run(REBUILD, tree, "--compare", path, "--ignore-fields", ignore)
+
+        def credit_in(e, name, role):
+            return next(c for r in e["items"] for c in r.get("people") or [] if c["name"] == name and c["role"] == role)
+
+        for what, change, phrase in (
+                ("a job", lambda e: credit_in(e, "Wren Writer", "writer").update(job="Screenplay"), "people.job: 1 difference"),
+                ("a character", lambda e: credit_in(e, "Second Lead", "actor").update(character="The Rival"),
+                 "people.character: 1 difference"),
+                ("a billing order", lambda e: credit_in(e, "Ari Author", "writer").update(order=3), "people.order: 1 difference"),
+                ("an episode count", lambda e: credit_in(e, "Guest Star", "actor").update(episodeCount=2),
+                 "people.episodeCount: 1 difference"),
+                ("whom it credits", lambda e: e["items"][0]["people"].remove(credit_in(e, "Cas Ting", "casting")),
+                 "people: 1 difference")):
+            code, text = against(change)
+            t.ok(f"--compare catches the database changing {what}", code == 1 and phrase in text, text)
+        code, text = against(lambda e: credit_in(e, "Ed Editor", "editor").update(name="Edwin Editor"))
+        t.ok("and the name a credit records, as that credit changed — not one credit lost and another gained",
+             code == 1 and f"{iid}: storage 'Ed Editor' != database 'Edwin Editor'" in text and "'missing'" not in text, text)
+
+        code, text = against(lambda e: [[c.pop(k) for k in ("job", "character", "order", "episodeCount")]
+                                        for r in e["items"] for c in r.get("people") or []])
+        t.ok("an export from before credits were general, a person, a name and a role, makes no tree differ that has "
+             "every field", code == 0 and "the tree and the database agree" in text, text)
+
+        # a tree from before: the credits the catalog kept then, an actor's and a director's, as they were written
+        old = os.path.join(tmp, "before")
+        shutil.copytree(out, old)
+        for kind, i in (("movies", iid), ("series", CREDITED_SERIES)):
+            p = os.path.join(old, kind, i[:2], i, "metadata.json")
+            jwrite(p, dict(jload(p), credits=[{"personId": c["personId"], "name": c["name"], "role": c["role"], "character": None,
+                                               "order": None, "tmdbPerson": None}
+                                              for c in jload(p)["credits"] if c["role"] in ("actor", "director")]))
+        code, text = run(REBUILD, old, "--compare", export, "--ignore-fields", ignore)
+        lines = [line.strip() for line in text.splitlines() if ": storage " in line]
+        t.ok("a tree from before, against an export that has them, reads as the database knowing more: each "
+             "difference is a credit or a field of one that storage has nothing of, and it fails the compare",
+             code == 1 and lines and all(x.split(": storage ", 1)[1].startswith(("None != database ", "'missing' != database "))
+                                         for x in lines), text)
+        t.ok("credit by credit, matched by person and role: the credits the catalog did not keep then, and of the ones "
+             "it did the job, the character, the billing order and the episode count the database knows",
+             all(f"{key}: {n} difference(s)" in text for key, n in (("people", 11), ("people.job", 1), ("people.character", 8),
+                                                                     ("people.order", 7), ("people.episodeCount", 2)))
+             and "29 difference(s)" in text, text)
+        code, text = against(lambda e: [r.update(people=[dict(c, job=None, character=None, order=None, episodeCount=None)
+                                                         for c in r["people"] if c["role"] in ("actor", "director")])
+                                        for r in e["items"] if r.get("people")], tree=old)
+        t.ok("and where the database knows no more than that tree, a field it writes null is no difference",
+             code == 0 and "the tree and the database agree" in text, text)
+        code, text = run(FROM_CATALOG, "--export", export, "--out", old, "--projections-only")
+        code, text = run(REBUILD, old, "--compare", export, "--ignore-fields", ignore)
+        t.ok("projected again, the tree knows what the database knows, and agrees with it",
+             code == 0 and "the tree and the database agree" in text, text)
 
 
 # ---------------------------------------------------------------- people
