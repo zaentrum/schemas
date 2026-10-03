@@ -37,8 +37,10 @@
       "personId": "a1a35dd5-9e10-567a-a4fd-a894c8d826e0",
       "name": "Ian Hubert",
       "role": "director",
+      "job": "Director",
       "character": null,
       "order": 0,
+      "episodeCount": null,
       "tmdbPerson": null
     }
   ],

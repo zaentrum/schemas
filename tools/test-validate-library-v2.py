@@ -236,6 +236,11 @@ def unfinished_extra_package(root):
         os.remove(os.path.join(featurette(root), name))
 
 
+def credit_as(doc, role):
+    """The credit a projection gives in role: the examples credit each role once."""
+    return next(c for c in doc["credits"] if c["role"] == role)
+
+
 def bare_person(root):
     """A person the database knows nothing about but a name: the smallest record there is."""
     p = director(root)
@@ -674,6 +679,21 @@ CASES = [
     ("a credit to a person with no record is a note", True, lambda r: shutil.rmtree(director(r)), "who has no people/", []),
     ("a person nothing is known about but a name", True, bare_person, "OK", ["--check-media"]),
     ("a death known only to the year of the birth", True, lambda r: edit(pjson(lead(r)), lambda d: d.update(deathDate="1985")), "OK", []),
+
+    # ---- a credit: one person in one role, a token of an open vocabulary, and the source's own words for the job
+    ("a creator credited in the source's own words", True, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "creator").update(job="Creator")), "OK", []),
+    ("a writer's jobs joined into one credit", True, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "writer").update(job="Screenplay, Story, Teleplay")), "OK", []),
+    ("a role the well-known ones do not name", True, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "creator").update(role="production-designer", job="Production Design")), "OK", []),
+    ("a series credit counting no episodes", True, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "writer").update(episodeCount=0)), "OK", []),
+    ("a credit from before credits had a job or an episode count", True, lambda r: edit(meta(series(r)), lambda d: [[c.pop(k) for k in ("job", "episodeCount")] for c in d["credits"]]), "OK", []),
+    ("a role in the source's words rather than a token", False, lambda r: edit(meta(movie(r)), lambda d: d["credits"][0].update(role="Director")), "$.credits[0].role: 'Director' does not match", []),
+    ("a role written as words", False, lambda r: edit(meta(movie(r)), lambda d: d["credits"][0].update(role="production designer")), "$.credits[0].role: 'production designer' does not match", []),
+    ("a role longer than the forty characters the catalog keeps", False, lambda r: edit(meta(movie(r)), lambda d: d["credits"][0].update(role="supervising-art-director-and-production-designer")), "$.credits[0].role: 'supervising-art-director-and-production-designer' does not match", []),
+    ("a credit naming no role", False, lambda r: edit(meta(movie(r)), lambda d: d["credits"][0].update(role="")), "$.credits[0].role: '' does not match", []),
+    ("several jobs listed rather than joined", False, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "writer").update(job=["Story", "Teleplay"])), "is not of type 'string', 'null'", []),
+    ("a negative episode count", False, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "actor").update(episodeCount=-1)), "$.credits[0].episodeCount: -1 is less than the minimum of 0", []),
+    ("an episode count that is not a whole number", False, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "actor").update(episodeCount=2.5)), "$.credits[0].episodeCount: 2.5 is not of type 'integer', 'null'", []),
+    ("a billing order that is not a whole number", False, lambda r: edit(meta(series(r)), lambda d: credit_as(d, "actor").update(order=1.5)), "$.credits[0].order: 1.5 is not of type 'integer', 'null'", []),
 
     # ---- garbage a writer left: a note for the sweep, not a broken record
     ("an image a later projection dropped is a note", True, lambda r: dropped_image(os.path.join(movie(r), "metadata")), "metadata.json no longer lists; library-v2-sweep.py", []),

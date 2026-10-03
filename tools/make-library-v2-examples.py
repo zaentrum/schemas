@@ -17,9 +17,12 @@ every record the format has and the shapes a reader most needs to see:
            from an original that was never kept here, so its package is canonical. Beside the
            episodes, a behind-the-scenes extra of season 1, kept only as its original, which the
            projection says nothing about.
-  people/  the two people the items credit: the movie's director, with only what is known about
-           him, and the series' lead, a fictional person with every field a person record has —
-           her primary portrait one a person picked, beside the one the reference source has.
+  people/  the three people the items credit: the movie's director, with only what is known about
+           him; the series' creator, a fictional person who wrote some of it too — two credits of
+           one person, the writer's jobs joined in the source's own words; and the series' lead, a
+           fictional person with every field a person record has, credited with the character she
+           plays and how many episodes she is in — her primary portrait one a person picked, beside
+           the one the reference source has.
 
 Every projection says which state of its database row it reflects (databaseUpdatedAt), and the two
 that were taken from the reference source — the movie and the lead — say when and how fresh that is
@@ -127,6 +130,14 @@ def image(item_dir, kind, data, ctype, folder="metadata", primary=None, source="
              "origin": {"source": source, **({"ref": ref} if ref else {}), "fetchedAt": fetched}}
     entry.update(extra)
     return entry
+
+
+def credit(person, name, role, job=None, character=None, order=0, episodeCount=None):
+    """One credit of a projection: the person by id, the name recorded for this title, the role token
+    and the source's own words for the job, with every field a credit has, null where the source says
+    nothing."""
+    return {"personId": uid("person", person), "name": name, "role": role, "job": job, "character": character,
+            "order": order, "episodeCount": episodeCount, "tmdbPerson": None}
 
 
 # ---------------------------------------------------------------- streams of an original
@@ -505,8 +516,7 @@ def movie():
                                         "overview": "A group of warriors and scientists gather at the Oude Kerk in "
                                                     "Amsterdam to stage a crucial event from the past."}}},
         "releaseDate": "2012-09-26", "genres": ["Science Fiction"], "tags": [], "rating": None, "contentRating": None,
-        "credits": [{"personId": uid("person", "ian-hubert"), "name": "Ian Hubert", "role": "director",
-                     "character": None, "order": 0, "tmdbPerson": None}],
+        "credits": [credit("ian-hubert", "Ian Hubert", "director", job="Director")],
         "collection": None,
         "library": {
             "primaryVersionId": v2,
@@ -659,8 +669,12 @@ def series():
                    "localized": {"en": {"title": "Example Show", "sortTitle": "example show", "tagline": None,
                                         "overview": "A fictional series used to illustrate the library layout."}}},
         "genres": ["Drama"], "tags": [], "rating": None, "contentRating": None,
-        "credits": [{"personId": uid("person", "mara-example"), "name": "Mara Example", "role": "actor",
-                     "character": "Captain Example", "order": 0, "tmdbPerson": None}],
+        # A credit is one person in one role, listed by role in the order a reader shows them: the
+        # lead, with the character she plays and how many episodes she is in; the creator, of whom
+        # the source says nothing more; and the same person as a writer, two jobs in one credit.
+        "credits": [credit("mara-example", "Mara Example", "actor", character="Captain Example", episodeCount=8),
+                    credit("noor-example", "Noor Example", "creator"),
+                    credit("noor-example", "Noor Example", "writer", job="Story, Teleplay", episodeCount=3)],
         "series": {"status": "returning", "firstAirDate": "2024-01-10", "lastAirDate": "2024-03-06",
                    "network": None,
                    "seasons": [{"number": 1, "tmdbSeason": None, "name": "Season 1",
@@ -716,13 +730,18 @@ def person(pid, portraits=(), **fields):
 
 def people():
     """The people the items credit. The director is a real person, so his record holds only what is
-    known about him and no reference id is made up; the series' lead is fictional and fills every
-    field a person record has, a biography in two languages and a person's lock among them, and when
-    the example database last took her from the reference source. Her reference ids stay empty all
-    the same: a made-up one would be some real person's."""
+    known about him and no reference id is made up; the series' creator is fictional, one record for
+    the two credits she has; the series' lead is fictional and fills every field a person record has,
+    a biography in two languages and a person's lock among them, and when the example database last
+    took her from the reference source. Their reference ids stay empty all the same: a made-up one
+    would be some real person's."""
     person(uid("person", "ian-hubert"), name="Ian Hubert", sortName="Hubert, Ian",
            biography={"en": "Director of the open movie Tears of Steel (2012)."},
            fieldOrigins={"name": "manual", "sortName": "manual", "biography": "manual", "images": "manual"})
+    person(uid("person", "noor-example"), name="Noor Example", sortName="Example, Noor", knownForDepartment="Writing",
+           biography={"en": "A fictional writer who created Example Show and wrote three of its episodes."},
+           fieldOrigins={"name": "manual", "sortName": "manual", "knownForDepartment": "manual", "biography": "manual",
+                         "images": "manual"})
     # Her primary portrait is one a person picked; the reference source's own is kept beside it, so a
     # refresh can tell the source replacing its portrait from the person's choice, which it leaves be.
     person(uid("person", "mara-example"), name="Mara Example", sortName="Example, Mara",

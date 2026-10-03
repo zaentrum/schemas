@@ -30,8 +30,30 @@
       "personId": "542ed02d-222b-501a-9456-a7c0a9945adb",
       "name": "Mara Example",
       "role": "actor",
+      "job": null,
       "character": "Captain Example",
       "order": 0,
+      "episodeCount": 8,
+      "tmdbPerson": null
+    },
+    {
+      "personId": "57011449-f2cc-5a53-81b8-098abad2297f",
+      "name": "Noor Example",
+      "role": "creator",
+      "job": null,
+      "character": null,
+      "order": 0,
+      "episodeCount": null,
+      "tmdbPerson": null
+    },
+    {
+      "personId": "57011449-f2cc-5a53-81b8-098abad2297f",
+      "name": "Noor Example",
+      "role": "writer",
+      "job": "Story, Teleplay",
+      "character": null,
+      "order": 0,
+      "episodeCount": 3,
       "tmdbPerson": null
     }
   ],

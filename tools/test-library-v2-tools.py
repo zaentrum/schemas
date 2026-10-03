@@ -797,6 +797,7 @@ def test_compare(t):
 
     # ---- people: the database's people are its list when it has one, else whom its items credit
     lead = series["people"][0]["personId"]
+    creator = next(c["personId"] for c in series["people"] if c["role"] == "creator")
 
     def uncredit(iid):
         return lambda e: [r.update(people=[]) for r in e["items"] if r["id"] == iid]
@@ -887,9 +888,10 @@ def test_compare(t):
 
     code, text = compare(uncredit(series["id"]))
     t.ok("a person on storage that an item the database holds still credits is lost",
-         code == 1 and section(text, "people: lost") == [lead] and "which the database holds" in text, text)
+         code == 1 and section(text, "people: lost") == sorted([lead, creator]) and "which the database holds" in text, text)
 
-    code, text = compare(lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"}]))
+    code, text = compare(lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"},
+                                                    {"id": creator, "name": "Noor Example"}]))
     t.ok("with a people list, a person it does not hold is judged by the list",
          code == 1 and section(text, "people: lost") == [lead], text)
 
@@ -900,13 +902,15 @@ def test_compare(t):
 
     code, text = compare(lambda e: e.update(people=[
         {"id": director, "name": "Ian Hubert", "biography": "Someone else's life."},
-        {"id": lead, "name": "Mara Example"}]), "--text-language", "en")
+        {"id": lead, "name": "Mara Example"}, {"id": creator, "name": "Noor Example"}]), "--text-language", "en")
     t.ok("a field the people list carries is compared", code == 1 and "people.biography: 1 difference" in text, text)
     code, text = compare(lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"},
-                                                    {"id": lead, "name": "Mara Example"}]))
+                                                    {"id": lead, "name": "Mara Example"},
+                                                    {"id": creator, "name": "Noor Example"}]))
     t.ok("and a field it does not carry is not", code == 0 and "the tree and the database agree" in text, text)
 
     listed = lambda e: e.update(people=[{"id": director, "name": "Ian Hubert"}, {"id": lead, "name": "Mara Example"},
+                                        {"id": creator, "name": "Noor Example"},
                                         {"id": "00000000-0000-4000-8000-0000000000cc", "name": "Only Listed"}])
     code, text = compare(listed)
     t.ok("a person the people list holds who is not on storage is a missing record",
@@ -1892,7 +1896,7 @@ def test_projections_only(t):
         records = records_of(tree)
         code, text = run(FROM_CATALOG, "--export", export, "--out", tree, "--projections-only", "--text-language", "en")
         t.ok("on the example tree — removed versions, a deleted original, a superseded package, extras, a retired "
-             "extra, episodes — it projects every item and person", code == 0 and "'items': 4" in text and "'people': 2" in text,
+             "extra, episodes — it projects every item and person", code == 0 and "'items': 4" in text and "'people': 3" in text,
              text)
         t.eq("and changes no byte of any of its records, nor touches one", records_of(tree), records)
         if have_jsonschema():
