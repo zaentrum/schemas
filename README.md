@@ -248,8 +248,8 @@ people/<aa>/<personId>/
   <sha256>.jpg                     the portraits it lists, named by their own content hash
 ```
 
-**People are a category of their own.** A credit carries only a `personId` and a name, and people
-are shared by every item that credits them, so a person's biography, dates, the department they are
+**People are a category of their own.** A credit names a person by `personId`, and people are
+shared by every item that credits them, so a person's biography, dates, the department they are
 known for, reference ids and portraits live once, in `people/<aa>/<personId>/person.json` beside
 `movies/` and `series/`, with the same id-based folder and shard. Like `metadata.json` it is a
 projection, replaced whole by the one service that owns people, so a rebuild restores every person
@@ -258,6 +258,16 @@ and a credit whose person has no folder yet is a note, not an error: the person 
 been projected. A credit's `name` is the name as recorded for that title, which may be the one the
 person went by then; the person's current name lives in `person.json`, and a reader prefers it
 whenever the person has a record.
+
+**A credit says what the person did.** Each credit is one person in one role. `role` is a token of
+an open vocabulary, `^[a-z][a-z0-9-]{0,39}$`, whose well-known roles, in the order a reader lists
+them, are `actor`, `creator`, `director`, `writer`, `producer`, `composer`, `cinematographer` and
+`editor`; any other token is valid too, and a reader shows a role it does not know generically, under
+the token, after the ones it knows. `job` is what the person did in the source's own words —
+`Screenplay`, `Original Music Composer` — several jobs of one person in one role joined with `", "`;
+`character` is whom an actor plays, a series' characters joined with `" / "`; `order` is the billing
+order within the role; and `episodeCount` is how many of a series' episodes credit the person in that
+role. Each is null where the source says nothing.
 
 **A projection says how fresh it is.** The database refreshes from the reference source first and
 rewrites a projection after, and a person changes more than a title does — a new role, a death, a
@@ -475,6 +485,22 @@ becomes its `metadata.json`'s `databaseUpdatedAt`, and `sources.tmdb` is written
 a credit names, in a catalog without the list — is a valid record with nothing else in it, and what
 the export does not carry, or holds wrongly, is left out with a note rather than guessed.
 
+An item row's `people` are its credits, and become the credits of its `metadata.json`:
+
+```json
+{ "people": [ { "personId": "…", "name": "…", "role": "writer", "job": "Story, Teleplay",
+                "character": null, "order": 0, "episodeCount": 3 } ] }
+```
+
+Each field is null where the catalog does not know it, and an export from before credits were
+general, whose entries carry only `personId`, `name` and `role`, works as it is: the other fields
+stay null. The export lists an item's credits in no particular order, so `library-v2-from-catalog.py`
+writes them in the order a reader shows them — by role, the well-known ones in their order and any
+other after them alphabetically, then by `order`, a credit without one last, then by name and
+`personId` — and the same credits always make the same file. A credit whose role is not a token is
+left out with a note, and so is an `order` or an `episodeCount` that is not a whole number, or a
+count below nothing.
+
 **`--projections-only` projects a tree again** after the database changed, which is what a stale
 projection asks for. It rewrites the projections of what the tree already holds and nothing else:
 every item's `metadata.json` and the images it lists in `metadata/`, every person's `person.json`
@@ -581,6 +607,16 @@ row's `tmdbFetchedAt` and `tmdbChangedAt`, an image row's dimensions, primary fl
 compared where the export carries them, so an export from before them makes no tree that has them
 differ.
 
+A credit is matched by its person and role, so a credited name or a job that changed is that credit
+changed, never one credit lost and another gained, and two namesakes in one role stay two credits.
+Its `job`, `character`, `order` and `episodeCount` are compared as those fields are: where the export
+carries them, so an export from before credits were general makes no tree differ. A tree from before
+them is compared, against an export that has them, in every field the export carries, as a field a
+tree lacks always is: it cannot give back what it does not hold, so each difference reads
+`storage None` — or names a credit storage has nothing of — the database knowing more, and the
+compare fails until `--projections-only` projects the tree again. A value the database does not know
+either is no difference.
+
 ### Sweeping what a writer missed
 
 Nothing walks the tree on its own, so garbage a writer leaves stays until someone collects it.
@@ -617,6 +653,23 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-03 (a)** — credits are general. A credit could say that a person acted or directed, in a
+  free string, and nothing of what they did in the source's own words. A credit's `role` is now a
+  token of an open vocabulary, `^[a-z][a-z0-9-]{0,39}$`: the well-known roles, in the order a reader
+  lists them, are actor, creator, director, writer, producer, composer, cinematographer and editor,
+  any other token is valid, and a reader shows one it does not know generically. A credit gains
+  `job`, the source's own words — several jobs of one person in one role joined with `", "` — and
+  `episodeCount`, how many of a series' episodes credit the person in that role; `character` joins a
+  series' characters with `" / "`, and `order` is the billing order within the role. Both new fields
+  are optional, so a tree written before validates as it is. `library-v2-from-catalog.py` maps the
+  export's new fields — an export from before, with only `personId`, `name` and `role`, leaves them
+  null — and writes the credits in the order a reader shows them, so the same credits make the same
+  file whatever order the export lists them in. The rebuild gives every field back, and `--compare`
+  matches a credit by its person and role, where it matched by name and role: a changed name is that
+  credit changed, and namesakes stay apart. The new fields are compared where the export carries
+  them; a tree from before them reads, against an export that has them, as the database knowing
+  more, until `--projections-only` projects it again. The examples credit the series' creator, a new
+  fictional person who wrote some of it too, and the lead's character and episode count.
 - **2026-10-02 (h)** — projecting a tree again. A stale projection is fixed by projecting again, and
   nothing could do that without writing the records too. `library-v2-from-catalog.py
   --projections-only` rewrites the projections of the items and people the tree already holds —
