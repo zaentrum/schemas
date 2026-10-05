@@ -523,9 +523,10 @@ already gone, a file nothing probed) stays empty rather than guessed.
 
 Bonus material becomes rows of its own, under `extras` in the rows JSON: what `extra.json` records,
 the `order`, `hidden` and `label` the projection decided, and its original and package as playback
-rows, in the order a viewer sees them; an extra that never finished is left out with a note. **The
-catalog has no extras table yet**, so these rows exist in the JSON only and `--compare` counts them
-without comparing them. `library-v2-from-catalog.py` writes a trailer the catalog downloaded — a link
+rows, in the order a viewer sees them; an extra that never finished is left out with a note. The
+catalog keeps extras since katalog-manager's migration 039 (`com_nalet_katalog_itemextras`), but
+`--compare` doesn't read that table yet, so these rows exist in the JSON only and `--compare` counts
+them without comparing them. `library-v2-from-catalog.py` writes a trailer the catalog downloaded — a link
 whose `localPath` is a file on the share — as an extra of kind `trailer` beside its movie or series,
 copied or moved in as `--media-mode` says, keeps the link in `videos[]` and names it in the extra's
 `origin`; an episode's stays a link, and so does every trailer with `--media-mode none`. The rebuild
