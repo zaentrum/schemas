@@ -1,0 +1,213 @@
+{
+  "schema": "zaentrum.library.package/2",
+  "packageId": "f3adfcdd-70c4-5fc7-9498-a05cafa703ea",
+  "createdAt": "2026-10-06T10:00:00.250000Z",
+  "packagedBy": "shaka-packager v3.4.2",
+  "state": "complete",
+  "role": "canonical",
+  "durationMs": 60000,
+  "renditions": {
+    "video": [
+      {
+        "id": "v0",
+        "dir": "hls/v0",
+        "codec": "hvc1.2.4.L153.B0",
+        "width": 3840,
+        "height": 1608,
+        "bitrateBps": 15000000,
+        "hdr": true,
+        "frameRate": "24000/1001",
+        "segments": 10,
+        "targetDuration": 6,
+        "peakBitrateBps": 32000000,
+        "videoRange": "PQ",
+        "label": "source",
+        "encoder": "copy"
+      }
+    ],
+    "audio": [
+      {
+        "id": "a0",
+        "dir": "hls/a0",
+        "codec": "mp4a.40.2",
+        "language": "eng",
+        "title": "English DD+ 5.1",
+        "default": true,
+        "channels": 2,
+        "bitrateBps": 192000,
+        "segments": 10,
+        "visible": true,
+        "purpose": "main",
+        "purposeFrom": "assumed",
+        "variant": null,
+        "group": "audio",
+        "name": "English"
+      },
+      {
+        "id": "a1",
+        "dir": "hls/a1",
+        "codec": "mp4a.40.2",
+        "language": "eng",
+        "title": "Commentary",
+        "default": false,
+        "channels": 2,
+        "bitrateBps": 192000,
+        "segments": 10,
+        "visible": true,
+        "purpose": "commentary",
+        "purposeFrom": "title",
+        "variant": null,
+        "group": "audio",
+        "name": "English · Commentary"
+      }
+    ],
+    "audioSurround": [
+      {
+        "id": "a2",
+        "dir": "hls/a2",
+        "codec": "ec-3",
+        "language": "eng",
+        "title": "English DD+ 5.1",
+        "default": true,
+        "channels": 6,
+        "bitrateBps": 640000,
+        "segments": 10,
+        "visible": true,
+        "purpose": "main",
+        "purposeFrom": "assumed",
+        "variant": null,
+        "group": "audio-surround",
+        "name": "English 5.1"
+      }
+    ]
+  },
+  "subtitles": [
+    {
+      "id": "sub0",
+      "path": "subs/0.vtt",
+      "language": "eng",
+      "title": "Forced",
+      "default": false,
+      "forced": true,
+      "format": "webvtt",
+      "visible": true,
+      "purpose": "forced",
+      "purposeFrom": "disposition",
+      "variant": null,
+      "hls": "hls/s0"
+    },
+    {
+      "id": "sub1",
+      "path": "subs/1.vtt",
+      "language": "eng",
+      "title": "",
+      "default": false,
+      "forced": false,
+      "format": "webvtt",
+      "visible": true,
+      "purpose": "dialogue",
+      "purposeFrom": "assumed",
+      "variant": null,
+      "hls": "hls/s1"
+    },
+    {
+      "id": "sub2",
+      "path": "subs/2.sup",
+      "language": "ger",
+      "title": "",
+      "default": false,
+      "forced": false,
+      "format": "pgs",
+      "visible": true,
+      "purpose": "dialogue",
+      "purposeFrom": "assumed",
+      "variant": null
+    },
+    {
+      "id": "sub3",
+      "path": "subs/3.vtt",
+      "language": "ger",
+      "title": "Deutsch",
+      "default": false,
+      "forced": false,
+      "format": "webvtt",
+      "visible": true,
+      "purpose": "dialogue",
+      "purposeFrom": "assumed",
+      "variant": null,
+      "hls": "hls/s3",
+      "fromSidecar": "sources/8bca399e-7836-5df6-a6a1-edf538b03074/Example Film (2024) - 2160p.de.srt"
+    }
+  ],
+  "trickplay": {
+    "vttPath": "trickplay/thumbnails.vtt",
+    "spritePattern": "trickplay/sprite-%04d.jpg",
+    "intervalSec": 10,
+    "thumbWidth": 320,
+    "thumbHeight": 134,
+    "gridCols": 10,
+    "gridRows": 10
+  },
+  "hls": {
+    "master": "hls/master.m3u8",
+    "segmentSeconds": 6,
+    "audioGroups": [
+      "audio",
+      "audio-surround"
+    ],
+    "subtitleGroup": "subs"
+  },
+  "trailers": [],
+  "sizeBytes": 831,
+  "peakBandwidthBps": 32192000,
+  "fidelity": {
+    "lossless": false,
+    "losses": [
+      {
+        "kind": "attachments-dropped",
+        "detail": "attached fonts not carried",
+        "sourceStreamIndex": null
+      }
+    ],
+    "droppedSourceStreams": []
+  },
+  "essence": {
+    "maxAudioChannels": 6,
+    "surround": true,
+    "losslessAudio": false,
+    "objectAudio": false,
+    "maxVideoHeight": 1608,
+    "videoBitDepth": 10,
+    "hdr10Metadata": true,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [
+      "de",
+      "en"
+    ],
+    "subtitleTracks": 4,
+    "imageSubtitles": true,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": false,
+    "commentaryTracks": 1,
+    "commentarySubtitles": 0,
+    "audioDescriptionTracks": 0,
+    "sdhSubtitleLanguages": [],
+    "forcedSubtitleLanguages": [
+      "en"
+    ],
+    "closedCaptions": false
+  },
+  "checksums": {
+    "file": "checksums.sha256",
+    "algorithm": "sha256",
+    "sha256": "sha256:cff5218daab0e02e92c32c26719744ed1b5d0e4ac8826c8f6a7a8fd96a8f1e44",
+    "files": 23,
+    "bytes": 1957
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "streams": [
+    {"index": 0, "codec_name": "h264", "codec_type": "video", "profile": "High", "width": 1920, "height": 800,
+     "pix_fmt": "yuv420p", "level": 40, "color_transfer": "bt709", "color_primaries": "bt709", "field_order": "progressive",
+     "avg_frame_rate": "24/1", "disposition": {"default": 1}, "tags": {"language": "und"}},
+    {"index": 1, "codec_name": "aac", "codec_type": "audio", "profile": "LC", "channels": 2, "channel_layout": "stereo",
+     "sample_rate": "48000", "disposition": {"default": 1}, "tags": {"language": "eng"}}
+  ],
+  "chapters": [],
+  "format": {"filename": "Example Film (2024) - Trailer.mov", "nb_streams": 2, "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+             "duration": "30.000000", "size": "4000000", "bit_rate": "1066666", "tags": {}}
+}

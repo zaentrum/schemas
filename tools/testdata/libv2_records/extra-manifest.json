@@ -1,0 +1,17 @@
+{
+  "version": 2, "itemId": "16aa63f3-5555-4666-8777-888888888888", "type": "extra", "title": "Trailer",
+  "durationMs": 30000, "packagedAt": "2026-10-06T10:05:00+00:00", "packager": "shaka-packager v3.4.2",
+  "parentId": "f0f0f0f0-1111-4222-8333-444444444444", "extraKind": "trailer",
+  "renditions": {
+    "video": [
+      {"id": "v0", "dir": "hls/v0", "codec": "avc1.640028", "width": 1920, "height": 800, "bitrateBps": 4000000,
+       "peakBitrateBps": 6000000, "hdr": false, "videoRange": "SDR", "frameRate": "24/1", "segments": 5,
+       "targetDuration": 6, "label": "source", "encoder": "copy"}],
+    "audio": [
+      {"idx": 0, "codec": "mp4a.40.2", "language": "eng", "title": "", "channels": 2, "default": true, "visible": true,
+       "id": "a0", "dir": "hls/a0", "bitrateBps": 192000, "segments": 5, "group": "audio", "name": "English"}],
+    "audioSurround": []
+  },
+  "subtitles": [],
+  "hls": {"master": "hls/master.m3u8", "segmentSeconds": 6, "audioGroups": ["audio"], "subtitleGroup": null}
+}

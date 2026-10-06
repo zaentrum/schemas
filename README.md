@@ -49,7 +49,9 @@ tools/
   library-v2-media-check.py        check a v2 tree against the bytes, without jsonschema
   library-v2-upgrade.py            upgrade a v2 tree in place to the layout in which every record proves itself
   library-v2-sweep.py              find provable garbage in a v2 tree and, through a quarantine, remove it
+  libv2_records.py                 the record logic the packager vendors: source, version, package, extra records
   test-library-v2-tools.py         prove the v2 tools do what they say
+  testdata/libv2_records/          probes and manifests, and the records libv2_records.py writes from them
 ```
 
 The top-level `stube/` directory mirrors the Avro namespace and Kafka topic
@@ -420,6 +422,10 @@ These tools put the record on storage, read it back and keep it. They are plain 
 Python 3.11 and need no network, so they run where the share is mounted — piped into a pod if that
 is the only place it is reachable (`oc exec -i deploy/packager -- python3 - <args> < tool.py`). The
 database export they read is produced on the client side, so nothing needs a driver or a credential.
+`library-v2-from-catalog.py` writes its source, version, package and extra records with
+`libv2_records.py`, the module the packager vendors byte for byte so that both write the same
+records; it finds the module beside it, and is piped behind it:
+`cat tools/libv2_records.py tools/library-v2-from-catalog.py | oc exec -i deploy/packager -- python3 - <args>`.
 
 ```sh
 # a catalog's rows, its package store and its originals become item folders, and its people folders

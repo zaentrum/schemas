@@ -68,6 +68,10 @@ rule and checks the tool notices:
                  the database knowing more until it is projected again
   media check    every check it makes fails on a tree that breaks it and passes on one that does not
   the pieces     the JPEG and PNG header parsing, the qh1 fingerprint and the generated ids
+  records        the record module the packager vendors writes, from the probes and manifests of
+                 testdata/libv2_records, the source, version, package and extra records expected/
+                 holds, byte for byte; each chain holds, and the check of one bites; piped behind a
+                 tool, the module has none of its names redefined by it
 """
 import base64, datetime, glob, hashlib, importlib.util, json, os, shutil, subprocess, sys, tempfile, time, uuid
 
@@ -81,6 +85,9 @@ MEDIA_CHECK = os.path.join(TOOLS, "library-v2-media-check.py")
 UPGRADE = os.path.join(TOOLS, "library-v2-upgrade.py")
 SWEEP = os.path.join(TOOLS, "library-v2-sweep.py")
 VALIDATOR = os.path.join(TOOLS, "validate-library-v2.py")
+RECORDS = os.path.join(TOOLS, "libv2_records.py")
+# The tools that import the record module the packager vendors, and so are piped behind it.
+USES_RECORDS = (FROM_CATALOG,)
 
 
 class Tally:
@@ -119,9 +126,13 @@ def run(*args):
 
 
 def run_piped(tool, *args):
-    """A tool the way a pod runs it: python3 - <args> < tool.py, with no file of its own to find."""
-    with open(tool, "rb") as f:
-        r = subprocess.run([sys.executable, "-", *[str(a) for a in args]], stdin=f, capture_output=True)
+    """A tool the way a pod runs it: python3 - <args> < tool.py, with no file of its own to find — and a
+    tool that uses the record module piped behind it, cat libv2_records.py tool.py | python3 - <args>,
+    from a folder that holds no copy of the module to import."""
+    body = b"".join(open(p, "rb").read() for p in ([RECORDS] if tool in USES_RECORDS else []) + [tool])
+    with tempfile.TemporaryDirectory() as nowhere:
+        r = subprocess.run([sys.executable, "-", *[str(a) for a in args]], input=body, capture_output=True,
+                           cwd=nowhere)
     return r.returncode, (r.stdout + r.stderr).decode("utf-8", "replace")
 
 
@@ -226,7 +237,7 @@ def extra_of(root, kind):
 
 # ---------------------------------------------------------------- the pieces
 def test_pieces(t):
-    cat = load_tool(FROM_CATALOG)
+    cat, rec = load_tool(FROM_CATALOG), load_tool(RECORDS)
 
     # the catalog's export keeps every key of externalIds and writes null for an id it does not
     # know; person.json leaves the key out, so the compare must not read the gap as a difference
@@ -262,9 +273,9 @@ def test_pieces(t):
         body = bytes((i * 7 + 3) % 251 for i in range(200000))
         with open(big, "wb") as f:
             f.write(body)
-        t.eq("qh1 of a file smaller than the window is its bytes and its size", cat.qh1(small),
+        t.eq("qh1 of a file smaller than the window is its bytes and its size", rec.qh1(small),
              "sha256:" + hashlib.sha256(b"a" * 1000 + (1000).to_bytes(8, "big")).hexdigest())
-        t.eq("qh1 of a large file is its first and last 64 KiB and its size", cat.qh1(big),
+        t.eq("qh1 of a large file is its first and last 64 KiB and its size", rec.qh1(big),
              "sha256:" + hashlib.sha256(body[:65536] + body[-65536:] +
                                         len(body).to_bytes(8, "big")).hexdigest())
         # the rule bites: a file with the same ends and a different size is a different fingerprint
@@ -272,26 +283,26 @@ def test_pieces(t):
         with open(longer, "wb") as f:
             f.write(body[:65536] + b"\x00" * 10 + body[65536:])
         t.ok("qh1 tells two files with the same ends and different sizes apart",
-             cat.qh1(big) != cat.qh1(longer))
-        t.eq("the media check computes the same fingerprint", load_tool(MEDIA_CHECK).qh1(big), cat.qh1(big))
+             rec.qh1(big) != rec.qh1(longer))
+        t.eq("the media check computes the same fingerprint", load_tool(MEDIA_CHECK).qh1(big), rec.qh1(big))
 
     t.eq("a generated id is a v5 UUID of the item and a stable name",
-         cat.did("item", "version", "x"),
+         rec.did("item", "version", "x"),
          str(uuid.uuid5(uuid.uuid5(uuid.NAMESPACE_URL, "https://zaentrum.github.io/schemas/library"),
                         "item:version:x")))
-    t.ok("a different name is a different id", cat.did("item", "version", "x") != cat.did("item", "version", "y"))
-    t.eq("every tool derives ids the same way", cat.did("i", "package", "p"),
+    t.ok("a different name is a different id", rec.did("item", "version", "x") != rec.did("item", "version", "y"))
+    t.eq("every tool derives ids the same way", rec.did("i", "package", "p"),
          load_tool(REBUILD).did("i", "package", "p"))
 
-    t.eq("a file name that numbers a range says so", cat.naming("Show - S07E23-24.mkv"),
+    t.eq("a file name that numbers a range says so", rec.naming("Show - S07E23-24.mkv"),
          {"scheme": "unknown", "seasonNumber": 7, "episodeNumber": 23, "episodeEnd": 24, "raw": "S07E23-24"})
     t.eq("and the ordering it used stays unknown, because the name does not say",
-         cat.naming("Show 1x05.mkv"),
+         rec.naming("Show 1x05.mkv"),
          {"scheme": "unknown", "seasonNumber": 1, "episodeNumber": 5, "episodeEnd": None, "raw": "1x05"})
-    t.eq("a quality token is not an episode range", cat.naming("Show S01E02-1080p.mkv")["episodeEnd"], None)
-    t.eq("a name that numbers nothing says nothing", cat.naming("Example Film (2024).mkv"), None)
+    t.eq("a quality token is not an episode range", rec.naming("Show S01E02-1080p.mkv")["episodeEnd"], None)
+    t.eq("a name that numbers nothing says nothing", rec.naming("Example Film (2024).mkv"), None)
     t.eq("the v1 converter reads a name the same way", load_tool(FROM_V1).Convert.naming(None, "Show - S07E23-24.mkv"),
-         cat.naming("Show - S07E23-24.mkv"))
+         rec.naming("Show - S07E23-24.mkv"))
 
     gate = load_tool(REBUILD).deletion_gate
     source = {"surround": True, "maxAudioChannels": 6, "subtitleLanguages": ["en", "de"], "chapters": True}
@@ -301,6 +312,232 @@ def test_pieces(t):
     t.eq("a package that carries everything costs nothing", gate([package], package), [])
     t.eq("chapter marks are never a loss: the version keeps them, not the file",
          gate([{"chapters": True}], {}), [])
+
+
+# ---------------------------------------------------------------- the records the packager writes
+GOLDEN = os.path.join(TOOLS, "testdata", "libv2_records")
+GOLDEN_ITEM = "f0f0f0f0-1111-4222-8333-444444444444"
+GOLDEN_EXTRA = "16aa63f3-5555-4666-8777-888888888888"
+GOLDEN_AT = "2026-10-06T10:00:00Z"
+GOLDEN_ORIGINAL = "Example Film (2024) - 2160p.mkv"
+GOLDEN_SIDECAR = "Example Film (2024) - 2160p.de.srt"
+GOLDEN_COMPANION = "Example Film (2024) - 2160p.nfo"
+# The records a writer builds with the module, each compared byte for byte with expected/<name>.
+GOLDEN_RECORDS = {"source.json": "sources/{sid}/source.json", "ffprobe.json": "sources/{sid}/ffprobe.json",
+                  "source.checksums.sha256": "sources/{sid}/checksums.sha256",
+                  "version.json": "versions/{vid}/version.json",
+                  "version.checksums.sha256": "versions/{vid}/checksums.sha256",
+                  "package.json": "versions/{vid}/package.json", "complete": "versions/{vid}/.complete",
+                  "extra.json": "extras/{xid}/extra.json", "extra.checksums.sha256": "extras/{xid}/checksums.sha256",
+                  "extra.package.json": "extras/{xid}/package.json", "extra.complete": "extras/{xid}/.complete"}
+
+
+def package_placeholders(folder, manifest):
+    """The files of the package a manifest describes, each a placeholder holding its own path — but a
+    master playlist naming its bandwidths and a trickplay track whose cues cover the duration."""
+    def put(rel, body):
+        p = os.path.join(folder, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(body if isinstance(body, bytes) else body.encode())
+    ren = manifest["renditions"]
+    for r in ren["video"] + ren["audio"] + ren.get("audioSurround", []):
+        for name in ("init.mp4", "seg-00001.m4s", "playlist.m3u8"):
+            put(f"{r['dir']}/{name}", f"{r['dir']}/{name}\n")
+    for s in manifest.get("subtitles") or []:
+        put(s["path"], f"{s['path']}\n")
+        if s.get("hls"):
+            put(f"{s['hls']}/playlist.m3u8", f"{s['hls']}/playlist.m3u8\n")
+    put("hls/master.m3u8", "#EXTM3U\n" + "".join(f"#EXT-X-STREAM-INF:BANDWIDTH={v['peakBitrateBps'] + 192000}\n"
+                                                 f"{v['id']}/playlist.m3u8\n" for v in ren["video"]))
+    tp = manifest.get("trickplay")
+    if tp:
+        cues = manifest["durationMs"] // (tp["intervalSec"] * 1000)
+        put(tp["vttPath"], "WEBVTT\n\n" + "".join(f"00:00:{i * 10:02d}.000 --> 00:00:{i * 10 + 10:02d}.000\n"
+                                                  f"sprite-0000.jpg#xywh={i * 320},0,320,134\n\n" for i in range(cues)))
+        put("trickplay/sprite-0000.jpg", "trickplay/sprite-0000.jpg\n")
+
+
+def golden_tree(root, rec):
+    """The item folder a packager writes when it first packages an original that came with a German
+    sidecar and a .nfo, and the folder of a trailer of the movie it packaged too: every record built
+    with the record module from the fixtures' probes and manifests, every moment and id fixed. Returns
+    (item folder, sourceId, versionId, extraId)."""
+    arrivals = os.path.join(root, "arrivals", "Example Film (2024)")
+    os.makedirs(arrivals)
+    original = os.path.join(arrivals, GOLDEN_ORIGINAL)
+    with open(original, "wb") as f:
+        f.write(bytes((i * 7 + 3) % 251 for i in range(200000)))
+    with open(os.path.join(arrivals, GOLDEN_SIDECAR), "w") as f:
+        f.write("1\n00:00:01,000 --> 00:00:02,000\nHallo\n")
+    with open(os.path.join(arrivals, GOLDEN_COMPANION), "w") as f:
+        f.write("<movie><title>Example Film</title></movie>\n")
+    moment = datetime.datetime(2026, 10, 6, 9, 0, tzinfo=datetime.timezone.utc).timestamp()
+    os.utime(original, (moment, moment))
+    item = os.path.join(root, "library", "movies", GOLDEN_ITEM[:2], GOLDEN_ITEM)
+    jwrite(os.path.join(item, "item.json"), {"schema": "zaentrum.library.item/2", "itemId": GOLDEN_ITEM, "type": "movie",
+                                             "title": "Example Film", "externalIds": {}, "createdAt": GOLDEN_AT})
+    write_sums(item, ["item.json"])
+    jwrite(os.path.join(item, "metadata.json"), {"schema": "zaentrum.library.metadata/2", "itemId": GOLDEN_ITEM,
+                                                 "type": "movie", "asOf": GOLDEN_AT,
+                                                 "titles": {"primary": "Example Film"}, "images": []})
+
+    # sources/<sourceId>/: the probe, the copies of the sidecar and the companion, the record, the checksums
+    sid, vid, pid = (rec.did(GOLDEN_ITEM, kind, GOLDEN_ORIGINAL) for kind in ("source", "version", "package"))
+    sp = os.path.join(item, "sources", sid)
+    os.makedirs(sp)
+    files = [(os.path.join(arrivals, GOLDEN_SIDECAR), "subtitle", "de")] + \
+            [(p, kind, None) for p, kind in rec.companion_files(original)]
+    sidecars = []
+    for (path, kind, language), name in zip(files, rec.sidecar_names([os.path.basename(p) for p, _, _ in files])):
+        shutil.copyfile(path, os.path.join(sp, name))
+        sidecars.append(rec.sidecar_entry(sid, name, os.path.join(sp, name), os.path.basename(path), kind, language))
+    probe = jload(os.path.join(GOLDEN, "probe.json"))
+    source, raw = rec.source_record(sid, GOLDEN_ORIGINAL, os.path.getsize(original), taken_at=GOLDEN_AT,
+                                    taken_by="packager", library_path=f"Example Film (2024)/{GOLDEN_ORIGINAL}",
+                                    qh1=rec.qh1(original), mtime=rec.ts_of_mtime(original), probe=probe,
+                                    probe_version="ffprobe version 7.1", sidecars=sidecars)
+    for name, data in (("source.json", rec.json_bytes(source)), ("ffprobe.json", raw)):
+        with open(os.path.join(sp, name), "wb") as f:
+            f.write(data)
+    sums = rec.checksums([rec.record_entry(n, open(os.path.join(sp, n), "rb").read()) for n in rec.listdir(sp)])[0]
+    with open(os.path.join(sp, "checksums.sha256"), "wb") as f:
+        f.write(sums)
+
+    # versions/<versionId>/: the package, the record, then the chain
+    manifest = jload(os.path.join(GOLDEN, "manifest.json"))
+    vp = os.path.join(item, "versions", vid)
+    package_placeholders(vp, manifest)
+    version = rec.version_record(vid, source, created_at=GOLDEN_AT, created_by="katalog-manager",
+                                 chapters=rec.probe_chapters(probe), chapters_from="original-file",
+                                 segments=rec.segments([{"kind": "credits", "startMs": 50000, "endMs": 60000,
+                                                         "source": "chapter", "confidence": 0.9, "label": None},
+                                                        {"kind": "outro", "startMs": 55000, "endMs": 60000,
+                                                         "source": "blackframe", "confidence": None, "label": None}]))
+    version_bytes = rec.json_bytes(version)
+    listed = rec.package_files(vp) + [rec.record_entry("version.json", version_bytes)]
+    package, notes = rec.package_record(pid, manifest, listed, source=source,
+                                        peak_bandwidth_bps=rec.peak_bandwidth(vp, manifest["hls"]["master"]),
+                                        sidecars={"sub3": sidecars[0]["file"]})
+    package_bytes = rec.json_bytes(package)
+    for name, data in (("version.json", version_bytes), ("checksums.sha256", rec.checksums(listed)[0]),
+                       ("package.json", package_bytes), (".complete", rec.complete(package_bytes))):
+        with open(os.path.join(vp, name), "wb") as f:
+            f.write(data)
+
+    # extras/<extraId>/: an extra keeps no original; its record names the one it was packaged from
+    trailer = os.path.join(root, "arrivals", "extras", "trailer.mov")
+    os.makedirs(os.path.dirname(trailer))
+    with open(trailer, "wb") as f:
+        f.write(b"a trailer that is only an example\n" * 100)
+    xp = os.path.join(item, "extras", GOLDEN_EXTRA)
+    xman = jload(os.path.join(GOLDEN, "extra-manifest.json"))
+    package_placeholders(xp, xman)
+    extra = rec.extra_record(GOLDEN_EXTRA, created_at="2026-10-06T08:00:00Z", created_by="katalog-manager/api",
+                             kind="trailer", title="Trailer", language="zxx",
+                             probe=jload(os.path.join(GOLDEN, "extra-probe.json")), probe_version="ffprobe version 7.1",
+                             probed_at=GOLDEN_AT, packaged_from=[{"name": "trailer.mov", "sizeBytes": os.path.getsize(trailer),
+                                                                  "fixity": {"qh1": rec.qh1(trailer)}}])
+    extra_bytes = rec.json_bytes(extra)
+    xlisted = rec.package_files(xp, rec.EXTRA_DIRS) + [rec.record_entry("extra.json", extra_bytes)]
+    xpackage, xnotes = rec.package_record(rec.did(GOLDEN_EXTRA, "package"), xman, xlisted, source=extra,
+                                          peak_bandwidth_bps=rec.peak_bandwidth(xp))
+    xpackage_bytes = rec.json_bytes(xpackage)
+    for name, data in (("extra.json", extra_bytes), ("checksums.sha256", rec.checksums(xlisted)[0]),
+                       ("package.json", xpackage_bytes), (".complete", rec.complete(xpackage_bytes))):
+        with open(os.path.join(xp, name), "wb") as f:
+            f.write(data)
+    return item, sid, vid, notes + xnotes
+
+
+def test_records(t):
+    """The records the packager writes with the module it vendors — a source, a version, its package and
+    an extra — are the ones expected/ holds, byte for byte; their chains hold, and the media check finds
+    the tree they make whole."""
+    rec = load_tool(RECORDS)
+    with tempfile.TemporaryDirectory() as tmp:
+        item, sid, vid, notes = golden_tree(tmp, rec)
+        for name, where in sorted(GOLDEN_RECORDS.items()):
+            got = open(os.path.join(item, where.format(sid=sid, vid=vid, xid=GOLDEN_EXTRA)), "rb").read()
+            want = os.path.join(GOLDEN, "expected", name)
+            t.ok(f"the module writes {name} as expected/ holds it",
+                 os.path.isfile(want) and got == open(want, "rb").read(),
+                 got.decode("utf-8", "replace")[:600])
+        t.eq("it says what it normalised: the forced track the packager flagged default",
+             notes, ["subtitle sub0 was a forced track flagged default; cleared"])
+        vp, xp = os.path.join(item, "versions", vid), os.path.join(item, "extras", GOLDEN_EXTRA)
+        t.eq("the version's chain holds", rec.chain_problems(vp, full=True), [])
+        t.eq("and the extra's", rec.chain_problems(xp, "extra.json", rec.EXTRA_DIRS, full=True), [])
+        code, text = run(MEDIA_CHECK, "--checksums", os.path.join(tmp, "library"))
+        t.ok("the media check finds the tree they make whole", code == 0 and text.strip().endswith("OK"), text)
+
+        package = jload(os.path.join(vp, "package.json"))
+        t.eq("the 5.1 companion counts for what the package carries, so surround is no loss, and the copied "
+             "PQ stream keeps its HDR10 metadata: only the attached font is lost",
+             (package["essence"]["surround"], package["essence"]["maxAudioChannels"],
+              package["essence"]["hdr10Metadata"], [x["kind"] for x in package["fidelity"]["losses"]]),
+             (True, 6, True, ["attachments-dropped"]))
+        t.eq("the deletion gate is what the original carries and the package does not",
+             rec.deletion_gate([jload(os.path.join(item, "sources", sid, "source.json"))["essence"]], package["essence"]),
+             ["fonts"])
+        source = jload(os.path.join(item, "sources", sid, "source.json"))["essence"]
+        encoded = dict(package["renditions"], video=[dict(package["renditions"]["video"][0], encoder="hevc_nvenc")])
+        stereo_only = dict(encoded, audioSurround=[])
+        t.eq("a re-encoded PQ stream is taken to have lost the metadata, and without the 5.1 companion so is surround",
+             (rec.package_essence({"renditions": encoded, "subtitles": package["subtitles"]}, source)["hdr10Metadata"],
+              rec.deletion_gate([source], rec.package_essence({"renditions": stereo_only,
+                                                               "subtitles": package["subtitles"]}, source))),
+             (False, ["fonts", "hdr10Metadata", "maxAudioChannels", "surround"]))
+        t.eq("a rendition made from a sidecar names the copy the source folder keeps",
+             [s.get("fromSidecar") for s in package["subtitles"]],
+             [None, None, None, f"sources/{sid}/{GOLDEN_SIDECAR}"])
+        t.eq("the source folder keeps the sidecar and the companion, each described",
+             [(x["originalName"], x["kind"], x.get("language"), x.get("purpose"))
+              for x in jload(os.path.join(item, "sources", sid, "source.json"))["sidecars"]],
+             [(GOLDEN_SIDECAR, "subtitle", "de", "dialogue"), (GOLDEN_COMPANION, "nfo", None, None)])
+
+        # the chain check bites: a package file changed, a file nobody listed, a record changed
+        with open(os.path.join(vp, "subs", "1.vtt"), "ab") as f:
+            f.write(b"x")
+        t.ok("a package file changed after the chain was closed is caught by the full check",
+             any("subs/1.vtt does not match its checksum" in p for p in rec.chain_problems(vp, full=True))
+             and not any("subs/1.vtt" in p for p in rec.chain_problems(vp)))
+        with open(os.path.join(vp, "hls", "v0", "seg-00002.m4s"), "w") as f:
+            f.write("x")
+        t.ok("a file the checksums do not list is caught",
+             "hls/v0/seg-00002.m4s is not listed in checksums.sha256" in rec.chain_problems(vp))
+        with open(os.path.join(xp, "extra.json"), "a") as f:
+            f.write(" ")
+        t.ok("and a record changed after it was covered",
+             "extra.json does not match the digest checksums.sha256 lists for it"
+             in rec.chain_problems(xp, "extra.json", rec.EXTRA_DIRS))
+
+    t.eq("a sidecar named like a record of its folder, or like one copied before it, gets a number",
+         rec.sidecar_names(["source.json", "a.srt", "a.srt", "checksums.sha256"]),
+         ["source-1.json", "a.srt", "a-1.srt", "checksums-1.sha256"])
+    try:
+        rec.source_record(GOLDEN_ITEM, "gone.mkv", 1, taken_at=GOLDEN_AT, taken_by="x", library_path="gone.mkv")
+        refused = False
+    except ValueError:
+        refused = True
+    t.ok("a source record without fixity is refused unless a note says why it has none", refused)
+    gone, raw = rec.source_record(GOLDEN_ITEM, "gone.mkv", 1, taken_at=GOLDEN_AT, taken_by="x", library_path="gone.mkv",
+                                  note="the original was gone before the library was recorded")
+    t.ok("and with one it is a record of the file's name and size alone",
+         raw is None and "fixity" not in gone["file"] and gone["probe"]["note"].startswith("the original was gone"))
+    t.eq("an unknown kind of detected range is 'other', labelled with the catalog's kind",
+         [(s["kind"], s["label"]) for s in rec.segments([{"kind": "outro", "startMs": 1, "endMs": 2, "label": "x"},
+                                                         {"kind": "credits", "startMs": 3, "endMs": 4, "label": "black"}])],
+         [("other", "outro"), ("credits", "black")])
+
+    # piped behind a tool, the module runs as part of it: the tool must not shadow a name it defines
+    import ast
+    defined = lambda path: {n.name for n in ast.parse(open(path).read()).body if isinstance(n, (ast.FunctionDef, ast.ClassDef))} \
+        | {t.id for n in ast.parse(open(path).read()).body if isinstance(n, ast.Assign) for t in n.targets
+           if isinstance(t, ast.Name)}
+    for tool in USES_RECORDS:
+        t.eq(f"{os.path.basename(tool)} redefines no name of the module it is piped behind",
+             sorted(defined(tool) & defined(RECORDS)), [])
 
 
 # ---------------------------------------------------------------- the example tree
@@ -3315,7 +3552,8 @@ def main():
     """Every section, or with arguments only the sections whose name contains one of them."""
     t = Tally()
     wanted = sys.argv[1:]
-    for section, fn in (("the pieces", test_pieces), ("the example tree", test_round_trip),
+    for section, fn in (("the pieces", test_pieces), ("the records the packager writes", test_records),
+                        ("the example tree", test_round_trip),
                         ("a record proves itself", test_proves_itself),
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
                         ("the catalog's own export", test_export_sample),

@@ -65,7 +65,7 @@ jobs:
           python -m py_compile tools/make-library-v2-examples.py tools/test-validate-library-v2.py \
             tools/library-v2-from-catalog.py tools/library-v2-from-v1.py tools/library-v2-rebuild.py \
             tools/library-v2-media-check.py tools/library-v2-upgrade.py tools/library-v2-sweep.py \
-            tools/test-library-v2-tools.py
+            tools/libv2_records.py tools/test-library-v2-tools.py
       - name: the tools write a tree, read it back, keep it and catch a broken one
         run: python tools/test-library-v2-tools.py
       - name: examples are up to date with their generator
@@ -81,7 +81,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: |
-          python -m py_compile tools/library-v2-from-catalog.py tools/library-v2-from-v1.py \
+          python -m py_compile tools/libv2_records.py tools/library-v2-from-catalog.py tools/library-v2-from-v1.py \
             tools/library-v2-rebuild.py tools/library-v2-media-check.py tools/library-v2-upgrade.py \
             tools/library-v2-sweep.py
       - name: the pod tools on the pod's Python

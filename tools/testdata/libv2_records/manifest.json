@@ -1,0 +1,36 @@
+{
+  "version": 2, "itemId": "f0f0f0f0-1111-4222-8333-444444444444", "type": "movie", "title": "Example Film",
+  "year": 2024, "tmdbId": null, "durationMs": 60000, "packagedAt": "2026-10-06T10:00:00.250000+00:00",
+  "packager": "shaka-packager v3.4.2",
+  "renditions": {
+    "video": [
+      {"id": "v0", "dir": "hls/v0", "codec": "hvc1.2.4.L153.B0", "width": 3840, "height": 1608,
+       "bitrateBps": 15000000, "peakBitrateBps": 32000000, "hdr": true, "videoRange": "PQ",
+       "frameRate": "24000/1001", "segments": 10, "targetDuration": 6, "label": "source", "encoder": "copy"}],
+    "audio": [
+      {"idx": 0, "codec": "mp4a.40.2", "language": "eng", "title": "English DD+ 5.1", "channels": 2, "default": true,
+       "visible": true, "id": "a0", "dir": "hls/a0", "bitrateBps": 192000, "segments": 10, "group": "audio",
+       "name": "English"},
+      {"idx": 1, "codec": "mp4a.40.2", "language": "eng", "title": "Commentary", "channels": 2, "default": false,
+       "visible": true, "id": "a1", "dir": "hls/a1", "bitrateBps": 192000, "segments": 10, "group": "audio",
+       "name": "English · Commentary"}],
+    "audioSurround": [
+      {"idx": 0, "codec": "ec-3", "language": "eng", "title": "English DD+ 5.1", "channels": 6, "default": true,
+       "visible": true, "mode": "copy", "id": "a2", "dir": "hls/a2", "bitrateBps": 640000, "segments": 10,
+       "group": "audio-surround", "name": "English 5.1"}]
+  },
+  "subtitles": [
+    {"id": "sub0", "language": "eng", "title": "Forced", "default": true, "forced": true, "visible": true,
+     "path": "subs/0.vtt", "format": "webvtt", "hls": "hls/s0"},
+    {"id": "sub1", "language": "eng", "title": "", "default": false, "forced": false, "visible": true,
+     "path": "subs/1.vtt", "format": "webvtt", "hls": "hls/s1"},
+    {"id": "sub2", "language": "ger", "title": "", "default": false, "forced": false, "visible": true,
+     "path": "subs/2.sup", "format": "pgs"},
+    {"id": "sub3", "language": "ger", "title": "Deutsch", "default": false, "forced": false, "visible": true,
+     "path": "subs/3.vtt", "format": "webvtt", "external": true, "hls": "hls/s3"}
+  ],
+  "trickplay": {"vttPath": "trickplay/thumbnails.vtt", "spritePattern": "trickplay/sprite-%04d.jpg",
+                "intervalSec": 10, "thumbWidth": 320, "thumbHeight": 134, "gridCols": 10, "gridRows": 10},
+  "hls": {"master": "hls/master.m3u8", "segmentSeconds": 6, "audioGroups": ["audio", "audio-surround"],
+          "subtitleGroup": "subs"}
+}
