@@ -3343,6 +3343,30 @@ def test_media_check(t):
          "rendition folder hls/a0 is missing")
     case("a subtitle the package names that is gone", False, lambda r: remove_subtitle(r),
          "is missing")
+
+    def names(r, **fields):
+        """An episode package naming, beside what it holds, what fields say: a 5.1 companion, a
+        subtitle's HLS rendition, a master playlist. A subtitle's is named by the package that has some."""
+        vp = next(v for v in sorted(glob.glob(os.path.join(r, "series", "*", "*", "episodes", "*", "versions", "*")))
+                  if jload(os.path.join(v, "package.json")).get("subtitles") or not fields.get("subtitles"))
+        doc = jload(os.path.join(vp, "package.json"))
+        doc["renditions"].update(fields.get("renditions") or {})
+        for s, extra in zip(doc["subtitles"], fields.get("subtitles") or []):
+            s.update(extra)
+        if fields.get("hls"):
+            doc["hls"] = fields["hls"]
+        jwrite(os.path.join(vp, "package.json"), doc)
+        close(vp)
+    case("a 5.1 companion whose folder is gone", False,
+         lambda r: names(r, renditions={"audioSurround": [{"id": "a9", "dir": "hls/a9", "channels": 6}]}),
+         "rendition folder hls/a9 is missing")
+    case("a subtitle's HLS rendition that is gone", False,
+         lambda r: names(r, subtitles=[{"id": "sub0", "hls": "hls/s0"}]),
+         "the HLS rendition hls/s0 of subtitle sub0 is missing")
+    case("a master playlist that is gone", False,
+         lambda r: names(r, hls={"master": "hls/master.m3u8", "segmentSeconds": 6, "audioGroups": ["audio"],
+                                 "subtitleGroup": None}),
+         "master playlist hls/master.m3u8 is missing")
     case("a probe a source record names that is gone", False,
          lambda r: os.unlink(glob.glob(os.path.join(movie(r), "sources", "*", "ffprobe.json"))[0]),
          "probe file a source record names is missing")

@@ -29,8 +29,10 @@ with the bytes beside them, never about a document being up to date.
                name source records that exist and its originalFiles are those sources' file names;
                package.json exists exactly when .complete does; a package is canonical exactly when
                the version keeps no original; lossless means no losses; chapters are ordered and
-               kept when the original carried them; every track says what it is for and the playlist
-               flags do not contradict it
+               kept when the original carried them; every track — a 5.1 companion's too — says what
+               it is for and the playlist flags do not contradict it; a rendition is in an audio group
+               the HLS layout names; a subtitle made from a sidecar names one a source of the version
+               keeps, and an extra's never does
   metadata     same item and type as item.json; every image exists with the recorded hash, size,
                content type and dimensions, is named by its own content hash, is listed once, and
                nothing unlisted sits in metadata/ (the same for a person's images beside person.json);
@@ -60,8 +62,9 @@ with the bytes beside them, never about a document being up to date.
   checksums    the checksums file matches its recorded hash and file count
   --check-media  no file under an item folder is a hard link shared with another path; every
                original a version names is there with its size and qh1, unless an original-deleted
-               event covers it — in which case it must NOT be there; every rendition folder,
-               subtitle and trickplay sheet a package names exists and the cues cover the duration;
+               event covers it — in which case it must NOT be there; every rendition folder, 5.1
+               companion, subtitle, subtitle HLS rendition, master playlist and trickplay sheet a
+               package names exists and the cues cover the duration;
                checksums.sha256 lists exactly version.json and the package's files, with their total
                size, and an extra's lists files of that total; an extra's every original has the
                size and qh1 extra.json records
@@ -739,6 +742,7 @@ class Checker:
         if pkg is not None:
             self.counts["packages"] += 1
             self.package(vp, v, pkg)
+            self.from_sidecars(vp, v, pkg, sources)
             if marker:
                 self.chain(vp)
         gate = deletion_gate([sources[s]["essence"] for s in v["sourceIds"] if s in sources],
@@ -771,18 +775,20 @@ class Checker:
                             f"({what}.json originalFiles is empty)"
                             + ("; a deletion afterwards is an event, not a rewrite" if what == "version" else ""))
         audio = pkg["renditions"]["audio"]
+        surround = pkg["renditions"].get("audioSurround") or []
         video = pkg["renditions"]["video"]
         subs = pkg.get("subtitles") or []
-        for kind, items in (("video", video), ("audio", audio), ("subtitle", subs)):
+        for kind, items in (("video", video), ("audio", audio + surround), ("subtitle", subs)):
             ids = [x["id"] for x in items]
             if len(ids) != len(set(ids)):
                 self.err(where, f"{kind} rendition ids are not unique")
         if audio and sum(1 for a in audio if a.get("default")) != 1:
             self.err(where, f"exactly one audio rendition must be default, found {sum(1 for a in audio if a.get('default'))}")
+        if sum(1 for a in surround if a.get("default")) > 1:
+            self.err(where, "more than one 5.1 companion is default")
         if sum(1 for s in subs if s.get("default") and not s.get("forced")) > 1:
             self.err(where, "more than one non-forced subtitle is default")
-        for x in audio + subs:
-            kind = "audio" if x in audio else "subtitle"
+        for kind, x in [("audio", a) for a in audio + surround] + [("subtitle", s) for s in subs]:
             if x.get("purposeFrom") == "assumed" and x.get("purpose") not in ("dialogue", "main"):
                 self.err(where, f"{kind} {x['id']} purpose {x.get('purpose')} cannot be assumed; only dialogue or main can")
             if (x.get("purposeFrom") is None) != (x.get("purpose") in (None, "unknown")):
@@ -792,6 +798,18 @@ class Checker:
                 self.err(where, f"subtitle {x['id']} is flagged forced but its purpose is {x['purpose']}")
             if x.get("default") and (x.get("forced") or x.get("purpose") in ("forced", "signs-songs")):
                 self.err(where, f"subtitle {x['id']} is a forced track flagged default: a reader would open with it instead of no subtitles")
+        hls = pkg.get("hls")
+        if hls:
+            for a in audio + surround:
+                if a.get("group") and a["group"] not in hls["audioGroups"]:
+                    self.err(where, f"audio rendition {a['id']} is in group {a['group']}, which hls.audioGroups does not name")
+            if hls.get("subtitleGroup") and not any(x.get("hls") for x in subs):
+                self.err(where, f"hls.subtitleGroup names {hls['subtitleGroup']}, but no subtitle has an HLS rendition")
+        if what == "extra":
+            for x in subs:
+                if x.get("fromSidecar"):
+                    self.err(where, f"subtitle {x['id']} is made from {x['fromSidecar']}, but an extra has no source "
+                                    f"record, so none of its subtitles is made from a source's sidecar")
         cs = pkg["checksums"]
         f = os.path.join(vp, cs["file"])
         if not os.path.isfile(f):
@@ -800,6 +818,22 @@ class Checker:
             self.err(where, f"checksums file {cs['file']} does not match its recorded sha256")
         elif len(read_checksums(f)) != cs["files"]:
             self.err(where, f"checksums file lists {len(read_checksums(f))} files, the record says {cs['files']}")
+
+    def from_sidecars(self, vp, v, pkg, sources):
+        """A subtitle made from a sidecar names the copy of it a source of this version keeps: one its
+        source.json lists among its sidecars, in the source folder. The sidecar is the record of what
+        the subtitle was made from, kept after the original and the file beside it are gone."""
+        where = os.path.join(vp, "package.json")
+        for x in pkg.get("subtitles") or []:
+            f = x.get("fromSidecar")
+            if not f:
+                continue
+            sid = f.split("/")[1] if f.startswith("sources/") and f.count("/") == 2 else None
+            if sid not in v["sourceIds"]:
+                self.err(where, f"subtitle {x['id']} is made from {f}, which is no sidecar of a source this version "
+                                f"was made from (sources/<sourceId>/<name>)")
+            elif sid in sources and f not in {sc["file"] for sc in sources[sid].get("sidecars") or []}:
+                self.err(where, f"subtitle {x['id']} is made from {f}, which source {sid} does not list among its sidecars")
 
     def head(self, vp, what="version"):
         """.complete, the head of the chain: sha256:<hex> of the package.json beside it, and nothing else."""
@@ -879,18 +913,23 @@ class Checker:
                         self.err(where, f"{rel} does not match its checksum")
 
     def playable(self, vp, pkg):
-        """Every rendition folder, subtitle and trickplay sheet the package in vp names is there, and
-        the trickplay cues cover its duration."""
+        """Every rendition folder — the 5.1 companions' too — subtitle, subtitle HLS rendition, master
+        playlist and trickplay sheet the package in vp names is there, and the trickplay cues cover its
+        duration."""
         where = os.path.join(vp, "package.json")
         ren = pkg["renditions"]
         if not ren["video"]:
             self.err(where, "a package needs at least one video rendition")
-        for r in ren["video"] + ren["audio"]:
+        for r in ren["video"] + ren["audio"] + (ren.get("audioSurround") or []):
             if not os.path.isdir(os.path.join(vp, r["dir"])):
                 self.err(where, f"rendition dir {r['dir']} missing")
         for sub in pkg.get("subtitles") or []:
             if not os.path.isfile(os.path.join(vp, sub["path"])):
                 self.err(where, f"subtitle {sub['path']} missing")
+            if sub.get("hls") and not os.path.isdir(os.path.join(vp, sub["hls"])):
+                self.err(where, f"the HLS rendition {sub['hls']} of subtitle {sub['id']} is missing")
+        if pkg.get("hls") and not os.path.isfile(os.path.join(vp, pkg["hls"]["master"])):
+            self.err(where, f"master playlist {pkg['hls']['master']} missing")
         tp = pkg.get("trickplay")
         if tp:
             vtt = os.path.join(vp, tp["vttPath"])

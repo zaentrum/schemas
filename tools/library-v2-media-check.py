@@ -21,8 +21,8 @@ What it checks, for every item folder:
     matches the count and the total size package.json recorded (--checksums also hashes every
     package file);
   * every file a record names is there: the probe and the sidecars of each source, every image
-    metadata.json lists, each version's originals, and each package's rendition folders, subtitles
-    and trickplay sheet;
+    metadata.json lists, each version's originals, and each package's rendition folders — its 5.1
+    companions' too — subtitles and their HLS renditions, master playlist and trickplay sheet;
   * an original an original-deleted event covers is NOT there, and one nothing covers is, with the
     size and the qh1 fingerprint its source record wrote down;
   * a version folder with a package has its .complete marker, and one without has neither;
@@ -335,14 +335,20 @@ class Check:
                      "does not name this package.json: package.json changed after the package completed")
 
     def playable(self, vp, pkg):
-        """Every rendition folder, subtitle, trickplay and trailer the package in vp names is there."""
+        """Every rendition folder — the 5.1 companions' too — subtitle and its HLS rendition, master
+        playlist, trickplay and trailer the package in vp names is there."""
         ren = pkg.get("renditions") or {}
-        for r in (ren.get("video") or []) + (ren.get("audio") or []):
+        for r in (ren.get("video") or []) + (ren.get("audio") or []) + (ren.get("audioSurround") or []):
             if not os.path.isdir(os.path.join(vp, r.get("dir") or "")):
                 self.err(vp, f"rendition folder {r.get('dir')} is missing")
         for sub in pkg.get("subtitles") or []:
             if not os.path.isfile(os.path.join(vp, sub.get("path") or "")):
                 self.err(vp, f"subtitle {sub.get('path')} is missing")
+            if sub.get("hls") and not os.path.isdir(os.path.join(vp, sub["hls"])):
+                self.err(vp, f"the HLS rendition {sub['hls']} of subtitle {sub.get('id')} is missing")
+        master = (pkg.get("hls") or {}).get("master")
+        if master and not os.path.isfile(os.path.join(vp, master)):
+            self.err(vp, f"master playlist {master} is missing")
         tp = pkg.get("trickplay")
         if tp and not os.path.isfile(os.path.join(vp, tp.get("vttPath") or "")):
             self.err(vp, f"trickplay {tp.get('vttPath')} is missing")

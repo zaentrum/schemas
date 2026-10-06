@@ -421,6 +421,70 @@ def rename_image(root):
     write_json(meta(d), doc)
 
 
+def with_surround(vp, **fields):
+    """The package in vp with a 5.1 companion of its first audio track, in a folder of its own."""
+    os.makedirs(os.path.join(vp, "hls", "a9"), exist_ok=True)
+    open(os.path.join(vp, "hls", "a9", ".keep"), "w").close()
+    edit_raw(pkg(vp), lambda d: d["renditions"].update(audioSurround=[dict(
+        d["renditions"]["audio"][0], **{"id": "a9", "dir": "hls/a9", "codec": "ec-3", "channels": 6, "default": True,
+                                        **fields})]))
+    rechecksum(vp)
+
+
+def hls_layout(vp, **fields):
+    """The package in vp as the packager writes one now: a master playlist and the HLS layout that names
+    it, every audio rendition named in its group, every rung with its peak, range, name and encoder."""
+    with open(os.path.join(vp, "hls", "master.m3u8"), "w") as f:
+        f.write("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=9192000\nv0/playlist.m3u8\n")
+
+    def change(d):
+        d["hls"] = {"master": "hls/master.m3u8", "segmentSeconds": 6, "audioGroups": ["audio", "audio-surround"],
+                    "subtitleGroup": None, **fields}
+        for a in d["renditions"]["audio"]:
+            a.update(group="audio", name="English")
+        for a in d["renditions"].get("audioSurround") or []:
+            a.update(group="audio-surround", name="English 5.1")
+        for v in d["renditions"]["video"]:
+            v.update(peakBitrateBps=9000000, videoRange="SDR", label="source", encoder="copy")
+    edit_raw(pkg(vp), change)
+    rechecksum(vp)
+
+
+def subtitle_hls(root, made=True):
+    """Episode 1's full English subtitle segmented into an HLS rendition — whose folder is there, or not."""
+    vp = version_of(episode(root, 1), True)
+    if made:
+        os.makedirs(os.path.join(vp, "hls", "s1"))
+        open(os.path.join(vp, "hls", "s1", "playlist.m3u8"), "w").write("#EXTM3U\n")
+    edit_raw(pkg(vp), lambda d: d["subtitles"][1].update(hls="hls/s1", name="English"))
+    rechecksum(vp)
+
+
+def from_sidecar(root, listed=True, path=None):
+    """Episode 1 as the packager leaves one that came with a German sidecar: its copy in the source folder,
+    listed in source.json when listed, and a subtitle of the package made from it — or from path."""
+    sp = os.path.dirname(episode_source(root, 1))
+    sid, name = os.path.basename(sp), "Example Show (US) - S01E01 - Pilot.de.srt"
+    with open(os.path.join(sp, name), "w") as f:
+        f.write("1\n00:00:01,000 --> 00:00:02,000\nHallo\n")
+    if listed:
+        edit_raw(os.path.join(sp, "source.json"), lambda d: d["sidecars"].append({
+            "file": f"sources/{sid}/{name}", "originalName": name, "kind": "subtitle", "format": "srt", "language": "de",
+            "forced": False, "hearingImpaired": False, "purpose": "dialogue",
+            "sizeBytes": os.path.getsize(os.path.join(sp, name)), "sha256": "sha256:" + digest(os.path.join(sp, name))}))
+        write_sums(sp, ["source.json", "ffprobe.json", name])
+    else:
+        os.remove(os.path.join(sp, name))
+    vp = version_of(episode(root, 1), True)
+    with open(os.path.join(vp, "subs", "3.vtt"), "w") as f:
+        f.write("WEBVTT\n")
+    edit_raw(pkg(vp), lambda d: d["subtitles"].append({
+        "id": "sub3", "path": "subs/3.vtt", "language": "ger", "title": "Deutsch", "default": False, "forced": False,
+        "format": "webvtt", "visible": True, "purpose": "dialogue", "purposeFrom": "assumed", "variant": None,
+        "fromSidecar": path or f"sources/{sid}/{name}"}))
+    rechecksum(vp)
+
+
 def silent(root):
     """An original with no audio: the package has video only."""
     vp = primary(episode(root, 2))
@@ -784,6 +848,28 @@ CASES = [
     ("an item whose database decided nothing about its extras", True, lambda r: edit(meta(movie(r)), lambda d: d["library"].pop("extras")), "OK", []),
     ("operating-system files in extra folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
                                                                (os.path.join(movie(r), "extras"), featurette(r), os.path.join(featurette(r), "hls"), bts(r))], "OK", ["--check-checksums"]),
+
+    # ---- the package as the packager writes it now: 5.1 companions, its HLS layout, subtitles made from sidecars
+    ("a package with a 5.1 companion and its HLS layout", True, lambda r: (with_surround(kept(r)), hls_layout(kept(r))), "OK", ["--check-checksums"]),
+    ("a 5.1 companion whose folder is missing", False, lambda r: (with_surround(kept(r)), shutil.rmtree(os.path.join(kept(r), "hls", "a9")), rechecksum(kept(r))), "rendition dir hls/a9 missing", ["--check-media"]),
+    ("a 5.1 companion with the id of a stereo rendition", False, lambda r: with_surround(kept(r), id="a0", dir="hls/a0"), "audio rendition ids are not unique", []),
+    ("two default 5.1 companions", False, lambda r: (with_surround(kept(r)), edit(pkg(kept(r)), lambda d: d["renditions"]["audioSurround"].append(dict(d["renditions"]["audioSurround"][0], id="a8")))), "more than one 5.1 companion is default", []),
+    ("a 5.1 companion that does not say what it is for", False, lambda r: (with_surround(kept(r)), edit(pkg(kept(r)), lambda d: d["renditions"]["audioSurround"][0].pop("purpose"))), "'purpose' is a required property", []),
+    ("a 5.1 companion whose purpose is only assumed commentary", False, lambda r: (with_surround(kept(r)), edit(pkg(kept(r)), lambda d: d["renditions"]["audioSurround"][0].update(purpose="commentary"))), "audio a9 purpose commentary cannot be assumed", []),
+    ("a video range HLS does not name", False, lambda r: (hls_layout(kept(r)), edit(pkg(kept(r)), lambda d: d["renditions"]["video"][0].update(videoRange="HDR"))), "'HDR' is not one of ['SDR', 'PQ', 'HLG']", []),
+    ("a peak bitrate below nothing", False, lambda r: (hls_layout(kept(r)), edit(pkg(kept(r)), lambda d: d["renditions"]["video"][0].update(peakBitrateBps=-1))), "-1 is less than the minimum of 0", []),
+    ("an HLS layout without its master playlist", False, lambda r: (hls_layout(kept(r)), os.remove(os.path.join(kept(r), "hls", "master.m3u8")), rechecksum(kept(r))), "master playlist hls/master.m3u8 missing", ["--check-media"]),
+    ("an HLS layout cut into segments of no length", False, lambda r: hls_layout(kept(r), segmentSeconds=0), "0 is less than the minimum of 1", []),
+    ("an HLS layout that does not say its subtitle group", False, lambda r: (hls_layout(kept(r)), edit(pkg(kept(r)), lambda d: d["hls"].pop("subtitleGroup"))), "'subtitleGroup' is a required property", []),
+    ("an audio group the HLS layout does not name", False, lambda r: (with_surround(kept(r)), hls_layout(kept(r), audioGroups=["audio"])), "a9 is in group audio-surround, which hls.audioGroups does not name", []),
+    ("a subtitle group no subtitle is in", False, lambda r: hls_layout(kept(r), subtitleGroup="subs"), "hls.subtitleGroup names subs, but no subtitle has an HLS rendition", []),
+    ("a subtitle with its HLS rendition", True, subtitle_hls, "OK", ["--check-checksums"]),
+    ("a subtitle's HLS rendition missing", False, lambda r: subtitle_hls(r, made=False), "the HLS rendition hls/s1 of subtitle sub1 is missing", ["--check-media"]),
+    ("a subtitle made from a sidecar its source keeps", True, from_sidecar, "OK", ["--check-checksums"]),
+    ("a subtitle made from a sidecar its source does not list", False, lambda r: from_sidecar(r, listed=False), "does not list among its sidecars", []),
+    ("a subtitle made from a sidecar of a source the version was not made from", False, lambda r: from_sidecar(r, path=f"sources/{NOWHERE}/x.srt"), "which is no sidecar of a source this version was made from", []),
+    ("a subtitle made from a sidecar outside the item", False, lambda r: from_sidecar(r, path="../x.srt"), "$.subtitles[3].fromSidecar: '../x.srt' does not match", []),
+    ("an extra's subtitle made from a sidecar", False, lambda r: edit(pkg(featurette(r)), lambda d: d["subtitles"][0].update(fromSidecar="sources/x/y.srt")), "but an extra has no source record", []),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
