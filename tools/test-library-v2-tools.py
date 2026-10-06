@@ -3372,6 +3372,16 @@ def test_media_check(t):
             doc["hls"] = fields["hls"]
         jwrite(os.path.join(vp, "package.json"), doc)
         close(vp)
+    def deleted_outside(r):
+        """The original of an episode version that never kept it, deleted once its package was recorded."""
+        vp = next(v for v in sorted(glob.glob(os.path.join(r, "series", "*", "*", "episodes", "*", "versions", "*")))
+                  if not jload(os.path.join(v, "version.json"))["originalFiles"])
+        write_event(os.path.dirname(os.path.dirname(vp)), {
+            "schema": "zaentrum.library.event/2", "eventId": "0e000000-0000-4000-8000-000000000001",
+            "at": "2026-09-21T10:00:00Z", "by": "test", "kind": "original-deleted", "versionId": os.path.basename(vp),
+            "sourceId": jload(os.path.join(vp, "version.json"))["sourceIds"][0], "accepted": []})
+    case("an original a version never kept, deleted once its package was recorded", True, deleted_outside, "OK",
+         ("--checksums",))
     case("a 5.1 companion whose folder is gone", False,
          lambda r: names(r, renditions={"audioSurround": [{"id": "a9", "dir": "hls/a9", "channels": 6}]}),
          "rendition folder hls/a9 is missing")

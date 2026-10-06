@@ -46,9 +46,10 @@ with the bytes beside them, never about a document being up to date.
   events       the folder name is the event's own moment, eventId and kind; every source, version, package
                and extra it names exists (a version-removed or extra-removed event is the exception —
                its folder may be gone, and a folder it names is ignored altogether, an extra's with a
-               note for the sweep; an episode has no extra to remove); a deletion names a version that had an
-               original and one of that version's own sources, and accepts no more than the
-               deletion gate — the essence of the version's sources minus that of its package,
+               note for the sweep; an episode has no extra to remove); a deletion names one of its
+               version's own sources when it names one — and always when the version never kept the
+               original in its folder, so it was deleted outside the record — and accepts no more than
+               the deletion gate — the essence of the version's sources minus that of its package,
                computed here because no record holds it; a package-superseded event names a
                successor that exists in another version folder
   extras       bonus material sits in extras/<extraId>/ inside its movie or series, never an
@@ -752,8 +753,9 @@ class Checker:
                              (pkg or {}).get("essence") or {})
         gone, whole = set(), False
         for e in [x for x in events if x["kind"] == "original-deleted" and x.get("versionId") == vid]:
-            if not v["originalFiles"]:
-                self.err(e["where"], f"version {vid} never named an original, so none can have been deleted")
+            if not v["originalFiles"] and not e.get("sourceId"):
+                self.err(e["where"], f"version {vid} keeps no original in its folder, so an original-deleted event for "
+                                     f"it records one deleted outside the record, and names its source (sourceId)")
             over = sorted(set(e.get("accepted") or []) - gate)
             if over:
                 self.err(e["where"], f"accepted names {', '.join(over)}, which the records do not say the "

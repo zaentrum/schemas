@@ -496,6 +496,18 @@ def from_sidecar(root, listed=True, path=None):
     rechecksum(vp)
 
 
+def deleted_outside(root, source="its own", accepted=()):
+    """Episode 2's current version, packaged by a packager that never kept the original in its folder, and
+    the event of the original's deletion once its package was recorded — naming the version's source,
+    another one, or none."""
+    vp = primary(episode(root, 2))
+    sid = json.load(open(ver(vp)))["sourceIds"][0] if source == "its own" else source
+    new_event(episode(root, 2), {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": "2026-09-20T11:00:00Z",
+                                 "by": "test", "kind": "original-deleted", "versionId": os.path.basename(vp),
+                                 **({"sourceId": sid} if sid else {}), "reason": "originals are not kept",
+                                 "accepted": list(accepted)})
+
+
 def silent(root):
     """An original with no audio: the package has video only."""
     vp = primary(episode(root, 2))
@@ -597,11 +609,13 @@ CASES = [
     ("an event folder that is not a record name", False, lambda r: rename_event(deletion(r), "deleted"), "not an events/", []),
     ("an event folder without its eventId", False, lambda r: rename_event(deletion(r), "20260920T081500Z-original-deleted"), "not an events/", []),
     ("an event folder naming another eventId", False, lambda r: rename_event(deletion(r), "20260920T081500Z-00000000-original-deleted"), "which does not start the eventId", []),
-    ("a deletion of a version that never had an original", False, lambda r: new_event(episode(r, 2),
-        {"schema": "zaentrum.library.event/2", "eventId": NOWHERE, "at": "2026-09-20T11:00:00Z", "by": "test",
-         "kind": "original-deleted", "versionId": os.path.basename(primary(episode(r, 2))), "reason": "space",
-         "accepted": []}),
-     "never named an original", []),
+    ("a deletion of an original a version never kept, that does not say whose it was", False, lambda r: deleted_outside(r, source=None),
+     "keeps no original in its folder, so an original-deleted event for it records one deleted outside the record, and names its source", []),
+    ("an original deleted outside the record once its package was recorded", True, deleted_outside, "OK", ["--check-checksums"]),
+    ("an original deleted outside the record, accepting more than the gate", False, lambda r: deleted_outside(r, accepted=["dolbyVision"]),
+     "which the records do not say the package failed to carry", []),
+    ("an original deleted outside the record, of a source the version was not made from", False, lambda r: deleted_outside(r, source=NOWHERE),
+     "names no source record under sources/", []),
 
     # ---- the metadata projection and its images
     ("metadata of another item", False, lambda r: edit(meta(movie(r)), lambda d: d.update(itemId=NOWHERE)), "itemId differs from item.json", []),
