@@ -2722,6 +2722,13 @@ def garbage(tmp, age=True):
     return root, export, where
 
 
+def no_quarantine(root):
+    """Nothing is left in a quarantine: the work tree's holds no run, and there is none at the root,
+    where a sweep from before the work tree kept it."""
+    q = os.path.join(root, ".work", "quarantine")
+    return not (os.path.isdir(q) and os.listdir(q)) and not os.path.exists(os.path.join(root, "_swept"))
+
+
 def credit(item_dir, pid, name="Credited No More"):
     """item_dir's metadata.json crediting pid as well, as a projection written before the database
     dropped the credit still does."""
@@ -2768,7 +2775,7 @@ def test_sweep(t):
         t.ok("--apply, piped into a pod's Python, removes exactly those", code == 0
              and not any(os.path.lexists(e) for e in expected) and "removed 8 target(s)" in text, text)
         t.ok("and leaves every other file as it was", all(rest.get(k) == before[k] for k in gone))
-        t.ok("and no quarantine behind it", not os.path.exists(os.path.join(root, "_swept")))
+        t.ok("and no quarantine behind it", no_quarantine(root))
         t.ok("the original beside the unfinished package stays, with its record",
              os.path.isfile(os.path.join(where["beside"], "version.json"))
              and all(os.path.isfile(os.path.join(where["beside"], n))
@@ -2971,7 +2978,7 @@ def test_sweep(t):
         a.run(now)
         t.ok("a target a projection lists again by the time it is checked is put back, not deleted",
              os.path.isfile(where["dropped image"]) and any("lists it again" in n for n in a.put_back)
-             and not os.path.exists(where["nothing wrote"]) and not os.path.exists(os.path.join(root, "_swept")), a.put_back)
+             and not os.path.exists(where["nothing wrote"]) and no_quarantine(root), a.put_back)
 
     with tempfile.TemporaryDirectory() as tmp:
         root, export, where = garbage(tmp)
@@ -3004,7 +3011,7 @@ def test_sweep(t):
         a.run(now)
         t.ok("a deleted person an item record credits by the time they are checked is put back",
              os.path.isdir(where["gone person"]) and any("metadata.json credits them" in n for n in a.put_back)
-             and not os.path.exists(os.path.join(root, "_swept")), a.put_back)
+             and no_quarantine(root), a.put_back)
 
     # ---- a deleted item that credits a deleted person: one sweep takes both, and putting one back keeps both
     with tempfile.TemporaryDirectory() as tmp:
@@ -3052,8 +3059,34 @@ def test_sweep(t):
         code, text = run(SWEEP, root, "--export", export)
         t.ok("a dry run says an earlier --apply did not finish", "did not finish" in text, text)
         code, text = run(SWEEP, root, "--export", export, "--apply")
-        t.ok("and the next --apply checks and finishes it", code == 0 and not os.path.exists(os.path.join(root, "_swept"))
+        t.ok("the quarantine is a folder of the work tree, .work/quarantine/<stamp>/",
+             os.path.dirname(q) == os.path.join(root, ".work", "quarantine"))
+        t.ok("and the next --apply checks and finishes it", code == 0 and no_quarantine(root)
              and "removed 8 target(s)" in text, text)
+
+    # a quarantine a sweep from before the work tree left at the library root is finished the same way
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        s = sw.Sweep(root, sw.References(root, export), 86400, now)
+        s.run()
+        q = os.path.join(root, "_swept", "20261002T120000Z")
+        os.makedirs(q)
+        sw.Apply(s).write_plan(q, s.targets, now)
+        for target in s.targets:
+            os.makedirs(os.path.dirname(os.path.join(q, target["path"])), exist_ok=True)
+            os.rename(os.path.join(root, target["path"]), os.path.join(q, target["path"]))
+        code, text = run(SWEEP, root, "--export", export, "--apply")
+        t.ok("a quarantine a sweep from before the work tree left in _swept/ is finished by the next --apply, and "
+             "_swept/ goes with it", code == 0 and "removed 8 target(s)" in text and no_quarantine(root), text)
+
+    # --quarantine names another folder of the share
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp)
+        elsewhere = os.path.join(tmp, "quarantine-of-this-run")
+        code, text = run(SWEEP, root, "--export", export, "--apply", "--quarantine", elsewhere)
+        t.ok("--quarantine names the folder a run quarantines in instead, and it is emptied as the work tree's is",
+             code == 0 and "removed 8 target(s)" in text and os.listdir(elsewhere) == []
+             and not os.path.exists(os.path.join(root, ".work")), text)
 
     with tempfile.TemporaryDirectory() as tmp:
         root, export, where = garbage(tmp)
@@ -3077,6 +3110,82 @@ def test_sweep(t):
                  code == 1 and "could not be renamed into the quarantine" in text and os.path.isfile(where["dropped image"]), text)
     else:
         t.skip("a target that cannot be renamed is left where it is", "permissions do not bind root")
+
+
+# ---------------------------------------------------------------- sweeping a version an event removed
+def removed_version(tmp, at=None, change=None):
+    """The examples with the folder of the version the movie's version-removed event retired still on
+    storage, as a finished package left it, and the export of a database that holds every item. Returns
+    the tree, the export and the folder."""
+    root = os.path.join(tmp, "library")
+    shutil.copytree(EXAMPLES, root)
+    movie = glob.glob(os.path.join(root, "movies", "*", "*"))[0]
+    removal = glob.glob(os.path.join(movie, "events", "*-version-removed", "event.json"))[0]
+    vid = jload(removal)["versionId"]
+    if at:
+        shutil.rmtree(os.path.dirname(removal))
+        write_event(movie, dict(jload(os.path.join(EXAMPLES, os.path.relpath(removal, root))), at=at))
+    # what the folder holds does not matter: a removed version's folder is ignored, whatever is in it
+    vp = os.path.join(movie, "versions", vid)
+    shutil.copytree(sorted(glob.glob(os.path.join(movie, "versions", "*")))[0], vp)
+    jwrite(os.path.join(vp, "version.json"), dict(jload(os.path.join(vp, "version.json")), versionId=vid))
+    rows, _ = rows_of(EXAMPLES)
+    export = os.path.join(tmp, "catalog.json")
+    jwrite(export, {"exportedAt": "2026-10-01T12:00:00Z", "items": list(rows.values()), "deletedItems": []})
+    if change:
+        change(root, export, vp)
+    aged(root)
+    return root, export, vp
+
+
+def test_sweep_removed_versions(t):
+    """The catalog deletes the folder of a version it removed, after the grace a superseded version
+    keeps; a folder that delete missed is the sweep's — whatever it holds — once the removal is older than
+    the grace and nothing names the version but its history."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, vp = removed_version(tmp)
+        code, text = run(SWEEP, root, "--export", export)
+        t.eq("a dry run finds the folder of a version an event removed, and nothing else", swept(text, root), [vp])
+        t.ok("and says why", "removed version: a version-removed event of 2026-09-20T09:30:00Z says it is no longer "
+                             "part of the item" in text, text)
+        code, text = run_piped(SWEEP, root, "--export", export, "--apply")
+        t.ok("--apply removes it through the quarantine, and leaves none behind",
+             code == 0 and not os.path.lexists(vp) and "removed 1 target(s)" in text and no_quarantine(root), text)
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", root)
+            t.ok("what is left is a valid record", code == 0 and vtext.strip().endswith("OK"), vtext)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        def superseded(root, export, vp):
+            # its history names it: superseded first, then removed
+            movie = os.path.dirname(os.path.dirname(vp))
+            current = next(p for p in sorted(glob.glob(os.path.join(movie, "versions", "*"))) if p != vp)
+            write_event(movie, {"schema": "zaentrum.library.event/2", "eventId": "5e000000-0000-4000-8000-000000000001",
+                                "at": "2026-09-20T09:00:00Z", "by": "test", "kind": "package-superseded",
+                                "versionId": os.path.basename(vp), "packageId": jload(os.path.join(vp, "package.json"))["packageId"],
+                                "supersededBy": {"versionId": os.path.basename(current),
+                                                 "packageId": jload(os.path.join(current, "package.json"))["packageId"]}})
+        root, export, vp = removed_version(tmp, change=superseded)
+        code, text = run(SWEEP, root, "--export", export)
+        t.eq("the event of its supersession is its history, and keeps nothing", swept(text, root), [vp])
+
+    def kept(name, phrase, **kw):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, export, vp = removed_version(tmp, **kw)
+            code, text = run(SWEEP, root, "--export", export)
+            t.ok(f"the sweep leaves alone the folder of a removed version {name}", code == 0 and swept(text, root) == []
+                 and phrase in text and os.path.isdir(vp), text)
+    recent = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    kept("whose removal is within the grace", "within the grace period", at=recent)
+    kept("the projection still names", "a removed version, but metadata.json names it",
+         change=lambda root, export, vp: jwrite(os.path.join(os.path.dirname(os.path.dirname(vp)), "metadata.json"), dict(
+             jload(os.path.join(os.path.dirname(os.path.dirname(vp)), "metadata.json")),
+             library=dict(jload(os.path.join(os.path.dirname(os.path.dirname(vp)), "metadata.json"))["library"],
+                          primaryVersionId=os.path.basename(vp)))))
+    kept("the database still holds", "a removed version, but the export names it",
+         change=lambda root, export, vp: jwrite(export, dict(jload(export), versions=[
+             {"id": os.path.basename(vp), "itemId": os.path.basename(os.path.dirname(os.path.dirname(vp))),
+              "state": "superseded"}])))
 
 
 # ---------------------------------------------------------------- sweeping an extra that never finished
@@ -3145,7 +3254,7 @@ def test_sweep_extras(t):
         code, text = run_piped(SWEEP, root, "--export", export, "--apply")
         t.ok("--apply, piped into a pod's Python, removes exactly those", code == 0
              and not any(os.path.lexists(e) for e in expected) and "removed 6 target(s)" in text
-             and not os.path.exists(os.path.join(root, "_swept")), text)
+             and no_quarantine(root), text)
         t.ok("the record and the original beside the unfinished package stay",
              os.path.isfile(os.path.join(where["beside"], "extra.json"))
              and os.path.isfile(os.path.join(where["beside"], where["original"])))
@@ -3220,7 +3329,7 @@ def test_sweep_extras(t):
             a.run(now)
             back = where["recorded"] if "projection" in name else os.path.join(where["beside"], "hls")
             t.ok(name, os.path.exists(back) and any(why in n for n in a.put_back)
-                 and not os.path.exists(os.path.join(root, "_swept")), a.put_back)
+                 and no_quarantine(root), a.put_back)
 
     # ---- the folder of an extra an extra-removed event retired, still on storage
     def retired_garbage(tmp):
@@ -3254,7 +3363,7 @@ def test_sweep_extras(t):
         code, text = run_piped(SWEEP, root, "--export", export, "--apply")
         t.ok("--apply removes it through the quarantine, and nothing else",
              code == 0 and not os.path.exists(where["old"]) and "removed 1 target(s)" in text
-             and not os.path.exists(os.path.join(root, "_swept"))
+             and no_quarantine(root)
              and all(stamps(root).get(k) == v for k, v in before.items() if not k.startswith(
                  os.path.relpath(where["old"], root) + os.sep)), text)
 
@@ -3641,6 +3750,7 @@ def main():
                         ("the people list in full", test_people_in_full),
                         ("projecting again, and nothing else", test_projections_only),
                         ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
+                        ("sweeping a version an event removed", test_sweep_removed_versions),
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):

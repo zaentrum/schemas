@@ -6,7 +6,7 @@ Usage:
 
 Deleting an item deletes its folder, a writer that dies leaves a version folder unfinished, and a
 projection that drops an image leaves the file behind — and nothing but this collects what a writer
-missed. It finds six kinds of garbage, each proved by the records and the database, never guessed:
+missed. It finds seven kinds of garbage, each proved by the records and the database, never guessed:
 
   deleted item       an item folder whose id the export's deletion log names (deletedItems), that the
                      database does not hold again, and in which no record states a moment after that
@@ -36,6 +36,12 @@ missed. It finds six kinds of garbage, each proved by the records and the databa
                      metadata.json under library.extras, not the export); when it keeps an original,
                      only the unfinished package beside it, its checksums with it. An extra that holds
                      no package is never garbage: finished by its checksums, or its writer's to finish.
+  removed version    the folder of a version a version-removed event retired, still on storage — the
+                     whole folder, whatever it holds — once the removal is older than the grace and
+                     nothing names the version: not the item's metadata.json, not the export. The
+                     catalog deletes such a folder itself, after the grace a superseded version keeps;
+                     this collects one that delete missed. The events that name it — the supersession
+                     and the deletion of its original — are its history, and keep nothing.
   removed extra      the folder of an extra an extra-removed event retired, still on storage — the
                      whole folder, whatever it holds — once the removal is older than the grace and
                      nothing names the extra: not the item's library.extras, not another event, not the
@@ -52,17 +58,19 @@ the grace, anything it cannot classify, or a person's folder the deletion log do
 person's. Everything it leaves alone that looked like garbage is listed with the reason.
 
 A dry run, the default, lists what it would remove and why. --apply first renames every target into
-a quarantine at the library root, _swept/<YYYYMMDDTHHMMSSZ>/ — a rename on the same filesystem, never
-a copy; a target that cannot be renamed is left where it is — with a sweep.json beside them that says
-where each came from. It then reads the export, the projections and the events again and checks
-that nothing references a quarantined target and nothing was written where it was — a deleted
-person last, once every other target is settled, against the credits on storage then; one that is
-referenced again is renamed back. Only then is the quarantine deleted. A quarantine an interrupted
-run left behind is checked and finished the same way by the next --apply.
+a quarantine, <root>/.work/quarantine/<YYYYMMDDTHHMMSSZ>/ (--quarantine names another folder on the
+same share) — a rename on the same filesystem, never a copy; a target that cannot be renamed is left
+where it is — with a sweep.json beside them that says where each came from. It then reads the
+export, the projections and the events again and checks that nothing references a quarantined target
+and nothing was written where it was — a deleted person last, once every other target is settled,
+against the credits on storage then; one that is referenced again is renamed back. Only then is the
+quarantine deleted. A quarantine an interrupted run left behind is checked and finished the same way
+by the next --apply: there, or in _swept/ at the library root, where a sweep from before 2026-10-06
+kept it.
 
 It is plain standard-library Python 3.11, so it runs in the pod that mounts the share:
 
-  oc exec -i deploy/packager -- python3 - /var/lib/katalog/library --export /tmp/catalog.json < library-v2-sweep.py
+  oc exec -i deploy/packager -- python3 - /var/lib/katalog --export /tmp/catalog.json < library-v2-sweep.py
 
 It exits non-zero only when --apply could not finish: a target it could neither remove nor put back.
 """
@@ -78,7 +86,10 @@ RECORDS_TMP = ("version.json.tmp", "package.json.tmp", "checksums.sha256.tmp", "
 # which list files that go with it.
 EXTRA_PARTS = ("hls", "subs", "trickplay", "package.json")
 EXTRA_TMP = ("extra.json.tmp", "package.json.tmp", "checksums.sha256.tmp", ".complete.tmp")
-QUARANTINE = "_swept"
+# Where --apply quarantines what it removes, under the library root: the work tree beside the record.
+QUARANTINE = os.path.join(".work", "quarantine")
+# Where a sweep from before 2026-10-06 kept its quarantine, which the next --apply finishes.
+OLD_QUARANTINE = "_swept"
 RECORD_MOMENTS = (
     ("item.json", ("createdAt", "provenance.migratedAt")),
     # databaseUpdatedAt is on the database's clock, the one the deletion log's deletedAt is on
@@ -334,6 +345,34 @@ class References:
             return "the export names it"
         return None
 
+    def removed_versions(self, item_dir):
+        """The versions a version-removed event of the item retired: {versionId: that event}. An event
+        that cannot be read retires nothing."""
+        out, base = {}, os.path.join(item_dir, "events")
+        for name in (listdir(base) if os.path.isdir(base) else []):
+            try:
+                ev = load(os.path.join(base, name, "event.json"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(ev, dict) and ev.get("kind") == "version-removed" and ev.get("versionId"):
+                out[str(ev["versionId"])] = ev
+        return out
+
+    def removed_version_named(self, item_dir, vid):
+        """What still names a removed version and so keeps its folder: the item's projection, the
+        database. The events that name it are its history — its supersession, the deletion of its
+        original — and keep nothing."""
+        try:
+            lib = load(os.path.join(item_dir, "metadata.json")).get("library") or {}
+            if lib.get("primaryVersionId") == vid or vid in (lib.get("versionLabels") or {}):
+                return "metadata.json names it"
+        except (OSError, ValueError, AttributeError):
+            if os.path.exists(os.path.join(item_dir, "metadata.json")):
+                return "metadata.json cannot be read, so it may name it"
+        if vid in self.mentioned:
+            return "the export names it"
+        return None
+
     def retired(self, item_dir):
         """The extras an extra-removed event of the item retired: {extraId: that event}. An event that
         cannot be read retires nothing — it proves nothing."""
@@ -419,9 +458,12 @@ class Sweep:
     def inside(self, d, episode=False):
         """What an item folder that stays may still hold that is garbage."""
         base = os.path.join(d, "versions")
+        removed = self.refs.removed_versions(d) if os.path.isdir(base) else {}
         for name in (listdir(base) if os.path.isdir(base) else []):
             vp = os.path.join(base, name)
-            if os.path.isdir(vp) and not os.path.isfile(os.path.join(vp, ".complete")):
+            if name in removed and os.path.lexists(vp):
+                self.removed_version(d, vp, name, removed[name])
+            elif os.path.isdir(vp) and not os.path.isfile(os.path.join(vp, ".complete")):
                 self.unfinished(d, vp, name)
         base = os.path.join(d, "extras")
         if os.path.isdir(base) and episode:
@@ -573,6 +615,28 @@ class Sweep:
             self.target(os.path.join(vp, n), "unfinished package",
                         f"no .complete: the package never finished beside the original {kept[0]}, which stays")
 
+    # -------------------------------------------------- (b+) a version an event retired
+    def removed_version(self, item_dir, vp, vid, ev):
+        """A version-removed event says the version is no longer part of the item, so its folder, still
+        on storage, is garbage — whatever it holds, finished or not — once the removal and everything
+        in the folder are older than the grace, and nothing names the version any more."""
+        at = instant(ev.get("at"))
+        if at is None:
+            self.leave(vp, "a version-removed event names it, but states no moment to prove it by")
+            return
+        if at > self.cutoff:
+            self.leave(vp, f"a version-removed event of {ev['at']} names it, within the grace period")
+            return
+        young = self.young(vp)
+        if young:
+            self.leave(vp, f"a removed version, but written to within the grace period ({young})")
+            return
+        named = self.refs.removed_version_named(item_dir, vid)
+        if named:
+            self.leave(vp, f"a removed version, but {named}")
+            return
+        self.target(vp, "removed version", f"a version-removed event of {ev['at']} says it is no longer part of the item")
+
     # -------------------------------------------------- (b'') an extra an event retired
     def removed_extra(self, item_dir, xp, xid, ev):
         """An extra-removed event says the extra is no longer part of the item, so its folder, still
@@ -702,6 +766,12 @@ class Sweep:
                 return "its version has finished since"
             named = self.refs.version_named(item_dir, vid)
             return named
+        if t["class"] == "removed version":
+            i = parts.index("versions")
+            item_dir, vid = os.path.join(self.root, *parts[:i]), parts[i + 1]
+            if vid not in self.refs.removed_versions(item_dir):
+                return "no version-removed event names it any more"
+            return self.refs.removed_version_named(item_dir, vid)
         if t["class"] == "removed extra":
             i = parts.index("extras")
             item_dir, xid = os.path.join(self.root, *parts[:i]), parts[i + 1]
@@ -727,15 +797,18 @@ class Sweep:
 
 # ---------------------------------------------------------------- removing it, through a quarantine
 class Apply:
-    def __init__(self, sweep):
+    def __init__(self, sweep, quarantine=None):
         self.s = sweep
         self.root = sweep.root
+        # where this run quarantines, and where a sweep kept its quarantine before the work tree
+        self.base = quarantine or os.path.join(self.root, QUARANTINE)
+        self.old_base = os.path.join(self.root, OLD_QUARANTINE)
         self.removed = self.bytes = 0
         self.put_back = []
         self.failed = []
 
     def quarantine_dir(self, now):
-        base = os.path.join(self.root, QUARANTINE)
+        base = self.base
         os.makedirs(base, exist_ok=True)
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
         for n in range(100):
@@ -775,15 +848,17 @@ class Apply:
         self.finish(q)
 
     def leftovers(self):
-        base = os.path.join(self.root, QUARANTINE)
+        """The quarantines an interrupted --apply left: where this run quarantines, and where a sweep
+        from before the work tree did."""
         out = []
-        for name in (listdir(base) if os.path.isdir(base) else []):
-            q = os.path.join(base, name)
-            if not os.path.isfile(os.path.join(q, "sweep.json")):
-                self.failed.append(f"{QUARANTINE}/{name}: a quarantine without its sweep.json; nobody knows where its "
-                                   f"contents came from, so it is left for a person")
-                continue
-            out.append(q)
+        for base in dict.fromkeys((self.base, self.old_base)):
+            for name in (listdir(base) if os.path.isdir(base) else []):
+                q = os.path.join(base, name)
+                if not os.path.isfile(os.path.join(q, "sweep.json")):
+                    self.failed.append(f"{os.path.relpath(q, self.root)}: a quarantine without its sweep.json; nobody "
+                                       f"knows where its contents came from, so it is left for a person")
+                    continue
+                out.append(q)
         return out
 
     def finish(self, q):
@@ -832,12 +907,14 @@ class Apply:
         return False
 
     def tidy(self, q):
-        """The emptied quarantine, and the quarantine folder when nothing else is in it."""
+        """The emptied quarantine, and the folder of quarantines a sweep kept at the library root before
+        the work tree, when nothing else is in it: the work tree's own stays."""
         for base, dirs, files in os.walk(q, topdown=False):
             if not os.listdir(base):
                 os.rmdir(base)
-        if os.path.isdir(os.path.join(self.root, QUARANTINE)) and not os.listdir(os.path.join(self.root, QUARANTINE)):
-            os.rmdir(os.path.join(self.root, QUARANTINE))
+        parent = os.path.dirname(q)
+        if parent == self.old_base and os.path.isdir(parent) and not os.listdir(parent):
+            os.rmdir(parent)
 
 
 def main():
@@ -849,6 +926,8 @@ def main():
     ap.add_argument("--grace", default="24h", type=grace_seconds,
                     help="how old anything must be before it can be swept: 24h (default), 90m, 7d, 3600s, 0")
     ap.add_argument("--apply", action="store_true", help="remove what is found, through the quarantine")
+    ap.add_argument("--quarantine", help="where --apply quarantines what it removes, on the same share: "
+                                         "<root>/.work/quarantine by default")
     ap.add_argument("--verbose", action="store_true", help="also list what is left alone and why, every one")
     args = ap.parse_args()
     root = os.path.abspath(args.root)
@@ -876,13 +955,15 @@ def main():
             print(f"    {path} — {why}")
         if not args.verbose and len(s.left) > 50:
             print(f"    … and {len(s.left) - 50} more (--verbose lists them all)")
+    quarantine = os.path.abspath(args.quarantine) if args.quarantine else os.path.join(root, QUARANTINE)
     if not args.apply:
-        for q in sorted(glob.glob(os.path.join(root, QUARANTINE, "*"))):
+        for q in sorted(glob.glob(os.path.join(glob.escape(quarantine), "*")) +
+                        glob.glob(os.path.join(glob.escape(root), OLD_QUARANTINE, "*"))):
             print(f"  note an earlier --apply did not finish: {os.path.relpath(q, root)}; the next --apply finishes it")
         print(f"would remove {len(s.targets)} target(s), {human(total)}" +
               ("; run again with --apply to remove them" if s.targets else ""))
         return 0
-    a = Apply(s)
+    a = Apply(s, quarantine)
     a.run(now)
     for n in a.put_back:
         print("  " + n)
