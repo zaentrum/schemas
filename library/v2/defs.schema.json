@@ -146,7 +146,7 @@
     },
     "image": {
       "type": "object",
-      "description": "One image file of a projection, named by the hash of its own content: it is written once and never replaced in place, so a new image is a new file and a projection that stops naming an old one leaves it to be swept. metadata.json lists the images in metadata/, person.json the images beside it, both with this one object, so the two cannot drift apart; each narrows kind to its own kinds. An image needs no checksum file: its name is its checksum. Which image of a kind a reader shows is primary, and where its bytes came from is its origin, so a refresh from the reference source can tell the source replacing an image from a person picking another.",
+      "description": "One image of a projection, as one kind, in a file named by the hash of its own content. Bytes that are several kinds — a backdrop that is the poster — are an entry of each kind sharing the one file. A file is written once and never replaced in place, so a new image is a new file and a projection that stops naming an old one leaves it to be swept. metadata.json lists the images in metadata/, person.json the images beside it, both with this one object, so the two cannot drift apart; each narrows kind to its own kinds. An image needs no checksum file: its name is its checksum. Which image of a kind a reader shows is primary, and where its bytes came from is its origin, so a refresh from the reference source can tell the source replacing an image from a person picking another.",
       "required": ["kind", "file", "sha256", "contentType", "sizeBytes"],
       "additionalProperties": false,
       "properties": {

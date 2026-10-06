@@ -96,9 +96,11 @@ unknown freshness alone — so it can gate a migration. An item row's tmdbFetche
 and an image row's dimensions, primary flag and TMDB path, are compared where the export carries
 them: an export from before them makes no tree that has them differ. So are a credit's job,
 character, billing order and episode count; a credit is matched by its person and role, so one whose
-name or job changed is that credit changed, and namesakes in one role stay apart. A tree from before
-credits were general is compared in every field the export carries: where the database knows a
-value the tree lacks, the difference reads storage None — the database knowing more, which
+name or job changed is that credit changed, and namesakes in one role stay apart. An image row is
+matched by its bytes and its kind, because one file can be several kinds — a backdrop that is the
+poster is two rows, both given back — so an image of a kind the tree lacks is missing. A tree from
+before credits were general is compared in every field the export carries: where the database knows
+a value the tree lacks, the difference reads storage None — the database knowing more, which
 projecting again fixes — and a value the database does not know either is no difference.
 
 Fields that cannot agree by construction are ignored by default (--ignore-fields):
@@ -692,7 +694,9 @@ class Rebuild:
 LIST_KEYS = {
     "playbackAssets": lambda x: x.get("kind"),
     "subtitleAssets": lambda x: (x.get("language"), os.path.basename(str(x.get("path") or ""))),
-    "artwork": lambda x: x.get("sha256"),
+    # an image row is one kind of an image, so the bytes alone do not name it: a backdrop that is the
+    # poster is two rows of one file
+    "artwork": lambda x: (x.get("sha256"), x.get("kind")),
     # a credit is one person in one role: a credited name or a job that changed is that credit changed,
     # never one lost and another gained, and two namesakes in one role stay two credits
     "people": lambda x: (x.get("personId"), x.get("role")),

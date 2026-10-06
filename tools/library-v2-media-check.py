@@ -27,8 +27,9 @@ What it checks, for every item folder:
     size and the qh1 fingerprint its source record wrote down;
   * a version folder with a package has its .complete marker, and one without has neither;
   * every image in metadata/ is named by the hash of its own content, has the recorded size, and is
-    listed exactly once, with nothing unlisted beside it — and the same for the images in a person's
-    folder under people/, beside the person.json that lists them;
+    listed exactly once as each kind it is — a backdrop that is the poster is both, sharing the one
+    file — with nothing unlisted beside it; and the same for the images in a person's folder under
+    people/, beside the person.json that lists them;
   * every extras/<extraId>/ folder, under a movie or a series and never an episode, is finished or
     says it is not: a packaged extra has its .complete, which names its package.json, whose
     rendition folders, subtitles and trickplay are there; one that keeps only its original has its
@@ -236,19 +237,26 @@ class Check:
 
     def images(self, folder, entries, owner):
         """Every image a projection lists is in folder, named by the hash of its own content, with
-        the size and extension recorded. Returns the names listed."""
-        listed = set()
+        the size and extension recorded. An entry is an image as one kind: bytes of several kinds — a
+        backdrop that is the poster — share one file, and a kind lists a file once (in a series once
+        per season). Returns the names listed."""
+        listed, kinds, digests = set(), set(), {}
         for img in entries:
             name = img.get("file") or ""
             f = os.path.join(folder, name)
-            if name in listed:
-                self.err(f, f"listed twice in {owner}")
+            as_kind = (name, img.get("kind"), img.get("season"))
+            if as_kind in kinds:
+                self.err(f, f"listed twice in {owner} as a {img.get('kind')}"
+                            + (f" of season {img['season']}" if img.get("season") is not None else ""))
+            kinds.add(as_kind)
             listed.add(name)
             if not os.path.isfile(f):
                 self.err(f, f"image listed in {owner} but not there")
                 continue
             self.counts["images"] += 1
-            digest = sha_file(f)
+            if name not in digests:  # a file several kinds share is hashed once
+                digests[name] = sha_file(f)
+            digest = digests[name]
             if name.rsplit(".", 1)[0] != digest.split(":", 1)[1]:
                 self.err(f, "image is not named by the hash of its own content")
             if img.get("sha256") and img["sha256"] != digest:

@@ -721,6 +721,17 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-06 (d)** — an image is listed as every kind it is. `library-v2-from-catalog.py` listed
+  byte-identical images once, as the kind the export named first, so a title whose backdrop is its
+  poster's bytes — as the catalog makes an episode's — lost that it has a backdrop, and `--compare`
+  found the database's backdrop where storage had the poster. Every artwork row is now an image
+  entry of its kind: rows of several kinds with one image's bytes share the one file their hash
+  names, and `metadata.json` lists its images by kind, then file, whatever order the export lists
+  them in. The validator and the media check accept a file that several kinds list, and still refuse
+  a kind listing a file twice — in a series, twice for the series itself or for one season — and a
+  listed file that is not there. The rebuild gives every kind back, and `--compare` matches an image
+  row by its bytes and its kind, so a kind the tree lacks is missing. `library-v2-from-v1.py` keeps
+  every kind of byte-identical v1 images the same way. Every tree that validated before still does.
 - **2026-10-06 (c)** — a subtitle's default is the database's. Which subtitle a viewer gets is
   behaviour: the player's rule, or a default a person chose, which the database keeps for the rows
   it holds — the platform's adopt carries it over. No record holds it; a package's `default` is only

@@ -1347,6 +1347,13 @@ def test_from_v1(t):
         meta = jload(glob.glob(os.path.join(src, "movies", "*", "*", "metadata.json"))[0])
         t.ok("the images are named by their own content",
              all(i["file"].split(".")[0] == i["sha256"].split(":")[1] for i in meta["images"]))
+        t.ok("a backdrop v1 held as the poster's bytes is still a backdrop, sharing the poster's one file",
+             {i["kind"] for i in meta["images"]} >= {"poster", "backdrop"}
+             and len({i["file"] for i in meta["images"] if i["kind"] in ("poster", "backdrop")}) == 1
+             and len(os.listdir(os.path.join(os.path.dirname(glob.glob(os.path.join(src, "movies", "*", "*",
+                                                                                     "metadata.json"))[0]),
+                                             "metadata"))) == len({i["file"] for i in meta["images"]}),
+             meta["images"])
         t.ok("the decisions the database held are projected, not lost",
              meta["library"]["primaryVersionId"] and meta["library"]["match"]["status"] == "matched")
 
@@ -1457,6 +1464,55 @@ def fake_export(root, with_original=True, trailer=False):
     path = os.path.join(root, "catalog.json")
     jwrite(path, export)
     return path, media, packages, iid, len(original)
+
+
+def test_images_of_several_kinds(t):
+    """An artwork row is an image of its kind, so rows of several kinds with one image's bytes — a backdrop
+    that is the poster, as the catalog makes an episode's — are an entry of each kind sharing the one
+    file, listed by kind whatever order the export lists them in, and the rebuild gives every kind back."""
+    ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+    for kinds in (("poster", "backdrop"), ("thumb", "poster", "backdrop")):
+        with tempfile.TemporaryDirectory() as tmp:
+            export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"))
+            e = jload(export)
+            art = e["items"][0]["artwork"][0]
+            e["items"][0]["artwork"] = [dict(art, kind=k) for k in kinds]
+            jwrite(export, e)
+            out = os.path.join(tmp, "library")
+            code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+            d = os.path.join(out, "movies", iid[:2], iid)
+            images = jload(os.path.join(d, "metadata.json"))["images"]
+            named = f"{len(kinds)} kinds of one image's bytes"
+            t.eq(f"{named} are an entry of each kind, listed by kind whatever order the export lists them in",
+                 [i["kind"] for i in images], sorted(kinds))
+            digest = hashlib.sha256(base64.b64decode(art["base64"])).hexdigest()
+            t.ok(f"{named} share the one file, which metadata/ holds once, and the run has nothing to say of it",
+                 code == 0 and {i["file"] for i in images} == {digest + ".png"}
+                 and os.listdir(os.path.join(d, "metadata")) == [digest + ".png"] and "byte-identical" not in text,
+                 text)
+            if have_jsonschema():
+                code, vtext = run(VALIDATOR, "--check-media", out)
+                t.ok(f"{named}: the validator accepts them", code == 0 and vtext.strip().endswith("OK"), vtext)
+            else:
+                t.skip(f"{named}: the validator accepts them", "jsonschema is not importable here")
+            code, mtext = run(MEDIA_CHECK, out)
+            t.ok(f"{named}: and the media check", code == 0 and mtext.strip().endswith("OK"), mtext)
+            rows, _ = rows_of(out, "--text-language", "und")
+            t.eq(f"{named}: the rebuild gives every kind back, each of those bytes",
+                 sorted((a["kind"], a["sha256"]) for a in rows[iid]["artwork"]),
+                 sorted((k, "sha256:" + digest) for k in kinds))
+            code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und", "--ignore-fields", ignore)
+            t.ok(f"{named}: and --compare of the title is clean", code == 0 and "the tree and the database agree" in ctext,
+                 ctext)
+            if len(kinds) == 2:
+                mp = os.path.join(d, "metadata.json")
+                jwrite(mp, dict(jload(mp), images=[i for i in images if i["kind"] == "poster"]))
+                code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und", "--ignore-fields",
+                                  ignore)
+                t.ok("a tree that lists the backdrop only as the poster, as one written before did, has lost the "
+                     "backdrop, and --compare says so",
+                     code == 1 and "artwork: 1 difference(s)" in ctext and "storage 'missing'" in ctext
+                     and "'kind': 'backdrop'" in ctext, ctext)
 
 
 def test_from_catalog(t):
@@ -1824,8 +1880,9 @@ def legacy_store(root):
                              "label": "", "isDefault": True},
                             {"id": "sa2", "path": f"{svc}/media/Example Film (2024)/Example Film (2024).de.srt",
                              "format": "srt", "language": "de", "label": "German", "isDefault": False}],
-            artwork=[{"kind": "poster", "contentType": "image/png", "fetchedAt": "2026-07-01T09:05:00Z",
-                      "base64": base64.b64encode(png).decode()}]),
+            # a backdrop that is the poster's bytes, as the catalog makes an episode's
+            artwork=[{"kind": kind, "contentType": "image/png", "fetchedAt": "2026-07-01T09:05:00Z",
+                      "base64": base64.b64encode(png).decode()} for kind in ("poster", "backdrop")]),
         row(PF_GONE, "movie", "Gone Film",
             playbackAssets=[asset("pb1", f"{svc}/media/Gone Film (2023).mkv", "primary", sizeBytes=777),
                             asset("pb2", f"{pg}/manifest.json", "packaged")]),
@@ -2007,6 +2064,10 @@ def test_platform(t):
               sorted((x["id"], x["dir"] is not None) for x in unit["db"]["extras"])),
              ([{"subtitleAssetId": "sa2", "rendition": "sub1", "path": "subs/1.vtt"}], "full", ["pa1", "pa2"],
               ["sa1", "sa2"], [(PF_EXTRA, True), (PF_PENDING, False)]))
+        staged_images = jload(os.path.join(unit["stagedDir"], "metadata.json"))["images"]
+        t.ok("the backdrop that is the poster's bytes is staged as both, sharing one file",
+             [i["kind"] for i in staged_images] == ["backdrop", "poster"] and len({i["file"] for i in staged_images}) == 1
+             and os.listdir(os.path.join(unit["stagedDir"], "metadata")) == [staged_images[0]["file"]], staged_images)
         package = jload(os.path.join(unit["stagedDir"], "versions", unit["db"]["versions"][0]["versionId"], "package.json"))
         t.eq("the subtitle made from the sidecar names the copy the source folder keeps",
              [s.get("fromSidecar") for s in package["subtitles"]],
@@ -2589,7 +2650,8 @@ def test_people_in_full(t):
                 ("a portrait's height", portrait_row(1, height=70), "people.artwork.height: 1 difference"),
                 ("when a portrait was fetched", portrait_row(1, fetchedAt="2026-09-30T08:30:00Z"), "people.artwork.fetchedAt: 1 difference"),
                 ("a portrait's type", portrait_row(1, contentType="image/jpeg"), "people.artwork.contentType: 1 difference"),
-                ("a portrait's kind", portrait_row(1, kind="poster"), "people.artwork.kind: 1 difference"),
+                # an image is one kind of its bytes: of another kind, it is another image
+                ("a portrait's kind", portrait_row(1, kind="poster"), "people.artwork: 2 difference"),
                 ("a portrait's bytes", portrait_row(1, base64=base64.b64encode(png(8, 9)).decode(), sha256=None),
                  "people.artwork: 2 difference"),
                 ("the row, modified since", lambda p: p.update(modifiedAt="2026-09-30T09:00:00Z"),
@@ -2620,8 +2682,8 @@ def test_people_in_full(t):
         t.ok("the bytes decide what an image is, whatever the row says, and the run says where they disagree",
              doc["images"][0]["contentType"] == "image/png" and doc["images"][0]["width"] == 4
              and "says contentType 'image/jpeg', width 99 where its bytes say 'image/png', 4" in text, text)
-        t.ok("an entry whose bytes are another's is that image, listed once, and the run says so",
-             len(doc["images"]) == 2 and "profile artwork is byte-identical to the profile, listed once" in text, text)
+        t.ok("an entry whose bytes are another's of its kind is that image, listed once, and the run says so",
+             len(doc["images"]) == 2 and "profile artwork is byte-identical to another profile, listed once" in text, text)
         if have_jsonschema():
             code, vtext = run(VALIDATOR, out)
             t.ok("and what is written is still a valid record", code == 0, vtext)
@@ -3891,6 +3953,28 @@ def test_media_check(t):
         return sorted(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*", "versions", "*")))[0]
 
     case("an untouched example tree", True, lambda r: None, "OK", ("--checksums",))
+
+    def as_poster(*kinds):
+        """The movie's images of kinds made the poster's bytes: entries sharing the poster's file, and
+        the files they named before left for the sweep."""
+        def change(r):
+            mp = os.path.join(movie(r), "metadata.json")
+            doc = jload(mp)
+            poster = next(i for i in doc["images"] if i["kind"] == "poster")
+            facts = {k: poster[k] for k in ("file", "sha256", "contentType", "sizeBytes", "width", "height")}
+            doc["images"] = [dict(i, **facts) if i["kind"] in kinds else i for i in doc["images"]] + \
+                [dict(poster, kind=k, primary=False) for k in kinds if k not in {i["kind"] for i in doc["images"]}]
+            jwrite(mp, doc)
+        return change
+    case("a backdrop that is the poster: two kinds sharing one file", True, as_poster("backdrop"), "OK")
+    case("three kinds sharing one file", True, as_poster("backdrop", "logo"), "OK")
+
+    def poster_twice(r):
+        mp = os.path.join(movie(r), "metadata.json")
+        doc = jload(mp)
+        doc["images"].append(next(i for i in doc["images"] if i["kind"] == "poster"))
+        jwrite(mp, doc)
+    case("one kind listing a file twice", False, poster_twice, "listed twice in metadata.json as a poster")
     case("an image a record names is gone", False,
          lambda r: os.unlink(glob.glob(os.path.join(movie(r), "metadata", "*"))[0]),
          "listed in metadata.json but not there")
@@ -4193,7 +4277,8 @@ def main():
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
-                        ("catalog -> v2", test_from_catalog), ("the arrivals are not the record", test_arrivals),
+                        ("catalog -> v2", test_from_catalog), ("an image of several kinds", test_images_of_several_kinds),
+                        ("the arrivals are not the record", test_arrivals),
                         ("the platform's library, staged and adopted", test_platform),
                         ("what the platform's library cannot hold", test_platform_problems),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras),

@@ -151,7 +151,7 @@
 
     "images": {
       "type": "array",
-      "description": "Every image file in metadata/ that this projection uses. Each is named by the hash of its own content, so an image is written once and never replaced in place: a new image is a new file, and the projection that stops naming an old one leaves it to be swept (library-v2-sweep.py). A missing kind falls back to the parent at read time (an episode without a still shows its season poster, then the series poster); nothing is copied. At most one image of a kind is primary — in a series, one per kind for the series itself and one per kind for each season.",
+      "description": "Every image file in metadata/ that this projection uses. Each is named by the hash of its own content, so an image is written once and never replaced in place: a new image is a new file, and the projection that stops naming an old one leaves it to be swept (library-v2-sweep.py). A missing kind falls back to the parent at read time (an episode without a still shows its season poster, then the series poster); nothing is copied. At most one image of a kind is primary — in a series, one per kind for the series itself and one per kind for each season. An entry is an image as one kind: bytes that are several kinds — a backdrop byte-identical to the poster — are an entry of each kind, sharing the one file, and a kind lists a file once (in a series once for the series itself and once for each season).",
       "items": {
         "$ref": "defs.schema.json#/$defs/image",
         "properties": {

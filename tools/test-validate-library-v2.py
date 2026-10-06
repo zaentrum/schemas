@@ -412,6 +412,29 @@ def note(root, at="2026-09-20T09:45:00Z", **fields):
                             "kind": "note", "reason": "a fact no other record holds", **fields})
 
 
+IMAGE_FACTS = ("file", "sha256", "contentType", "sizeBytes", "width", "height")
+
+
+def as_poster(root, *kinds, **fields):
+    """The movie's images of kinds made the poster's bytes, as the catalog makes an episode's backdrop:
+    entries of their own kind sharing the poster's one file — the files they named before left for the
+    sweep — and fields set on each."""
+    def change(d):
+        poster = next(i for i in d["images"] if i["kind"] == "poster")
+        d["images"] = [{**i, **{k: poster[k] for k in IMAGE_FACTS}, **fields} if i["kind"] in kinds else i
+                       for i in d["images"]]
+    edit(meta(movie(root)), change)
+
+
+def season_as_series(root):
+    """The series' season 1 poster made the series' own poster's bytes: one file, a poster of the series
+    itself and of the season."""
+    def change(d):
+        own = next(i for i in d["images"] if i["kind"] == "poster" and i.get("season") is None)
+        d["images"] = [dict(i, **{k: own[k] for k in IMAGE_FACTS}) if i.get("season") == 1 else i for i in d["images"]]
+    edit(meta(series(root)), change)
+
+
 def note_in(item_dir, **fields):
     """Add a note event to any item."""
     new_event(item_dir, {"schema": "zaentrum.library.event/2", "eventId": "0e000000-0000-4000-8000-0000000000d1",
@@ -682,7 +705,16 @@ CASES = [
     ("an image of other dimensions", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(width=3840)), "width is 1", []),
     ("an image of another size", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(sizeBytes=99)), "!= recorded 99", []),
     ("an image sized in v1's words", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(bytes=d["images"][0].pop("sizeBytes"))), "'bytes' was unexpected", []),
-    ("an image listed twice", False, lambda r: edit(meta(movie(r)), lambda d: d["images"].append(dict(d["images"][0]))), "listed twice", []),
+    ("one kind listing an image twice", False, lambda r: edit(meta(movie(r)), lambda d: d["images"].append(dict(d["images"][0]))), "listed twice in metadata.json as a poster", []),
+    ("a backdrop that is the poster: two kinds sharing one file", True, lambda r: as_poster(r, "backdrop"), "OK", ["--check-media"]),
+    ("three kinds sharing one file", True, lambda r: as_poster(r, "backdrop", "logo"), "OK", ["--check-media"]),
+    ("a file shared by two kinds, primary for each", True, lambda r: as_poster(r, "backdrop", primary=True), "OK", ["--check-media"]),
+    ("a kind of a shared file recording another size", False, lambda r: as_poster(r, "backdrop", sizeBytes=1), "!= recorded 1", ["--check-media"]),
+    ("a kind of a shared file that names no file there", False, lambda r: edit(meta(movie(r)), lambda d: d["images"].append(
+        dict(d["images"][0], kind="thumb", file="0" * 64 + ".jpg", sha256="sha256:" + "0" * 64))), "listed in metadata.json but does not exist", []),
+    ("a series' poster that is its season's: one file for the series itself and for the season", True, season_as_series, "OK", ["--check-media"]),
+    ("one file twice as a season's poster", False, lambda r: edit(meta(series(r)), lambda d: d["images"].append(
+        dict(next(i for i in d["images"] if i.get("season") == 1), primary=False))), "listed twice in metadata.json as a poster of season 1", []),
     ("an unlisted file in metadata/", False, lambda r: open(os.path.join(movie(r), "metadata", "extra.jpg"), "wb").write(b"x"), "not listed in metadata.json", []),
     ("a season image on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(season=1)), "season-specific image on a non-series item", []),
     ("a season image of a season nothing describes", False, lambda r: edit(meta(series(r)), lambda d: d["images"][1].update(season=3)), "which metadata.json does not describe", []),

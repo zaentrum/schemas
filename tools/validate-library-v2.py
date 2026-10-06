@@ -40,8 +40,8 @@ with the bytes beside them, never about a document being up to date.
                keeps, and an extra's never does
   metadata     same item and type as item.json, and reference ids of its type; every image exists
                with the recorded hash, size, content type and dimensions, is named by its own content
-               hash, is listed once, and nothing unlisted sits in metadata/ (the same for a person's
-               images beside person.json);
+               hash, is listed once as each kind it is — bytes of several kinds share one file — and
+               nothing unlisted sits in metadata/ (the same for a person's images beside person.json);
                at most one image of a kind is primary, in a series one per kind and season;
                library.primaryVersionId and library.versionLabels name versions that are really there
   series       an episode names its enclosing series, agrees with it on the reference id, numbers
@@ -507,21 +507,28 @@ class Checker:
         return meta
 
     def images(self, folder, entries, owner):
-        """The images a projection lists, each against the file it names in folder: there, listed
-        once, named by the hash of its own content, of the recorded size, type and dimensions.
-        Returns the names listed."""
-        listed = set()
+        """The images a projection lists, each against the file it names in folder: there, named by
+        the hash of its own content, of the recorded size, type and dimensions. An entry is an image
+        as one kind, so bytes that are several kinds — a backdrop that is the poster — are an entry
+        of each, sharing the one file; a kind lists a file once (in a series once for the series
+        itself and once for each season). Returns the names listed."""
+        listed, kinds, digests = set(), set(), {}
         for img in entries:
             name = img["file"]
             f = os.path.join(folder, name)
-            if name in listed:
-                self.err(f, f"listed twice in {owner}")
+            as_kind = (name, img["kind"], img.get("season"))
+            if as_kind in kinds:
+                self.err(f, f"listed twice in {owner} as a {img['kind']}"
+                            + (f" of season {img['season']}" if img.get("season") is not None else ""))
+            kinds.add(as_kind)
             listed.add(name)
             if not os.path.isfile(f):
                 self.err(f, f"listed in {owner} but does not exist")
                 continue
             self.counts["images"] += 1
-            digest = sha_file(f)
+            if name not in digests:  # a file several kinds share is hashed once
+                digests[name] = sha_file(f)
+            digest = digests[name]
             if digest != img["sha256"]:
                 self.err(f, f"sha256 does not match {owner}")
             if name.rsplit(".", 1)[0] != digest.split(":", 1)[1]:

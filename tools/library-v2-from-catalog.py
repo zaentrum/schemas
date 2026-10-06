@@ -71,7 +71,9 @@ databaseUpdatedAt of its projection, the state of the row it reflects, and a row
 tmdbFetchedAt (with tmdbChangedAt, the day TMDB last reported a change) gives it sources.tmdb; a row
 without them gets neither. An image is named by its own content, primary where the row's isPrimary
 says so — at most one of a kind, the first the export lists — and its origin is TMDB with the
-sourcePath it was fetched from when the row has one, and the catalog when it does not.
+sourcePath it was fetched from when the row has one, and the catalog when it does not. Every artwork
+row is an image of its kind, so rows of two kinds with the same bytes — a backdrop that is the
+poster — are two entries sharing one file; metadata.json lists them by kind, then file.
 
 The export is produced on the client side (see the query beside this tool in the runbook); this
 tool needs no database driver and no network, only the standard library and libv2_records.py — the
@@ -235,6 +237,13 @@ def credit_order(c):
     makes the same credits the same file."""
     rank = ROLES.index(c["role"]) if c["role"] in ROLES else len(ROLES)
     return (rank, c["role"], c["order"] is None, c["order"] or 0, c["name"], c["personId"])
+
+
+def image_order(img):
+    """Where an image stands in metadata.json: by kind, alphabetically, then by season — the series'
+    own images first — then by file name, the hash of its bytes. The export lists an item's artwork in
+    no particular order; sorting it is what makes the same images the same file."""
+    return (img["kind"], img.get("season") is not None, img.get("season") or 0, img["file"])
 
 
 # ---------------------------------------------------------------- images
@@ -471,16 +480,18 @@ class Build:
                                   series=row["type"] == "series")
         if not self.projecting:  # a projection run leaves an image it dropped to the sweep
             self.w.prune(md, names)
-        return out
+        return sorted(out, key=image_order)
 
     def artwork(self, owner, entries, folder, kinds, label, holder, series=False):
-        """The images a projection lists, from the export's artwork: each written into folder, named by
-        the hash of its own bytes, which decide its type and size whatever the row says. An image is
-        primary where the row's isPrimary says so — at most one of a kind, the first the export lists —
-        and its origin is TMDB with the sourcePath it was fetched from when the row has one, the
-        catalog when it does not. Byte-identical entries are one image, listed once, primary when
-        either is. Returns the entries and the names of the files they list."""
-        out, by_name = [], {}
+        """The images a projection lists, from the export's artwork: one entry for every row, of its
+        kind, its file written into folder once and named by the hash of its own bytes, which decide
+        its type and size whatever the row says. Byte-identical rows of two kinds — a backdrop that is
+        the poster — are two entries sharing one file, so the record keeps that the title has both;
+        byte-identical rows of one kind are one entry, primary when either is. An image is primary
+        where the row's isPrimary says so — at most one of a kind, the first the export lists — and
+        its origin is TMDB with the sourcePath it was fetched from when the row has one, the catalog
+        when it does not. Returns the entries and the names of the files they list."""
+        out, by_entry, files = [], {}, set()
         for art in entries:
             art = art if isinstance(art, dict) else {}
             kind = (art.get("kind") or "").lower()
@@ -501,10 +512,10 @@ class Build:
             digest = hashlib.sha256(raw).hexdigest()
             name = f"{digest}.{EXT_OF[ctype]}"
             primary = art.get("isPrimary") is True
-            if name in by_name:
-                self.note(owner, f"{kind} artwork is byte-identical to the {by_name[name]['kind']}, listed once")
-                if primary and by_name[name]["kind"] == kind:
-                    by_name[name]["primary"] = True
+            if (name, kind) in by_entry:
+                self.note(owner, f"{kind} artwork is byte-identical to another {kind}, listed once")
+                if primary:
+                    by_entry[(name, kind)]["primary"] = True
                 continue
             recorded = str(art.get("sha256") or "").strip().lower()
             if recorded and recorded.split(":", 1)[-1] != digest:
@@ -516,10 +527,12 @@ class Build:
                 self.note(owner, f"{kind} artwork says " + ", ".join(f"{k} {v!r}" for k, v, _ in said)
                                  + " where its bytes say " + ", ".join(repr(got) for _, _, got in said)
                                  + "; the record says what the bytes say")
-            if not (self.projecting and os.path.isfile(os.path.join(folder, name))):
-                # an image is written once: a projection run leaves one already there as it is
+            if name not in files and not (self.projecting and os.path.isfile(os.path.join(folder, name))):
+                # an image is written once — the file another kind shares too — and a projection run
+                # leaves one already there as it is
                 self.w.write(os.path.join(folder, name), raw)
                 self.counts["images"] += 1
+            files.add(name)
             fetched = self.moment(owner, f"the {kind} artwork's fetchedAt", art.get("fetchedAt"))
             ref = text(art.get("sourcePath"))
             entry = {"kind": kind, **({"primary": True} if primary else {}), "file": name,
@@ -530,7 +543,7 @@ class Build:
             if series:
                 entry["season"] = None
             out.append(entry)
-            by_name[name] = entry
+            by_entry[(name, kind)] = entry
         first = {}
         for e in out:
             if not e.get("primary"):
@@ -541,7 +554,7 @@ class Build:
                                  f"kind is, and {first[e['kind']][:12]}…, which the export lists first, stays it")
             else:
                 first[e["kind"]] = e["file"]
-        return out, set(by_name)
+        return out, files
 
     def moment(self, owner, field, v):
         """A timestamp as a record holds one, or None — with a note when the export holds something

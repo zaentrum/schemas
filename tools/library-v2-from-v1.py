@@ -409,8 +409,9 @@ class Convert:
 
     def images(self, meta, src, dst, man):
         """An image is named by the hash of its own bytes, so it is written once and a replacement is
-        a new file. Two v1 images with the same bytes are one file, and are listed once."""
-        out, seen = [], {}
+        a new file. Two v1 images with the same bytes are one file, listed as each kind it is — a
+        backdrop that is the poster stays a backdrop — and once for one kind (and season)."""
+        out, seen = [], set()
         md_src, md_dst = os.path.join(src, "metadata"), os.path.join(dst, "metadata")
         for img in meta.get("images") or []:
             p = os.path.join(md_src, img["file"])
@@ -429,14 +430,24 @@ class Convert:
                 continue
             digest = hashlib.sha256(raw).hexdigest()
             name = f"{digest}.{EXT_OF[ctype]}"
-            if name in seen:
-                self.note(man["itemId"], f"the {img['kind']} is byte-identical to the {seen[name]}; one file, "
-                                         f"listed once as the {seen[name]}")
-                self.w.unlink(p)
+            season = img.get("season") if man["type"] == "series" else None
+            target = os.path.join(md_dst, name)
+            # a second v1 file of bytes already moved in goes; the file itself, already named by its
+            # hash, stays
+            spare = os.path.abspath(p) != os.path.abspath(target)
+            if (name, img["kind"], season) in seen:
+                self.note(man["itemId"], f"the {img['kind']} is byte-identical to another {img['kind']}; one "
+                                         f"file, listed once")
+                if spare:
+                    self.w.unlink(p)
                 continue
-            seen[name] = img["kind"]
-            self.w.move(p, os.path.join(md_dst, name))
-            self.counts["images"] += 1
+            if any(n == name for n, _, _ in seen):
+                if spare:
+                    self.w.unlink(p)
+            else:
+                self.w.move(p, target)
+                self.counts["images"] += 1
+            seen.add((name, img["kind"], season))
             fetched = ts(img.get("fetchedAt"))
             entry = {"kind": img["kind"], "file": name, "sha256": "sha256:" + digest, "contentType": ctype,
                      "sizeBytes": len(raw), "width": w, "height": h, "language": img.get("language"),
