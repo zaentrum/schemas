@@ -33,9 +33,10 @@ with the bytes beside them, never about a document being up to date.
                it is for and the playlist flags do not contradict it; a rendition is in an audio group
                the HLS layout names; a subtitle made from a sidecar names one a source of the version
                keeps, and an extra's never does
-  metadata     same item and type as item.json; every image exists with the recorded hash, size,
-               content type and dimensions, is named by its own content hash, is listed once, and
-               nothing unlisted sits in metadata/ (the same for a person's images beside person.json);
+  metadata     same item and type as item.json, and reference ids of its type; every image exists
+               with the recorded hash, size, content type and dimensions, is named by its own content
+               hash, is listed once, and nothing unlisted sits in metadata/ (the same for a person's
+               images beside person.json);
                at most one image of a kind is primary, in a series one per kind and season;
                library.primaryVersionId and library.versionLabels name versions that are really there
   series       an episode names its enclosing series, agrees with it on the reference id, numbers
@@ -442,14 +443,16 @@ class Checker:
                 if e["kind"] == "extra-removed":
                     self.err(e["where"], "an episode has no extras, so none can be removed from it")
 
-        ids = item.get("externalIds") or {}
-        if expect_type == "movie" and set(ids) & {"tmdbTv", "tmdbSeason", "tmdbEpisode"}:
-            self.err(ip, "a movie carries series or episode reference ids")
-        if expect_type == "series" and set(ids) & {"tmdbMovie", "tmdbSeason", "tmdbEpisode", "tmdbCollection"}:
-            self.err(ip, "a series carries movie, season or episode reference ids")
+        # the ids it was created with, and the ones the database holds now
+        for where, ids in ((ip, item.get("externalIds") or {}),
+                           (os.path.join(d, "metadata.json"), (meta or {}).get("externalIds") or {})):
+            if expect_type == "movie" and set(ids) & {"tmdbTv", "tmdbSeason", "tmdbEpisode"}:
+                self.err(where, "a movie carries series or episode reference ids")
+            if expect_type == "series" and set(ids) & {"tmdbMovie", "tmdbSeason", "tmdbEpisode", "tmdbCollection"}:
+                self.err(where, "a series carries movie, season or episode reference ids")
+            if expect_type == "episode" and set(ids) & {"tmdbMovie", "tmdbCollection"}:
+                self.err(where, "an episode carries movie reference ids")
         if expect_type == "episode":
-            if set(ids) & {"tmdbMovie", "tmdbCollection"}:
-                self.err(ip, "an episode carries movie reference ids")
             self.episode(ip, item, meta, series)
 
         self.event_subjects(events, sources, versions, packages, removed, extras, retired)

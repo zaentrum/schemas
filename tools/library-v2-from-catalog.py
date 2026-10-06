@@ -318,8 +318,10 @@ class Build:
             body["overview"] = str(row["description"]).strip()
         if body:
             localized[lg] = body
+        ids = self.item_json(row)["externalIds"]
         doc = {"schema": "zaentrum.library.metadata/2", "itemId": row["id"], "type": row["type"],
                "asOf": self.as_of, "projectedBy": "library-v2-from-catalog", **self.freshness(row["id"], row),
+               "externalIds": ids,
                "titles": {"primary": text(row.get("title")) or "", "original": None,
                           "sort": text(row.get("sortTitle")), "qualifier": None, "localized": localized},
                "releaseDate": str(row["year"]) if row.get("year") else None,
@@ -351,8 +353,7 @@ class Build:
             seasons = sorted({int(e["seasonNumber"]) for e in episodes if e.get("seasonNumber") is not None})
             doc["series"] = {"seasons": [{"number": n, "tmdbSeason": None, "name": None, "overview": None,
                                           "airDate": None, "episodeCountReference": None} for n in seasons]}
-        library = {"match": {"status": "matched" if any(k.startswith("tmdb") for k in
-                                                        (self.item_json(row)["externalIds"])) else "unmatched",
+        library = {"match": {"status": "matched" if any(k.startswith("tmdb") for k in ids) else "unmatched",
                              "decidedBy": "legacy-catalog", "decidedAt": self.as_of}}
         if version_ids:
             library["primaryVersionId"] = version_ids[0]

@@ -514,8 +514,11 @@ class Rebuild:
             "modifiedAt": meta.get("databaseUpdatedAt"),
             "tmdbFetchedAt": tmdb.get("fetchedAt"), "tmdbChangedAt": tmdb.get("changedAt"),
             "createdAt": item.get("createdAt"), "createdBy": item.get("createdBy"),
-            "externalIds": [{"source": EXTERNAL_ID_SOURCE.get(k, k), "externalId": v}
-                            for k, v in sorted((item.get("externalIds") or {}).items())],
+            # the ids the database holds now, as the projection says them; a projection from before it
+            # said them leaves the ones the item was created with
+            "externalIds": [{"source": EXTERNAL_ID_SOURCE.get(k, k), "externalId": v} for k, v in sorted(
+                (meta["externalIds"] if isinstance(meta.get("externalIds"), dict) else item.get("externalIds") or {})
+                .items())],
             "genres": list(meta.get("genres") or []), "tags": list(meta.get("tags") or []),
             # a credit from before credits were general has no job and no episode count: null, as the
             # export writes a field it does not know

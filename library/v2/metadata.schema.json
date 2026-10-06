@@ -42,6 +42,7 @@
     "projectedBy": { "type": "string", "description": "The service that wrote it." },
     "databaseUpdatedAt": { "$ref": "defs.schema.json#/$defs/databaseUpdatedAt" },
     "sources": { "$ref": "defs.schema.json#/$defs/sources" },
+    "externalIds": { "$ref": "defs.schema.json#/$defs/externalIds", "description": "The reference ids the database holds for the item now. item.json keeps the ones the item was created with, written once, so it cannot follow a re-match; these are projected with the texts, a rebuild restores them, and a reader that refetches texts and images uses them. Absent from a projection written before 2026-10-06, whose reader falls back to item.json's." },
 
     "titles": {
       "type": "object",

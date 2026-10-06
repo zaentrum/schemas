@@ -618,6 +618,12 @@ CASES = [
     ("a season image on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(season=1)), "season-specific image on a non-series item", []),
     ("a season image of a season nothing describes", False, lambda r: edit(meta(series(r)), lambda d: d["images"][1].update(season=3)), "which metadata.json does not describe", []),
 
+    # ---- the reference ids an item has now, beside the ones item.json was created with
+    ("a projection naming the reference ids the item has now", True, lambda r: edit(meta(movie(r)), lambda d: d.update(externalIds={"tmdbMovie": "133702", "imdb": "tt2285752"})), "OK", []),
+    ("a projection naming a reference id the format does not know", False, lambda r: edit(meta(movie(r)), lambda d: d.update(externalIds={"tmdb": "1"})), "'tmdb' was unexpected", []),
+    ("a movie's projection naming a series' reference id", False, lambda r: edit(meta(movie(r)), lambda d: d.update(externalIds={"tmdbTv": "1"})), "metadata.json: a movie carries series or episode reference ids", []),
+    ("an episode's projection naming a movie's reference id", False, lambda r: edit(meta(episode(r, 1)), lambda d: d.update(externalIds={"tmdbMovie": "1"})), "metadata.json: an episode carries movie reference ids", []),
+
     # ---- a projection says which state of its database row it reflects, and how fresh its reference data is
     ("a projection's database state that is not a moment", False, lambda r: edit(meta(movie(r)), lambda d: d.update(databaseUpdatedAt="last week")), "$.databaseUpdatedAt", []),
     ("a projection that does not say which state it reflects", True, lambda r: edit(meta(movie(r)), lambda d: d.pop("databaseUpdatedAt")), "OK", []),

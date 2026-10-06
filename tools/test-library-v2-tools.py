@@ -2277,7 +2277,10 @@ def test_projections_only(t):
         e["exportedAt"] = "2026-10-02T08:00:00Z"
         e["items"][0].update(modifiedAt="2026-10-01T09:00:00Z", title="Example Film (Restored)", tagline="Restored.",
                              artwork=[{"kind": "poster", "contentType": "image/png", "fetchedAt": "2026-10-01T08:59:00Z",
-                                       "base64": base64.b64encode(png(5, 5)).decode()}])
+                                       "base64": base64.b64encode(png(5, 5)).decode()}],
+                             # matched again: the reference ids are others now
+                             externalIds=[{"source": "tmdb", "externalId": "1234"},
+                                          {"source": "imdb", "externalId": "tt8888888"}])
         e["people"][0] = full_person(modifiedAt="2026-10-01T09:00:00Z", biography={"en": "Directed examples."},
                                      artwork=[full_person()["artwork"][1]])
         changed = os.path.join(tmp, "changed.json")
@@ -2295,6 +2298,13 @@ def test_projections_only(t):
         t.ok("one run later no projection is stale, and the tree agrees with the database",
              code == 0 and "the tree and the database agree" in ctext and "stale projection" not in ctext, ctext)
         t.eq("and still no record has changed", records_of(out), records)
+        item_dir = os.path.join(out, "movies", iid[:2], iid)
+        rebuilt, _ = rows_of(out, "--text-language", "und")
+        t.eq("the projection holds the reference ids the item has now, and item.json the ones it was created with",
+             (jload(os.path.join(item_dir, "metadata.json"))["externalIds"],
+              jload(os.path.join(item_dir, "item.json"))["externalIds"],
+              [x["externalId"] for x in rebuilt[iid]["externalIds"] if x["source"] == "imdb"]),
+             ({"tmdbMovie": "1234", "imdb": "tt8888888"}, {"tmdbMovie": "1234", "imdb": "tt9999999"}, ["tt8888888"]))
         t.ok("a portrait the new projection no longer lists is left where it was, for the sweep, and so is a poster",
              os.path.isfile(dropped) and os.path.isfile(poster))
         if have_jsonschema():
