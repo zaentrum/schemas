@@ -501,6 +501,20 @@ def test_records(t):
               for x in jload(os.path.join(item, "sources", sid, "source.json"))["sidecars"]],
              [(GOLDEN_SIDECAR, "subtitle", "de", "dialogue"), (GOLDEN_COMPANION, "nfo", None, None)])
 
+        # a subtitle made from a sidecar: the sidecar's own row stands for it while the original waits beside
+        # it, so the rebuild gives it none; once the original is deleted it is a row in the sidecar's language
+        rows, _ = rows_of(os.path.join(tmp, "library"), "--text-language", "und")
+        t.eq("the rebuild gives no row to a subtitle made from a sidecar while the original is there",
+             [(x["language"], os.path.basename(x["path"])) for x in rows[GOLDEN_ITEM]["subtitleAssets"]],
+             [("eng", "0.vtt"), ("eng", "1.vtt"), ("ger", "2.sup")])
+        write_event(item, {"schema": "zaentrum.library.event/2", "eventId": "0d000000-0000-4000-8000-000000000001",
+                           "at": "2026-10-06T11:00:00Z", "by": "test", "kind": "original-deleted", "versionId": vid,
+                           "sourceId": sid, "accepted": ["fonts"]})
+        rows, _ = rows_of(os.path.join(tmp, "library"), "--text-language", "und")
+        t.eq("and once the original is deleted, a row of the package's subtitle in the sidecar's language",
+             [(x["language"], os.path.basename(x["path"])) for x in rows[GOLDEN_ITEM]["subtitleAssets"]],
+             [("eng", "0.vtt"), ("eng", "1.vtt"), ("ger", "2.sup"), ("de", "3.vtt")])
+
         # the chain check bites: a package file changed, a file nobody listed, a record changed
         with open(os.path.join(vp, "subs", "1.vtt"), "ab") as f:
             f.write(b"x")
@@ -543,6 +557,38 @@ def test_records(t):
     for tool in USES_RECORDS:
         t.eq(f"{os.path.basename(tool)} redefines no name of the module it is piped behind",
              sorted(defined(tool) & defined(RECORDS)), [])
+
+
+# ---------------------------------------------------------------- the arrivals are not the record
+def test_arrivals(t):
+    """An original waits at the arrivals until its package is recorded, and is deleted then: --compare
+    does not hold the tree to the export's rows of files there, nor ever to a retired original's row."""
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"))
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out,
+                         "--media-mode", "none")
+        e = jload(export)
+        row = e["items"][0]
+        row["subtitleAssets"].append({"id": "s9", "path": "/var/lib/katalog/media/Example Film (2024).de.srt",
+                                      "format": "srt", "language": "de", "label": "Deutsch", "isDefault": False})
+        jwrite(export, e)
+        ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", ignore)
+        t.ok("the export's rows of an original and its sidecar waiting outside the library differ from the tree",
+             code == 1 and "playbackAssets" in text and "subtitleAssets" in text, text)
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", ignore, "--arrivals-root",
+                         "/var/lib/katalog/media")
+        t.ok("--arrivals-root leaves them out, and the tree agrees with the database",
+             code == 0 and "the tree and the database agree" in text, text)
+        primary = next(a for a in row["playbackAssets"] if a["kind"] == "primary")
+        primary.update(kind="original", isPrimary=False,
+                       path=os.path.join(out, "movies", iid[:2], iid, "sources", "x"))
+        row["subtitleAssets"] = row["subtitleAssets"][:1]
+        jwrite(export, e)
+        code, text = run(REBUILD, out, "--compare", export, "--ignore-fields", ignore)
+        t.ok("and the row of an original that was retired is never compared",
+             code == 0 and "the tree and the database agree" in text, text)
 
 
 # ---------------------------------------------------------------- the example tree
@@ -3744,7 +3790,7 @@ def main():
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
-                        ("catalog -> v2", test_from_catalog),
+                        ("catalog -> v2", test_from_catalog), ("the arrivals are not the record", test_arrivals),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras),
                         ("credits: a role, the source's own words, one order", test_credits), ("people", test_people),
                         ("the people list in full", test_people_in_full),

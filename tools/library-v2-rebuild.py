@@ -2,7 +2,7 @@
 """Read a v2 library tree and produce the catalog contents it implies.
 
 Usage:
-  library-v2-rebuild.py LIBRARY [--out rows.json] [--compare CATALOG.json [--subset]]
+  library-v2-rebuild.py LIBRARY [--out rows.json] [--compare CATALOG.json [--subset] [--arrivals-root DIR]]
                         [--text-language LANG] [--ignore-fields a,b,c]
 
 The database is the working copy and this tree is the record that can rebuild it. This reads the
@@ -112,6 +112,15 @@ file it is, can be compared, and where it lives cannot.
 
 --subset reports the rows only the database has without counting them, for a tree that was built
 from part of a catalog.
+
+The arrivals are not the record. An original waits outside the library — in <root>/.work/incoming
+on the platform — until its package is recorded, and is deleted then, so the export's rows of the
+files there are no rows the tree can give back: --arrivals-root names that folder, and the asset and
+subtitle rows of files under it are not compared. Neither is ever the row of an original that was
+retired (kind original). A subtitle the package made from a sidecar is the catalog's row of that
+sidecar while the original waits — at the arrivals, not compared — and the rebuild gives it no row of
+its own until the original is deleted; then it is a row of the package's subtitle in the sidecar's
+language, and a sidecar nothing was made from is a row of the copy its source folder keeps.
 """
 import argparse, base64, datetime, glob, hashlib, json, os, re, sys, uuid
 
@@ -542,7 +551,7 @@ class Rebuild:
         for v in versions:
             row["playbackAssets"] += self.assets(item, v, sources, v is primary)
             if v["package"] and not v["superseded"]:
-                row["subtitleAssets"] += self.subtitles(item, v)
+                row["subtitleAssets"] += self.subtitles(item, v, sources)
         return row
 
     def assets(self, item, v, sources, is_primary):
@@ -585,11 +594,37 @@ class Rebuild:
                         "durationMs": pkg.get("durationMs")})
         return out
 
-    def subtitles(self, item, v):
-        return [{"id": did(item["itemId"], "subtitle", v["id"], s["id"]),
-                 "path": os.path.join(v["dir"], s["path"]), "format": s.get("format"),
-                 "language": s.get("language"), "label": s.get("title") or "",
-                 "isDefault": bool(s.get("default"))} for s in v["package"].get("subtitles") or []]
+    def subtitles(self, item, v, sources=None):
+        """The subtitle rows of a version's package — and of the sidecars its sources keep once their
+        originals are gone. A subtitle made from a sidecar has no row of its own while its original waits
+        beside the sidecar: the catalog's row of the sidecar stands for it, at the arrivals, which are no
+        part of the record. Once the original is deleted the catalog points that row at the package's
+        subtitle, in the sidecar's language, and the row of a sidecar nothing was made from at the copy
+        the source folder keeps — which has no label of its own the record could give back."""
+        sources = sources or {}
+        gone = lambda sid: v.get("whole") or sid in (v.get("gone") or ())
+        out, made = [], set()
+        for s in v["package"].get("subtitles") or []:
+            language, f = s.get("language"), s.get("fromSidecar")
+            if f:
+                made.add(f)
+                sid = f.split("/")[1] if f.count("/") == 2 else None
+                if not gone(sid):
+                    continue
+                kept = next((x for x in (sources.get(sid) or {}).get("sidecars") or [] if x.get("file") == f), {})
+                language = kept.get("language", language)
+            out.append({"id": did(item["itemId"], "subtitle", v["id"], s["id"]),
+                        "path": os.path.join(v["dir"], s["path"]), "format": s.get("format"),
+                        "language": language, "label": s.get("title") or "",
+                        "isDefault": bool(s.get("default"))})
+        item_dir = os.path.dirname(os.path.dirname(v["dir"]))
+        for sid in v.get("version", {}).get("sourceIds") or []:
+            for x in (sources.get(sid) or {}).get("sidecars") or [] if gone(sid) else []:
+                if x.get("kind") == "subtitle" and x.get("file") not in made:
+                    out.append({"id": did(item["itemId"], "subtitle", sid, x["file"]),
+                                "path": os.path.join(item_dir, x["file"]), "format": x.get("format"),
+                                "language": x.get("language"), "label": None, "isDefault": False})
+        return out
 
     # -------------------------------------------------- bonus material
     def extra_rows(self, d, item, meta, events=()):
@@ -989,14 +1024,30 @@ def people_existence(tree_people, db_people, tree, item_classes, log=None, newes
     return out, credited
 
 
+def outside_arrivals(row, arrivals):
+    """An export's item row without what the record does not hold: the asset and subtitle rows of the
+    files that wait at the arrivals — an original stays there until its package is recorded, and is no
+    part of the record — and the row of an original that was retired (kind original)."""
+    roots = [os.path.normpath(a) for a in arrivals]
+    at = lambda p: any(os.path.normpath(str(p or "")) == r or os.path.normpath(str(p or "")).startswith(r + os.sep)
+                       for r in roots)
+    out = dict(row)
+    if isinstance(row.get("playbackAssets"), list):
+        out["playbackAssets"] = [a for a in row["playbackAssets"] if isinstance(a, dict)
+                                 and a.get("kind") != "original" and not at(a.get("path"))]
+    if isinstance(row.get("subtitleAssets"), list):
+        out["subtitleAssets"] = [x for x in row["subtitleAssets"] if isinstance(x, dict) and not at(x.get("path"))]
+    return out
+
+
 def compare(tree_rows, tree_people, export, ignore, subset=False, text_language="und", newest=None, extras=(),
-            people_newest=None):
+            people_newest=None, arrivals=()):
     """Both directions, field by field. Returns (lines, number of differences, number of orphans safe
     to remove). newest is the newest moment each item folder's records state, by item id, and
     people_newest each person folder's, by person id. extras are the tree's bonus material, which the
     catalog has no table for yet: they are counted, never compared."""
     tree = {r["id"]: normalise(r) for r in tree_rows}
-    db = {r["id"]: normalise(r) for r in export.get("items") or []}
+    db = {r["id"]: normalise(outside_arrivals(r, arrivals)) for r in export.get("items") or []}
     log, people_log = deletion_log(export), deletion_log(export, "person")
     lines = []
     if log is None:
@@ -1114,6 +1165,9 @@ def main():
                     help="the localized title the description and tagline are read from")
     ap.add_argument("--ignore-fields", default="id,path,hash",
                     help="fields that cannot agree by construction; comma-separated")
+    ap.add_argument("--arrivals-root", action="append", default=[],
+                    help="where the platform keeps the files that are not the record, e.g. <root>/.work: the "
+                         "export's asset and subtitle rows of files there are not compared; repeatable")
     ap.add_argument("--subset", action="store_true",
                     help="the tree holds only some of the database's items: rows only the database "
                          "has are reported but are not a difference")
@@ -1144,7 +1198,7 @@ def main():
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
     lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest,
-                                extras=r.extras, people_newest=r.people_newest)
+                                extras=r.extras, people_newest=r.people_newest, arrivals=args.arrivals_root)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     for line in lines:
         print(line)
