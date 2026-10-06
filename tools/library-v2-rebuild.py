@@ -10,12 +10,12 @@ records, applies the item's events in the order they happened, and writes the ro
 hold: the items and their texts, the images, the credits — each person's role, the job in the
 source's own words, the character, the billing order and a series' episode count, under the names
 the export gives them — the chapters and segments, one playback asset per package and one per
-original that is still there, the subtitles the package carries, and the people under people/ with
-their biographies, dates, reference ids and portraits — which one is primary, and the path TMDB
-lists each under — and for every row the state of the database row its projection reflects
-(modifiedAt, from databaseUpdatedAt) and when TMDB was last asked (tmdbFetchedAt, tmdbChangedAt,
-from sources). It needs no network and no other service, it can run against a copy, and running it
-twice gives the same answer.
+original that is still there, the subtitles the package carries — none of them a default, which is
+behaviour (below) — and the people under people/ with their biographies, dates, reference ids and
+portraits — which one is primary, and the path TMDB lists each under — and for every row the state
+of the database row its projection reflects (modifiedAt, from databaseUpdatedAt) and when TMDB was
+last asked (tmdbFetchedAt, tmdbChangedAt, from sources). It needs no network and no other service,
+it can run against a copy, and running it twice gives the same answer.
 
 The bonus material beside a movie or series becomes rows of its own, under extras in the rows
 JSON: kind, title, language, runtime and season as extra.json recorded them, the order, hidden
@@ -109,6 +109,11 @@ Ignoring modifiedAt leaves the freshness of every projection unjudged.
 A trailer link's localPath is compared by its file name for the same reason: a downloaded trailer
 moved into its extra's folder and kept its name, so whether the link has a local copy, and which
 file it is, can be compared, and where it lives cannot.
+
+A subtitle row's isDefault is never compared, whatever --ignore-fields says, and the rebuild writes
+it false: which subtitle a viewer gets is behaviour — the player's rule, or a default a person
+chose and the database keeps — which no record holds; a package's default is only what its playlist
+says. A database rebuilt from the tree has lost the defaults people chose.
 
 --subset reports the rows only the database has without counting them, for a tree that was built
 from part of a catalog.
@@ -613,10 +618,11 @@ class Rebuild:
                     continue
                 kept = next((x for x in (sources.get(sid) or {}).get("sidecars") or [] if x.get("file") == f), {})
                 language = kept.get("language", language)
+            # never the package's default: that is what its playlist says, and which subtitle a viewer
+            # gets is behaviour, which the database keeps and no record holds
             out.append({"id": did(item["itemId"], "subtitle", v["id"], s["id"]),
                         "path": os.path.join(v["dir"], s["path"]), "format": s.get("format"),
-                        "language": language, "label": s.get("title") or "",
-                        "isDefault": bool(s.get("default"))})
+                        "language": language, "label": s.get("title") or "", "isDefault": False})
         item_dir = os.path.dirname(os.path.dirname(v["dir"]))
         for sid in v.get("version", {}).get("sourceIds") or []:
             for x in (sources.get(sid) or {}).get("sidecars") or [] if gone(sid) else []:
@@ -706,6 +712,10 @@ CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath"
 # The fields of an item row compared only when the export's row carries them, for the same reason:
 # items do not carry them yet.
 CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt")
+# Behaviour, not data: which subtitle a viewer gets is the player's rule, or a default a person chose,
+# which the database keeps and no record holds. The rebuild writes isDefault false, and --compare never
+# compares it, whatever --ignore-fields says.
+BEHAVIOUR = ("isDefault",)
 
 
 def moment_of(value):
@@ -1045,7 +1055,8 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
     """Both directions, field by field. Returns (lines, number of differences, number of orphans safe
     to remove). newest is the newest moment each item folder's records state, by item id, and
     people_newest each person folder's, by person id. extras are the tree's bonus material, which the
-    catalog has no table for yet: they are counted, never compared."""
+    catalog has no table for yet: they are counted, never compared. Behaviour is never compared."""
+    ignore = set(ignore) | set(BEHAVIOUR)
     tree = {r["id"]: normalise(r) for r in tree_rows}
     db = {r["id"]: normalise(outside_arrivals(r, arrivals)) for r in export.get("items") or []}
     log, people_log = deletion_log(export), deletion_log(export, "person")
@@ -1164,7 +1175,8 @@ def main():
     ap.add_argument("--text-language", default="und",
                     help="the localized title the description and tagline are read from")
     ap.add_argument("--ignore-fields", default="id,path,hash",
-                    help="fields that cannot agree by construction; comma-separated")
+                    help="fields that cannot agree by construction; comma-separated. A subtitle's isDefault is "
+                         "never compared: it is behaviour, which no record holds")
     ap.add_argument("--arrivals-root", action="append", default=[],
                     help="where the platform keeps the files that are not the record, e.g. <root>/.work: the "
                          "export's asset and subtitle rows of files there are not compared; repeatable")
@@ -1194,7 +1206,7 @@ def main():
         print("  note " + n)
     if not args.compare:
         return 0
-    ignore = {x.strip() for x in args.ignore_fields.split(",") if x.strip()}
+    ignore = {x.strip() for x in args.ignore_fields.split(",") if x.strip()} | set(BEHAVIOUR)
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
     lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest,

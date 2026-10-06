@@ -1005,6 +1005,19 @@ def test_compare(t):
     t.ok("and its extras are counted, not compared: the catalog has no table for them yet",
          "extras: 4 on storage, not compared" in text, text)
 
+    subtitled = next(r for r in rows.values() if r["subtitleAssets"])
+
+    def subtitle(change):
+        """Change the database's row of one subtitle of an item that has one."""
+        return lambda e: change(next(r for r in e["items"] if r["id"] == subtitled["id"])["subtitleAssets"][0])
+
+    code, text = compare(subtitle(lambda x: x.update(isDefault=True)), "--ignore-fields", "id,path,hash")
+    t.ok("a subtitle default a person chose is behaviour the database keeps, which no record holds: never "
+         "compared, whatever --ignore-fields says", code == 0 and "the tree and the database agree" in text, text)
+    code, text = compare(subtitle(lambda x: x.update(label="Chosen")), "--ignore-fields", "id,path,hash")
+    t.ok("while the rest of a subtitle row is compared",
+         code == 1 and "subtitleAssets.label: 1 difference(s)" in text, text)
+
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
     t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",
          code == 0 and section(text, "orphan") == [movie["id"]] and "1 orphan(s) on storage are safe" in text, text)
@@ -1465,8 +1478,11 @@ def test_from_catalog(t):
         code, text = run(REBUILD, out, "--compare", export, "--text-language", "und",
                          "--ignore-fields", "id,path,hash,codec,resolution,bitrateKbps,"
                                             "durationMs,sizeBytes")
-        t.ok("the rebuilt rows agree with the export they came from",
-             code == 0 and "the tree and the database agree" in text, text)
+        t.ok("the rebuilt rows agree with the export they came from — its subtitle's default, behaviour the "
+             "database keeps, not compared, as the compare says",
+             code == 0 and "the tree and the database agree" in text
+             and "(ignoring bitrateKbps, codec, durationMs, hash, id, isDefault, path, resolution, sizeBytes)" in text,
+             text)
 
         rows, _ = rows_of(out, "--text-language", "und")
         row = rows[iid]
@@ -1476,8 +1492,9 @@ def test_from_catalog(t):
              [0, 300000])
         t.eq("the segments keep the detector that found them",
              [(s["kind"], s["source"]) for s in row["segments"]], [("credits", "blackframe")])
-        t.eq("the package's subtitle is a subtitle asset again",
-             [(s["language"], s["isDefault"]) for s in row["subtitleAssets"]], [("ger", True)])
+        t.eq("the package's subtitle is a subtitle asset again, and no default — which subtitle a viewer gets is "
+             "behaviour, which no record holds, not the default its playlist says",
+             [(s["language"], s["isDefault"]) for s in row["subtitleAssets"]], [("ger", False)])
         t.eq("the image comes back with the hash of its own bytes",
              [a["sha256"] == "sha256:" + hashlib.sha256(
                  open(os.path.join(out, "movies", iid[:2], iid, "metadata",
@@ -1802,8 +1819,9 @@ def legacy_store(root):
                        "label": None}],
             playbackAssets=[asset("pa1", f"{svc}/media/{film}", "primary", sizeBytes=16000),
                             asset("pa2", f"{pm}/manifest.json", "packaged", subtitleTrackCount=2)],
+            # sa1 a default a person chose, which the database keeps: behaviour, which no record holds
             subtitleAssets=[{"id": "sa1", "path": f"{pm}/subs/0.vtt", "format": "webvtt", "language": "eng",
-                             "label": "", "isDefault": False},
+                             "label": "", "isDefault": True},
                             {"id": "sa2", "path": f"{svc}/media/Example Film (2024)/Example Film (2024).de.srt",
                              "format": "srt", "language": "de", "label": "German", "isDefault": False}],
             artwork=[{"kind": "poster", "contentType": "image/png", "fetchedAt": "2026-07-01T09:05:00Z",
@@ -1861,8 +1879,9 @@ def adopt(root, run, export, fresh):
     """katalog-manager's adopt, by hand, as the unit plans say: per unit — series before episodes — the
     guards checked, then every move in its order, then the database changes the db block names, written
     into fresh as an export taken afterwards shows them: the packaged row as packaging-complete writes it
-    from package.json, the subtitle rows' paths and defaults, and an original gone before the library was
-    recorded a retired one, with its original-deleted event. The staged people last."""
+    from package.json, the subtitle rows' paths — each keeps its default, a person's choice the database
+    keeps and no record holds — and an original gone before the library was recorded a retired one, with
+    its original-deleted event. The staged people last."""
     rundir = os.path.join(root, ".work", "migration", run)
     units = sorted((jload(p) for p in glob.glob(os.path.join(rundir, "units", "*.json"))),
                    key=lambda u: ({"series": 0, "movie": 1, "episode": 2}[u["type"]], u["itemId"]))
@@ -1906,12 +1925,6 @@ def adopt(root, run, export, fresh):
         subs = {x["id"]: x for x in row["subtitleAssets"]}
         for x in db["subtitles"]:
             subs[x["id"]]["path"] = x["path"]
-            vp = os.path.dirname(os.path.dirname(x["path"]))
-            if os.path.isfile(os.path.join(vp, "package.json")):
-                rel = os.path.relpath(x["path"], vp)
-                ren = next((s for s in jload(os.path.join(vp, "package.json"))["subtitles"] if s["path"] == rel), None)
-                if ren:
-                    subs[x["id"]]["isDefault"] = bool(ren.get("default"))
         for src in db["sources"]:
             if src["arrivalPath"] is None and src["recordDir"]:
                 write_event(u["itemDir"], {"schema": "zaentrum.library.event/2",
@@ -2025,10 +2038,17 @@ def test_platform(t):
             t.skip("validate-library-v2.py finds the adopted library valid", "jsonschema is not importable here")
         code, mtext = run(MEDIA_CHECK, "--checksums", root)
         t.ok("and the media check", code == 0 and mtext.strip().endswith("OK"), mtext)
+        after = {x["id"]: x for r in jload(fresh)["items"] for x in r["subtitleAssets"]}
+        t.ok("the adopt keeps the subtitle default a person chose, of a row it carries into the version folder",
+             after["sa1"]["isDefault"] is True
+             and after["sa1"]["path"] == os.path.join(movie_dir, "versions", vid, "subs", "0.vtt"), after["sa1"])
+        rebuilt, _ = rows_of(root, "--text-language", "und")
+        t.eq("which the rebuild cannot know: the subtitle row it writes has no default",
+             [x["isDefault"] for x in rebuilt[PF_MOVIE]["subtitleAssets"]], [False])
         code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
                           "--ignore-fields", "id,path,hash", "--text-language", "und")
-        t.ok("and the rebuild agrees with the database the adopt left, the arrivals aside",
-             code == 0 and "the tree and the database agree" in ctext, ctext)
+        t.ok("and the rebuild agrees with the database the adopt left, the arrivals aside and the chosen default "
+             "not compared", code == 0 and "the tree and the database agree" in ctext, ctext)
 
         code, text = run_with(env, FROM_CATALOG, "--platform", "--export", fresh, "--root", root, "--run", PF_RUN + "b")
         report = jload(os.path.join(root, ".work", "migration", PF_RUN + "b", "report.json"))

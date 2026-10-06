@@ -211,11 +211,13 @@ the thing it describes is made and never touched again, or a projection of the d
 fact about the bytes is a record; a decision the database holds is a projection**, so what an
 original contained and what a package lost are written once, while which version plays by default,
 what a viewer's version picker says, how far to trust the reference ids, how the episodes are
-ordered and how the extras are shown live in `metadata.json` under `library`. Nothing is merged, so
-there is no conflict to resolve. The few facts that arise later get their own folder under `events/`
-instead of a rewrite: an original deleted, a version removed, a package superseded. Every version is
-a folder, so a re-package is a new folder rather than an edit, and a record always sits next to the
-bytes it describes.
+ordered and how the extras are shown live in `metadata.json` under `library`. Behaviour is neither:
+which track a viewer gets — the player's rule, or a subtitle default a person chose — is the
+database's alone, so a rebuild restores no such choice. Nothing is merged, so there is no conflict
+to resolve. The few facts that arise later get their own folder under `events/` instead of a
+rewrite: an original deleted, a version removed, a package superseded. Every version is a folder, so
+a re-package is a new folder rather than an edit, and a record always sits next to the bytes it
+describes.
 
 ```
 movies/<aa>/<itemId>/
@@ -595,7 +597,8 @@ media check on the share's root — `.work/` beside the record is not looked at 
 `library-v2-rebuild.py --compare` of a fresh export with `--arrivals-root <root>/.work`: the rows of
 files waiting at the arrivals, and of an original retired since, are no part of the record, and a
 subtitle the package made from a sidecar has no row of its own until its original is deleted — the
-catalog's row of the sidecar stands for it.
+catalog's row of the sidecar stands for it. A subtitle row's `isDefault` is never compared: the adopt
+keeps a default a person chose, and no record holds one.
 
 ### Telling an orphan from a loss
 
@@ -718,6 +721,12 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-06 (c)** — a subtitle's default is the database's. Which subtitle a viewer gets is
+  behaviour: the player's rule, or a default a person chose, which the database keeps for the rows
+  it holds — the platform's adopt carries it over. No record holds it; a package's `default` is only
+  what its playlist says. `library-v2-rebuild.py` now writes every subtitle row with `isDefault`
+  false, so a database rebuilt from the tree has lost the defaults people chose, and `--compare`
+  never compares a subtitle row's `isDefault`, whatever `--ignore-fields` says. No record changes.
 - **2026-10-06 (b)** — a removed version keeps its history. The validator rejected the tree a
   version's removal leaves: once a `version-removed` event retired a version and its folder was
   deleted, the events that had named it — the supersession of its package, the deletion of its
