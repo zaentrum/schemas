@@ -26,7 +26,8 @@ with the bytes beside them, never about a document being up to date.
                primary; a death is not before the birth; a credit whose person has no folder is a
                note, not an error, because the person may not have been projected yet
   versions     every version is a folder under versions/ whose name is its versionId; its sourceIds
-               name source records that exist and its originalFiles are those sources' file names;
+               name source records that exist and its originalFiles are those sources' file names,
+               each with its fixity while it is kept (a source without one says why in probe.note);
                package.json exists exactly when .complete does; a package is canonical exactly when
                the version keeps no original; lossless means no losses; chapters are ordered and
                kept when the original carried them; every track — a 5.1 companion's too — says what
@@ -766,6 +767,11 @@ class Checker:
                 gone.add(e["sourceId"])
             else:
                 whole = True
+        for name in v["originalFiles"]:
+            sid = next((s for s in v["sourceIds"] if s in sources and sources[s]["file"]["name"] == name), None)
+            if sid and "fixity" not in sources[sid]["file"] and not (whole or sid in gone):
+                self.err(where, f"originalFiles names {name}, which this version keeps, so its source record "
+                                f"carries the file's fixity")
         if self.check_media:
             self.media(vp, v, pkg, sources, gone, whole)
         return v, pkg
@@ -894,7 +900,7 @@ class Checker:
                 self.err(f, "original file missing, and no original-deleted event says it was removed")
             elif src and os.path.getsize(f) != src["file"]["sizeBytes"]:
                 self.err(f, f"original is {os.path.getsize(f)} bytes, its source record says {src['file']['sizeBytes']}")
-            elif src and qh1(f) != src["file"]["fixity"]["qh1"]:
+            elif src and (src["file"].get("fixity") or {}).get("qh1") and qh1(f) != src["file"]["fixity"]["qh1"]:
                 self.err(f, "original does not match its qh1 fixity")
         if pkg is None:
             return

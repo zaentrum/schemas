@@ -668,6 +668,11 @@ CASES = [
     ("an image origin in the form before 2026-10-02 (f), the source alone", True, lambda r: edit(meta(movie(r)), lambda d: [i.update(origin="legacy-catalog") for i in d["images"]]), "OK", ["--check-media"]),
     ("an image origin in that form naming a source it never had", False, lambda r: edit(meta(movie(r)), lambda d: d["images"][0].update(origin="file")), "'file' is not one of", []),
 
+    # ---- a source record of an original gone before the library recorded it
+    ("a source record of an original gone before the library recorded it", True, lambda r: edit(movie_source(r), lambda d: (d["file"].pop("fixity"), d["probe"].update(note="gone before the library was recorded"))), "OK", ["--check-checksums"]),
+    ("a source record without the file's fixity that does not say why", False, lambda r: edit(movie_source(r), lambda d: d["file"].pop("fixity")), "$.probe.note: None is not of type 'string'", []),
+    ("an original kept beside its package whose record has no fixity", False, lambda r: edit(os.path.join(movie(r), "sources", json.load(open(ver(kept(r))))["sourceIds"][0], "source.json"), lambda d: (d["file"].pop("fixity"), d["probe"].update(note="x"))), "which this version keeps, so its source record carries the file's fixity", []),
+
     # ---- sources
     ("a probe whose hash is wrong", False, lambda r: open(probe(r), "a").write(" "), "probe sha256 does not match", []),
     ("a probe missing", False, lambda r: os.remove(probe(r)), "probe file missing", []),

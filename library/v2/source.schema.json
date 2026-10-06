@@ -6,6 +6,13 @@
   "type": "object",
   "required": ["schema", "sourceId", "takenAt", "file", "container", "streams", "fidelity", "essence", "probe"],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "$comment": "A record without the file's fixity says why, in probe.note.",
+      "if": { "properties": { "file": { "not": { "required": ["fixity"] } } }, "required": ["file"] },
+      "then": { "properties": { "probe": { "required": ["note"], "properties": { "note": { "type": "string", "minLength": 1 } } } } }
+    }
+  ],
   "properties": {
     "schema": { "const": "zaentrum.library.source/2" },
     "sourceId": { "$ref": "defs.schema.json#/$defs/uuid", "description": "Equals the name of the folder this record sits in, sources/<sourceId>/, which also holds its probe, its sidecars and the checksums that cover them all." },
@@ -15,14 +22,14 @@
     "file": {
       "type": "object",
       "description": "The file as found. There is no path here: where the bytes live is the version's business, and after a deletion they live nowhere.",
-      "required": ["name", "sizeBytes", "fixity"],
+      "required": ["name", "sizeBytes"],
       "additionalProperties": false,
       "properties": {
         "name": { "$ref": "defs.schema.json#/$defs/fileName", "description": "Original filename, unchanged. The version that keeps the original names the same file." },
         "kind": { "enum": ["stream-container", "disc-image", "transport-stream", "audio-file"] },
         "sizeBytes": { "type": "integer", "minimum": 0 },
         "mtime": { "$ref": "defs.schema.json#/$defs/timestamp" },
-        "fixity": { "$ref": "defs.schema.json#/$defs/fixity" },
+        "fixity": { "$ref": "defs.schema.json#/$defs/fixity", "description": "Always there, but for an original that was gone before the library recorded it — a package the catalog held of a file nobody can read any more — whose record keeps its name and the size the catalog knew, and says so in probe.note. A version never keeps such an original in its folder." },
         "ownership": { "$ref": "defs.schema.json#/$defs/ownership" },
         "part": {
           "type": ["object", "null"],
