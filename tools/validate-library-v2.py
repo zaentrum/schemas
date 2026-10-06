@@ -49,9 +49,12 @@ with the bytes beside them, never about a document being up to date.
                series' metadata lists; its own numbering does not contradict the numbers item.json
                was created with, and no two episodes claim one place in one ordering
   events       the folder name is the event's own moment, eventId and kind; every source, version, package
-               and extra it names exists (a version-removed or extra-removed event is the exception —
-               its folder may be gone, and a folder it names is ignored altogether, an extra's with a
-               note for the sweep; an episode has no extra to remove); a deletion names one of its
+               and extra it names exists, or is a version a version-removed event of the same item
+               removed — or that version's package, by the packageId an event of the item pairs with
+               it — because the events that named a version are its history and stay valid once it is
+               gone (a version-removed or extra-removed event's own subject may be gone, and a folder
+               it names is ignored altogether, an extra's with a note for the sweep; an episode has no
+               extra to remove); a deletion names one of its
                version's own sources when it names one — and always when the version never kept the
                original in its folder, so it was deleted outside the record — and accepts no more than
                the deletion gate — the essence of the version's sources minus that of its package,
@@ -1140,22 +1143,33 @@ class Checker:
 
     # ------------------------------------------------------------ events against the records
     def event_subjects(self, events, sources, versions, packages, removed, extras=(), retired=()):
+        # A version a version-removed event of this item removed is gone from the item, not from its
+        # history: the events that named it — the deletion of its original, the supersession of its
+        # package — stay valid once its folder is ignored or deleted. That folder is not read, so the
+        # events say which package was its: the packageId an event of this item names beside it, as
+        # its subject or as a successor. A removal among another item's events removes nothing here.
+        pairs = [(e.get("versionId"), e.get("packageId")) for e in events] + \
+                [((e.get("supersededBy") or {}).get("versionId"), (e.get("supersededBy") or {}).get("packageId"))
+                 for e in events]
+        was = {pid for vid, pid in pairs if vid in removed and pid}
+        known_versions, known_packages = set(versions) | set(removed), set(packages) | was
+        version_what = "version folder under versions/, nor one a version-removed event of this item removed"
+        package_what = "package of any version, nor the package of one a version-removed event of this item removed"
         for e in events:
             subjects = [("sourceId", e.get("sourceId"), sources, "source record under sources/"),
-                        ("packageId", e.get("packageId"), packages, "package of any version")]
+                        ("packageId", e.get("packageId"), known_packages, package_what)]
             if e["kind"] != "version-removed":
                 # the one event whose subject is allowed to be gone: that is what it records
-                subjects.append(("versionId", e.get("versionId"), versions, "version folder under versions/"))
+                subjects.append(("versionId", e.get("versionId"), known_versions, version_what))
             if e["kind"] != "extra-removed":
                 # and its counterpart for an extra
                 subjects.append(("extraId", e.get("extraId"), extras, "extra folder under extras/"))
             by = e.get("supersededBy") or {}
-            subjects += [("supersededBy.versionId", by.get("versionId"), versions, "version folder under versions/"),
-                         ("supersededBy.packageId", by.get("packageId"), packages, "package of any version")]
+            subjects += [("supersededBy.versionId", by.get("versionId"), known_versions, version_what),
+                         ("supersededBy.packageId", by.get("packageId"), known_packages, package_what)]
             for field, value, known, what in subjects:
                 if value and value not in known:
                     self.err(e["where"], f"{field} {value} names no {what}"
-                                         + (", and a removed version is not one" if value in removed else "")
                                          + (", and a removed extra is not one" if value in retired else ""))
             if by.get("versionId") and by["versionId"] == e.get("versionId"):
                 self.err(e["where"], "supersededBy names the version it supersedes; a re-package is a new folder")

@@ -394,7 +394,7 @@ first. Five kinds, and what each one changes:
 | Kind | Effect |
 |---|---|
 | `original-deleted` | The originals it names are gone from the version folder: the source it names, or all of them when it names none. Once none is left, that version's package is the only copy of it — canonical, whatever `role` its record was written with — and everything the package failed to carry is permanent. For a version that never kept the original in its folder — every version the platform writes — the original was deleted outside the record, and the event always names its source. |
-| `version-removed` | The version is no longer part of the item. Ignore its folder even when it is still on storage: its package is not playable, and nothing may point at it. |
+| `version-removed` | The version is no longer part of the item. Ignore its folder even when it is still on storage: its package is not playable, and nothing but the item's events may point at it. The events that name it — the deletion of its original, the supersession of its package — are its history and stay as they were once its folder is gone, naming it by its `versionId`, or its package by the `packageId` an event of the item names beside it: this event is the record of where it went. One among another item's events removes nothing. |
 | `package-superseded` | The package it names is no longer the one to use; the package under `supersededBy` is authoritative for its version from that moment. The superseded folder stays exactly as it was. |
 | `extra-removed` | The extra its `extraId` names is no longer part of the item. Ignore its folder even when it is still on storage: it is not listed, not played, and nothing may point at it. The sweep collects a folder still there. |
 | `note` | Nothing. It is something a person recorded that no other record holds; it may name an extra by its `extraId`. |
@@ -410,9 +410,10 @@ may accept less.
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
 outside a version or extra folder, every write-once folder's checksums cover exactly its records and
 each version's chain holds, `package.json` exists exactly when `.complete` does, images are named by
-their own hash, events reference records that exist and a deletion accepts no more than the gate its
-records compute, episodes do not contradict their own numbering, a person folder holds its record and
-the images it lists, at most one image of a kind is primary — in a series one per kind and season —
+their own hash, events reference records that exist — or a version a `version-removed` event of the
+same item removed, and its package — and a deletion accepts no more than the gate its records
+compute, episodes do not contradict their own numbering, a person folder holds its record and the
+images it lists, at most one image of a kind is primary — in a series one per kind and season —
 extras sit under a movie or a series and never an episode, an extra's checksums
 list `extra.json` and every file beside it and its `originals` describe exactly its `originalFiles`
 — with `--check-media` at the size and `qh1` they record — its package carries no trailers, only a
@@ -717,6 +718,15 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-06 (b)** — a removed version keeps its history. The validator rejected the tree a
+  version's removal leaves: once a `version-removed` event retired a version and its folder was
+  deleted, the events that had named it — the supersession of its package, the deletion of its
+  original — were reported as naming no version and no package. They are the version's history, so
+  they stay valid: an event may name a version a `version-removed` event of the same item removed, by
+  its `versionId`, and its package by the `packageId` an event of the item names beside it, as its
+  subject or as its successor. A removal among another item's events removes nothing, and a version
+  that was never there is still an error. `event.schema.json` says so where it says how events apply;
+  every tree that validated before still does.
 - **2026-10-06 (a)** — the platform writes the library. The format described a library its tools
   write; the platform's own writers — the packager, the catalog's projector and retire job — keep no
   original in the library: an original waits outside the record until its package is recorded, and

@@ -412,6 +412,45 @@ def note(root, at="2026-09-20T09:45:00Z", **fields):
                             "kind": "note", "reason": "a fact no other record holds", **fields})
 
 
+def note_in(item_dir, **fields):
+    """Add a note event to any item."""
+    new_event(item_dir, {"schema": "zaentrum.library.event/2", "eventId": "0e000000-0000-4000-8000-0000000000d1",
+                         "at": "2026-09-23T09:00:00Z", "by": "test", "kind": "note", "reason": "a fact", **fields})
+
+
+def remove_version(item_dir, vp, at="2026-09-22T10:00:00Z", events_in=None):
+    """What the retire job does once a superseded version's grace has passed: the version-removed
+    event — among item_dir's events, or another item's — and the version's folder deleted."""
+    new_event(events_in or item_dir, {"schema": "zaentrum.library.event/2", "eventId": "0e000000-0000-4000-8000-" + at[8:10] * 6,
+                                      "at": at, "by": "test", "kind": "version-removed",
+                                      "versionId": os.path.basename(vp), "reason": "superseded, after the grace"})
+    shutil.rmtree(vp)
+
+
+def superseded_removed(root):
+    """A version replaced as the platform replaces one: the movie's version whose original was deleted,
+    superseded by the director's cut, then removed after the grace and its folder deleted. The deletion
+    of its original and the supersession of its package stay, as its history. Gives the removed
+    version's packageId."""
+    old, new = gone(root), kept(root)
+    old_pkg, new_pkg = json.load(open(pkg(old)))["packageId"], json.load(open(pkg(new)))["packageId"]
+    new_event(movie(root), {"schema": "zaentrum.library.event/2", "eventId": "0e000000-0000-4000-8000-0000000000c1",
+                            "at": "2026-09-21T10:00:00Z", "by": "test", "kind": "package-superseded",
+                            "versionId": os.path.basename(old), "packageId": old_pkg,
+                            "supersededBy": {"versionId": os.path.basename(new), "packageId": new_pkg},
+                            "reason": "replaced by the director's cut"})
+    remove_version(movie(root), old)
+    return old_pkg
+
+
+def all_removed(root):
+    """Every version of the movie removed — the second after superseding the first, so only the
+    supersession, as its successor, names the second's package — and the projection deciding nothing."""
+    superseded_removed(root)
+    remove_version(movie(root), kept(root), at="2026-09-23T10:00:00Z")
+    edit(meta(movie(root)), lambda d: d["library"].update(primaryVersionId=None, versionLabels={}))
+
+
 def resurrect(root):
     """Put the removed version's folder back, full of junk: a version-removed event says to ignore
     the folder even when it is still on storage."""
@@ -718,6 +757,14 @@ CASES = [
     ("a package superseded by its own version", False, lambda r: edit(supersede(r), lambda d: d["supersededBy"].update(versionId=d["versionId"])), "supersededBy names the version it supersedes", []),
     ("a note claiming a successor", False, lambda r: note(r, supersededBy={"versionId": NOWHERE, "packageId": NOWHERE}), "must not have supersededBy", []),
     ("the projection pointing at a removed version", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(primaryVersionId=json.load(open(removal(r)))["versionId"])), "names a version that was removed", []),
+    ("a version superseded, then removed and its folder deleted", True, superseded_removed, "OK", ["--check-checksums"]),
+    ("an original deleted, then its version removed and its folder deleted", True, lambda r: remove_version(movie(r), gone(r)), "OK", ["--check-checksums"]),
+    ("a removed version named by its package alone", True, lambda r: note(r, packageId=superseded_removed(r)), "OK", []),
+    ("every version of an item removed, the second after superseding the first", True, all_removed, "OK", ["--check-checksums"]),
+    ("a version removed by another item's event", False, lambda r: remove_version(movie(r), gone(r), events_in=episode(r, 1)),
+     "names no version folder under versions/, nor one a version-removed event of this item removed", []),
+    ("a removed version's package named by another item", False, lambda r: note_in(episode(r, 1), packageId=superseded_removed(r)),
+     "names no package of any version, nor the package of one a version-removed event of this item removed", []),
 
     # ---- what the database decided about this item's storage
     ("a primary version that does not exist", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(primaryVersionId=NOWHERE)), "primaryVersionId", []),
