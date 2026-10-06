@@ -53,7 +53,7 @@ with the bytes beside them, never about a document being up to date.
   extras       bonus material sits in extras/<extraId>/ inside its movie or series, never an
                episode; each folder is named by its extraId and holds extra.json, the originals it
                names and/or a package (hls/ subs/ trickplay/); originals describes exactly the files
-               originalFiles names; its checksums.sha256 lists extra.json and every file beside it,
+               originalFiles names, and packagedFrom the ones a package that keeps none was made from; its checksums.sha256 lists extra.json and every file beside it,
                the originals included, and never itself, package.json or .complete; a packaged extra
                closes the chain a version does and carries no trailers, one that keeps only its
                original is finished by its checksums file, and one that never finished is a note;
@@ -1016,6 +1016,12 @@ class Checker:
                                                      "each original has one entry, in the same order")
         marker = os.path.isfile(os.path.join(xp, ".complete"))
         has_package = os.path.isfile(os.path.join(xp, "package.json"))
+        if x.get("packagedFrom") and x["originalFiles"]:
+            self.err(os.path.join(xp, "extra.json"), "packagedFrom describes the originals of an extra that keeps none, "
+                                                     "and this one keeps its originals: originals describes them")
+        elif x.get("packagedFrom") and not marker and not any(os.path.exists(os.path.join(xp, n)) for n in EXTRA_DIRS):
+            self.err(os.path.join(xp, "extra.json"), "packagedFrom says what the package was made from, but this extra "
+                                                     "has no package")
         if has_package != marker:
             self.err(xp, "package.json exists exactly when .complete does, and here only "
                          + ("package.json" if has_package else ".complete") + " is present")

@@ -229,6 +229,17 @@ def nothing_kept(root):
     write_sums(xp, ["extra.json"])
 
 
+def packaged_from(root):
+    """The featurette as the platform writes an extra: only its package, and the original it was made
+    from described, deleted once the package was recorded."""
+    xp = featurette(root)
+    original = x_original(xp)
+    described = {"name": os.path.basename(original), "sizeBytes": os.path.getsize(original),
+                 "fixity": json.load(open(xjson(xp)))["originals"][0]["fixity"]}
+    package_only(root)
+    edit(xjson(xp), lambda d: d.update(packagedFrom=[described]))
+
+
 def unfinished_extra_package(root):
     """The featurette as a packager that died left it: its record, its original and part of a
     package, and no package.json, checksums or .complete."""
@@ -843,6 +854,12 @@ CASES = [
 
     # ---- what an extra may also be
     ("an extra kept only as its package", True, package_only, "OK", ["--check-checksums"]),
+    ("an extra kept only as its package, with the original it was made from", True, packaged_from, "OK", ["--check-checksums"]),
+    ("what a package was made from, on an extra that keeps its original", False, lambda r: edit(xjson(featurette(r)), lambda d: d.update(packagedFrom=list(d["originals"]))), "and this one keeps its originals: originals describes them", []),
+    ("what a package was made from, on an extra with no package", False, lambda r: (nothing_kept(r), edit(xjson(bts(r)), lambda d: d.update(packagedFrom=[{"name": "bts.mkv", "sizeBytes": 1, "fixity": {"qh1": "sha256:" + "0" * 64}}]))), "packagedFrom says what the package was made from, but this extra has no package", []),
+    ("what a package was made from, without its fixity", False, lambda r: (packaged_from(r), edit(xjson(featurette(r)), lambda d: d["packagedFrom"][0].pop("fixity"))), "'fixity' is a required property", []),
+    ("what a package was made from, named with a folder", False, lambda r: (packaged_from(r), edit(xjson(featurette(r)), lambda d: d["packagedFrom"][0].update(name="extras/a.mkv"))), "$.packagedFrom[0].name: 'extras/a.mkv' does not match", []),
+    ("an empty list of what a package was made from", False, lambda r: (package_only(r), edit(xjson(featurette(r)), lambda d: d.update(packagedFrom=[]))), "$.packagedFrom: [] should be non-empty", []),
     ("an extra nothing probed", True, lambda r: edit(xjson(featurette(r)), lambda d: [d.pop(k) for k in ("container", "streams", "fidelity", "essence", "probe")]), "OK", ["--check-checksums"]),
     ("a series' extra of no particular season", True, lambda r: edit(xjson(bts(r)), lambda d: d.pop("seasonNumber")), "OK", []),
     ("an item whose database decided nothing about its extras", True, lambda r: edit(meta(movie(r)), lambda d: d["library"].pop("extras")), "OK", []),

@@ -470,6 +470,11 @@ def test_records(t):
         t.eq("and the extra's", rec.chain_problems(xp, "extra.json", rec.EXTRA_DIRS, full=True), [])
         code, text = run(MEDIA_CHECK, "--checksums", os.path.join(tmp, "library"))
         t.ok("the media check finds the tree they make whole", code == 0 and text.strip().endswith("OK"), text)
+        if have_jsonschema():
+            code, text = run(VALIDATOR, "--check-checksums", os.path.join(tmp, "library"))
+            t.ok("and validate-library-v2.py finds them valid records", code == 0 and text.strip().endswith("OK"), text)
+        else:
+            t.skip("and validate-library-v2.py finds them valid records", "jsonschema is not importable here")
 
         package = jload(os.path.join(vp, "package.json"))
         t.eq("the 5.1 companion counts for what the package carries, so surround is no loss, and the copied "
