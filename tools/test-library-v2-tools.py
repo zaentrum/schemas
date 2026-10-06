@@ -1697,6 +1697,389 @@ def test_from_catalog_extras(t):
             t.skip("and the tree passes validate-library-v2.py", "jsonschema is not importable here")
 
 
+# ---------------------------------------------------------------- the platform's library, staged and adopted
+PF_MOVIE = "a1000000-0000-4000-8000-000000000001"     # an original, a sidecar and a companion beside it, a package
+PF_GONE = "b2000000-0000-4000-8000-000000000002"      # a package whose original is gone
+PF_SERIES = "c3000000-0000-4000-8000-000000000003"
+PF_EPISODE = "d4000000-0000-4000-8000-000000000004"
+PF_EXTRA = "e5000000-0000-4000-8000-000000000005"     # the movie's trailer, packaged
+PF_PENDING = "f6000000-0000-4000-8000-000000000006"   # an extra never packaged
+PF_PERSON = "99000000-0000-4000-8000-000000000009"
+PF_RUN = "2026-10-07a"
+
+
+def legacy_package(folder, duration_ms, subtitles=(), extra=False):
+    """A package folder of the store before the library: manifest.json, the HLS folders, the subtitles,
+    trickplay covering the duration, and .complete holding when it finished."""
+    files = {"hls/master.m3u8": "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=4400000\nv0/playlist.m3u8\n",
+             "hls/v0/playlist.m3u8": "#EXTM3U\n#EXT-X-ENDLIST\n", "hls/v0/seg-00001.m4s": "video",
+             "hls/a0/playlist.m3u8": "#EXTM3U\n#EXT-X-ENDLIST\n", "hls/a0/seg-00001.m4s": "audio"}
+    if not extra:
+        cues = duration_ms // 10000
+        files["trickplay/thumbnails.vtt"] = "WEBVTT\n\n" + "".join(
+            f"00:00:{i * 10:02d}.000 --> 00:00:{i * 10 + 10:02d}.000\nsprite-0000.jpg#xywh=0,0,320,180\n\n"
+            for i in range(cues))
+        files["trickplay/sprite-0000.jpg"] = "sprite"
+    for sub in subtitles:
+        files[sub["path"]] = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nline\n"
+    files[".complete"] = "2026-09-01T10:00:00+00:00\n"
+    for rel, body in files.items():
+        os.makedirs(os.path.dirname(os.path.join(folder, rel)), exist_ok=True)
+        with open(os.path.join(folder, rel), "w") as f:
+            f.write(body)
+    manifest = {"version": 2, "durationMs": duration_ms, "packagedAt": "2026-09-01T10:00:00+00:00",
+                "packager": "packager example",
+                "renditions": {"video": [{"id": "v0", "dir": "hls/v0", "codec": "hev1.1.6.L120.B0", "width": 1920,
+                                          "height": 800, "bitrateBps": 4000000, "peakBitrateBps": 4200000,
+                                          "hdr": False, "videoRange": "SDR", "frameRate": "24/1", "segments": 1,
+                                          "targetDuration": 6, "label": "source", "encoder": "copy"}],
+                               "audio": [{"id": "a0", "dir": "hls/a0", "codec": "mp4a.40.2", "language": "eng",
+                                          "title": "", "default": True, "channels": 2, "bitrateBps": 192000,
+                                          "segments": 1, "visible": True, "group": "audio", "name": "English"}],
+                               "audioSurround": []},
+                "subtitles": list(subtitles),
+                "hls": {"master": "hls/master.m3u8", "segmentSeconds": 6, "audioGroups": ["audio"],
+                        "subtitleGroup": None}}
+    if not extra:
+        manifest["trickplay"] = {"vttPath": "trickplay/thumbnails.vtt", "spritePattern": "trickplay/sprite-%04d.jpg",
+                                 "intervalSec": 10, "thumbWidth": 320, "thumbHeight": 180, "gridCols": 10,
+                                 "gridRows": 10}
+    jwrite(os.path.join(folder, "manifest.json"), manifest)
+
+
+def legacy_store(root):
+    """A share as the platform holds it before the library: its originals under media/, its packages
+    under packages/, an extra taken in under extras/ — and the catalog's export of it, with paths as
+    the services see the share. Returns the export's path."""
+    def asset(aid, path, kind, **fields):
+        return {"id": aid, "path": path, "kind": kind, "codec": None, "resolution": None, "bitrateKbps": 4400,
+                "sizeBytes": fields.pop("sizeBytes", None), "hash": None, "isPrimary": kind == "primary",
+                "audioCodec": "mp4a.40.2", "audioLanguage": "eng", "audioChannels": 2, "audioBitrateKbps": 192,
+                "audioTrackCount": 1, "subtitleTrackCount": fields.pop("subtitleTrackCount", 0),
+                "durationMs": 20000, **fields}
+
+    def row(iid, kind, title, **fields):
+        return {"id": iid, "type": kind, "title": title, "sortTitle": title.lower(), "year": 2024,
+                "description": f"{title}, an example.", "tagline": None, "rating": None, "durationMs": 20000,
+                "parentId": None, "seasonNumber": None, "episodeNumber": None, "metadataLocked": False,
+                "createdAt": "2026-07-01T09:00:00Z", "createdBy": "scanner", "modifiedAt": "2026-09-30T09:00:00Z",
+                "externalIds": [], "genres": [], "tags": [], "people": [], "chapters": [], "segments": [],
+                "playbackAssets": [], "subtitleAssets": [], "trailers": [], "artwork": [], **fields}
+
+    media, packages, extras = (os.path.join(root, n) for n in ("media", "packages", "extras"))
+    svc = "/var/lib/katalog"
+    film = "Example Film (2024)/Example Film (2024).mkv"
+    for rel, body in ((film, b"an original of an example film\n" * 500),
+                      ("Example Film (2024)/Example Film (2024).de.srt", b"1\n00:00:01,000 --> 00:00:02,000\nHallo\n"),
+                      ("Example Film (2024)/Example Film (2024).nfo", b"<movie/>\n"),
+                      ("tv/Example Show/Season 01/Example Show - S01E01.mkv", b"an episode\n" * 400)):
+        os.makedirs(os.path.dirname(os.path.join(media, rel)), exist_ok=True)
+        with open(os.path.join(media, rel), "wb") as f:
+            f.write(body)
+    os.makedirs(os.path.join(extras, "example-film"))
+    with open(os.path.join(extras, "example-film", "trailer.mov"), "wb") as f:
+        f.write(b"a trailer\n" * 300)
+    with open(os.path.join(extras, "example-film", "making-of.mov"), "wb") as f:
+        f.write(b"a making-of\n" * 300)
+    movie_subs = [{"id": "sub0", "path": "subs/0.vtt", "language": "eng", "title": "", "default": False,
+                   "forced": False, "format": "webvtt", "visible": True},
+                  {"id": "sub1", "path": "subs/1.vtt", "language": "ger", "title": "Deutsch", "default": False,
+                   "forced": False, "format": "webvtt", "visible": True, "external": True}]
+    legacy_package(os.path.join(packages, "movies", PF_MOVIE[:2], PF_MOVIE), 20000, movie_subs)
+    legacy_package(os.path.join(packages, "movies", PF_GONE[:2], PF_GONE), 20000)
+    legacy_package(os.path.join(packages, "shows", PF_EPISODE[:2], PF_EPISODE), 20000)
+    legacy_package(os.path.join(packages, "extras", PF_EXTRA[:2], PF_EXTRA), 20000, extra=True)
+    png = (b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR" + (2).to_bytes(4, "big") +
+           (3).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + b"\x00" * 4)
+    pm, pg, pe = (f"{svc}/packages/{cat}/{i[:2]}/{i}" for cat, i in (("movies", PF_MOVIE), ("movies", PF_GONE),
+                                                                      ("shows", PF_EPISODE)))
+    items = [
+        row(PF_MOVIE, "movie", "Example Film", externalIds=[{"source": "tmdb", "externalId": "1234"}],
+            people=[{"personId": PF_PERSON, "name": "A Director", "role": "director"}],
+            chapters=[{"startMs": 0, "endMs": 10000, "title": "One", "ordinal": 1},
+                      {"startMs": 10000, "endMs": 20000, "title": "Two", "ordinal": 2}],
+            segments=[{"kind": "credits", "startMs": 18000, "endMs": 20000, "source": "blackframe", "confidence": 0.8,
+                       "label": None}],
+            playbackAssets=[asset("pa1", f"{svc}/media/{film}", "primary", sizeBytes=16000),
+                            asset("pa2", f"{pm}/manifest.json", "packaged", subtitleTrackCount=2)],
+            subtitleAssets=[{"id": "sa1", "path": f"{pm}/subs/0.vtt", "format": "webvtt", "language": "eng",
+                             "label": "", "isDefault": False},
+                            {"id": "sa2", "path": f"{svc}/media/Example Film (2024)/Example Film (2024).de.srt",
+                             "format": "srt", "language": "de", "label": "German", "isDefault": False}],
+            artwork=[{"kind": "poster", "contentType": "image/png", "fetchedAt": "2026-07-01T09:05:00Z",
+                      "base64": base64.b64encode(png).decode()}]),
+        row(PF_GONE, "movie", "Gone Film",
+            playbackAssets=[asset("pb1", f"{svc}/media/Gone Film (2023).mkv", "primary", sizeBytes=777),
+                            asset("pb2", f"{pg}/manifest.json", "packaged")]),
+        row(PF_SERIES, "series", "Example Show", durationMs=None),
+        row(PF_EPISODE, "episode", "Pilot", parentId=PF_SERIES, seasonNumber=1, episodeNumber=1,
+            playbackAssets=[asset("pd1", f"{svc}/media/tv/Example Show/Season 01/Example Show - S01E01.mkv", "primary",
+                                  sizeBytes=4400),
+                            asset("pd2", f"{pe}/manifest.json", "packaged")])]
+    extras_rows = [
+        {"id": PF_EXTRA, "itemId": PF_MOVIE, "kind": "trailer", "title": "Trailer", "localizedTitles": {"de": "Vorschau"},
+         "language": None, "seasonNumber": None, "origin": None,
+         "sourcePath": f"{svc}/extras/example-film/trailer.mov", "sourceSize": 3000, "sourceQh1": None,
+         "recordPath": None, "registeredBy": "api", "sortOrder": 1, "hidden": False, "label": "The Trailer",
+         "state": "ready", "packageId": None, "packagePath": f"{svc}/packages/extras/{PF_EXTRA[:2]}/{PF_EXTRA}",
+         "packagedAt": "2026-09-02T10:00:00Z", "recordedAt": None, "durationMs": 20000,
+         "createdAt": "2026-09-02T09:00:00Z", "createdBy": "api", "modifiedAt": "2026-09-02T10:00:00Z"},
+        {"id": PF_PENDING, "itemId": PF_MOVIE, "kind": "making-of", "title": "Making of", "localizedTitles": {},
+         "language": None, "seasonNumber": None, "origin": None,
+         "sourcePath": f"{svc}/extras/example-film/making-of.mov", "sourceSize": 3600, "sourceQh1": None,
+         "recordPath": None, "registeredBy": "api", "sortOrder": None, "hidden": False, "label": None,
+         "state": "failed", "packageId": None, "packagePath": None, "packagedAt": None, "recordedAt": None,
+         "durationMs": None, "createdAt": "2026-09-03T09:00:00Z", "createdBy": "api",
+         "modifiedAt": "2026-09-03T09:00:00Z"}]
+    export = os.path.join(os.path.dirname(root), "catalog.json")
+    jwrite(export, {"exportedAt": "2026-10-01T12:00:00Z", "shard": None, "items": items, "deletedItems": [],
+                    "people": [{"id": PF_PERSON, "name": "A Director", "modifiedAt": "2026-09-30T09:00:00Z"}],
+                    "extras": extras_rows, "versions": None, "sources": None})
+    return export
+
+
+def services_to(root, export):
+    """The export with the services' paths as this share's: the adopt and a fresh export see the share where
+    the services do, and so does this test, at root."""
+    text_ = open(export, encoding="utf-8").read().replace("/var/lib/katalog", root)
+    with open(export, "w", encoding="utf-8") as f:
+        f.write(text_)
+
+
+def listing_of(folders):
+    """The guard a unit records of its package folders, computed as its plan documents it: sha256 over
+    '<size> <path>' lines, the folders in order, each one's files by path."""
+    h = hashlib.sha256()
+    for folder in folders:
+        rels = sorted(os.path.relpath(os.path.join(b, f), folder) for b, _, fs in os.walk(folder) for f in fs)
+        for rel in rels:
+            h.update(f"{os.path.getsize(os.path.join(folder, rel))} {os.path.join(folder, rel)}\n".encode())
+    return "sha256:" + h.hexdigest()
+
+
+def adopt(root, run, export, fresh):
+    """katalog-manager's adopt, by hand, as the unit plans say: per unit — series before episodes — the
+    guards checked, then every move in its order, then the database changes the db block names, written
+    into fresh as an export taken afterwards shows them: the packaged row as packaging-complete writes it
+    from package.json, the subtitle rows' paths and defaults, and an original gone before the library was
+    recorded a retired one, with its original-deleted event. The staged people last."""
+    rundir = os.path.join(root, ".work", "migration", run)
+    units = sorted((jload(p) for p in glob.glob(os.path.join(rundir, "units", "*.json"))),
+                   key=lambda u: ({"series": 0, "movie": 1, "episode": 2}[u["type"]], u["itemId"]))
+    e = jload(export)
+    rows = {r["id"]: r for r in e["items"]}
+    stale = []
+    for u in units:
+        g = u["guards"]
+        packages = [m["from"] for m in u["moves"] if m["kind"] == "package"]
+        mp = next((os.path.join(os.path.dirname(m["from"]), "manifest.json") for m in u["moves"] if m["kind"] == "package"
+                   and os.path.dirname(m["from"]).find(u["itemId"]) >= 0), None)
+        if (g["listingSha256"] or None) != (listing_of(packages) if packages else None) or \
+                (g["manifestSha256"] and g["manifestSha256"] != "sha256:" + digest(mp)):
+            stale.append(u["itemId"])
+            continue
+        for m in u["moves"]:
+            os.makedirs(os.path.dirname(m["to"]), exist_ok=True)
+            os.rename(m["from"], m["to"])
+        row, db = rows[u["itemId"]], u["db"]
+        assets = {a["id"]: a for a in row["playbackAssets"]}
+        keep = set()
+        for a in db["assets"]:
+            asset = assets[a["id"]]
+            keep.add(a["id"])
+            asset["path"] = a["path"]
+            if a.get("versionId"):
+                pkg = jload(a["path"])
+                ren = pkg["renditions"]
+                v0 = ren["video"][0]
+                aud = next((x for x in ren["audio"] if x.get("default")), ren["audio"][0] if ren["audio"] else {})
+                asset.update(codec=v0["codec"], resolution=f"{v0['width']}x{v0['height']}",
+                             bitrateKbps=pkg["peakBandwidthBps"] // 1000, sizeBytes=pkg["sizeBytes"],
+                             audioCodec=aud.get("codec"), audioLanguage=aud.get("language"),
+                             audioChannels=aud.get("channels"),
+                             audioBitrateKbps=aud["bitrateBps"] // 1000 if aud.get("bitrateBps") else None,
+                             audioTrackCount=len(ren["audio"]), subtitleTrackCount=len(pkg["subtitles"]),
+                             durationMs=pkg["durationMs"])
+            elif a["path"].startswith(os.path.join(u["itemDir"], "sources", "")):
+                asset.update(kind="original", isPrimary=False)
+        row["playbackAssets"] = [a for a in row["playbackAssets"] if a["kind"] != "packaged" or a["id"] in keep]
+        subs = {x["id"]: x for x in row["subtitleAssets"]}
+        for x in db["subtitles"]:
+            subs[x["id"]]["path"] = x["path"]
+            vp = os.path.dirname(os.path.dirname(x["path"]))
+            if os.path.isfile(os.path.join(vp, "package.json")):
+                rel = os.path.relpath(x["path"], vp)
+                ren = next((s for s in jload(os.path.join(vp, "package.json"))["subtitles"] if s["path"] == rel), None)
+                if ren:
+                    subs[x["id"]]["isDefault"] = bool(ren.get("default"))
+        for src in db["sources"]:
+            if src["arrivalPath"] is None and src["recordDir"]:
+                write_event(u["itemDir"], {"schema": "zaentrum.library.event/2",
+                                           "eventId": str(uuid.uuid5(uuid.NAMESPACE_URL, src["sourceId"])),
+                                           "at": "2026-10-07T10:00:00Z", "by": "katalog-manager (migration)",
+                                           "kind": "original-deleted", "versionId": db["versions"][0]["versionId"],
+                                           "sourceId": src["sourceId"],
+                                           "reason": "gone before the library was recorded", "accepted": []})
+    for p in glob.glob(os.path.join(rundir, "staged-people", "*")):
+        pid = os.path.basename(p)
+        target = os.path.join(root, "people", pid[:2], pid)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        os.rename(p, target)
+    jwrite(fresh, e)
+    return units, stale
+
+
+def test_platform(t):
+    """--platform stages the library from the store before it, every record under .work/migration/<run>/
+    and a plan per item, and the adopt the plans describe leaves a library that validates, passes the
+    media check, and rebuilds to the database the adopt left — the arrivals aside."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "katalog")
+        export = legacy_store(root)
+        services_to(root, export)
+        env = fake_ffprobe(os.path.join(tmp, "bin"))
+        before = tree_files(root)
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                              "--dry-run")
+        rundir = os.path.join(root, ".work", "migration", PF_RUN)
+        report = jload(os.path.join(rundir, "report.json")) if os.path.isfile(os.path.join(rundir, "report.json")) else {}
+        t.ok("a dry run writes report.json and nothing else",
+             code == 0 and sorted(os.listdir(rundir)) == ["report.json"]
+             and {k: v for k, v in tree_files(root).items() if not k.startswith(".work")} == before, text)
+        t.eq("it says what is ready and what is not, by class",
+             (report.get("dryRun"), report.get("counts", {}).get("staged"), report.get("problems")),
+             (True, 4, {"extra not packaged": 1, "missing original": 1}))
+        t.ok("and what deleting every original would cost, from the probes", report.get("loss", {}).get("measured") == 2
+             and report["loss"]["unmeasured"] == 1, report.get("loss"))
+
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN)
+        t.ok("--platform stages every item", code == 0 and len(glob.glob(os.path.join(rundir, "units", "*.json"))) == 4,
+             text)
+        t.ok("and touches nothing outside the run's folder",
+             {k: v for k, v in tree_files(root).items() if not k.startswith(".work")} == before)
+        staged = {k: v for k, v in tree_files(os.path.join(rundir, "staged")).items()}
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN)
+        t.ok("a second run stages the same records", code == 0 and tree_files(os.path.join(rundir, "staged")) == staged,
+             text)
+        unit = jload(os.path.join(rundir, "units", PF_MOVIE + ".json"))
+        movie_dir = os.path.join(root, "movies", PF_MOVIE[:2], PF_MOVIE)
+        vid = unit["db"]["versions"][0]["versionId"]
+        staged_rel = os.path.relpath(unit["stagedDir"], root)
+        legacy = os.path.join(".work", "migration", PF_RUN, "legacy")
+        pkg_rel = os.path.join("packages", "movies", PF_MOVIE[:2], PF_MOVIE)
+        xpkg_rel = os.path.join("packages", "extras", PF_EXTRA[:2], PF_EXTRA)
+        t.eq("a unit plan moves the package folders into the staged records, publishes the item, moves the original, "
+             "its sidecars and the extras' originals to the arrivals and what is left of the old package folders "
+             "aside, in that order",
+             [(m["kind"], os.path.relpath(m["from"], root), os.path.relpath(m["to"], root)) for m in unit["moves"]],
+             [("package", os.path.join(pkg_rel, d), os.path.join(staged_rel, "versions", vid, d))
+              for d in ("hls", "subs", "trickplay")]
+             + [("package", os.path.join(xpkg_rel, "hls"), os.path.join(staged_rel, "extras", PF_EXTRA, "hls")),
+                ("publish", staged_rel, os.path.relpath(movie_dir, root)),
+                ("original", "media/Example Film (2024)/Example Film (2024).mkv",
+                 ".work/incoming/Example Film (2024)/Example Film (2024).mkv"),
+                ("sidecar", "media/Example Film (2024)/Example Film (2024).de.srt",
+                 ".work/incoming/Example Film (2024)/Example Film (2024).de.srt"),
+                ("sidecar", "media/Example Film (2024)/Example Film (2024).nfo",
+                 ".work/incoming/Example Film (2024)/Example Film (2024).nfo"),
+                ("original", "extras/example-film/trailer.mov", ".work/extras/example-film/trailer.mov"),
+                ("original", "extras/example-film/making-of.mov", ".work/extras/example-film/making-of.mov"),
+                ("legacy", pkg_rel, os.path.join(legacy, "movies", PF_MOVIE[:2], PF_MOVIE)),
+                ("legacy", xpkg_rel, os.path.join(legacy, "extras", PF_EXTRA[:2], PF_EXTRA))])
+        sid = unit["db"]["sources"][0]["sourceId"]
+        t.eq("the database changes it names: the source and its sidecar's rendition, the version verified in full, the "
+             "rows' new paths, the extras",
+             (unit["db"]["sources"][0]["sidecars"], unit["db"]["versions"][0]["verifiedLevel"],
+              sorted(a["id"] for a in unit["db"]["assets"]), sorted(x["id"] for x in unit["db"]["subtitles"]),
+              sorted((x["id"], x["dir"] is not None) for x in unit["db"]["extras"])),
+             ([{"subtitleAssetId": "sa2", "rendition": "sub1", "path": "subs/1.vtt"}], "full", ["pa1", "pa2"],
+              ["sa1", "sa2"], [(PF_EXTRA, True), (PF_PENDING, False)]))
+        package = jload(os.path.join(unit["stagedDir"], "versions", unit["db"]["versions"][0]["versionId"], "package.json"))
+        t.eq("the subtitle made from the sidecar names the copy the source folder keeps",
+             [s.get("fromSidecar") for s in package["subtitles"]],
+             [None, f"sources/{sid}/Example Film (2024).de.srt"])
+        gone = jload(os.path.join(rundir, "units", PF_GONE + ".json"))
+        gone_source = jload(glob.glob(os.path.join(gone["stagedDir"], "sources", "*", "source.json"))[0])
+        t.ok("a package whose original is gone gets a source record without fixity, which says why",
+             "fixity" not in gone_source["file"] and gone_source["file"]["sizeBytes"] == 777
+             and "gone before the library was recorded" in gone_source["probe"]["note"]
+             and gone["db"]["sources"][0]["arrivalPath"] is None, gone_source)
+        t.ok("every id is the one the item and a stable name make, and the extra's is its row's",
+             os.path.isdir(os.path.join(unit["stagedDir"], "extras", PF_EXTRA))
+             and unit["db"]["versions"][0]["versionId"] == load_tool(RECORDS).did(
+                 PF_MOVIE, "version", os.path.join("movies", PF_MOVIE[:2], PF_MOVIE)))
+
+        fresh = os.path.join(tmp, "after.json")
+        units, stale = adopt(root, PF_RUN, export, fresh)
+        t.ok("the guards hold: nothing changed since the plans were made", stale == [] and len(units) == 4, stale)
+        t.ok("the share holds the library now, and the arrivals beside it",
+             os.path.isfile(os.path.join(movie_dir, "item.json"))
+             and os.path.isfile(os.path.join(root, ".work", "incoming", "Example Film (2024)", "Example Film (2024).mkv"))
+             and os.path.isfile(os.path.join(root, ".work", "extras", "example-film", "trailer.mov"))
+             and not glob.glob(os.path.join(root, "packages", "*", "*", "*", "hls")))
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", root)
+            t.ok("validate-library-v2.py --check-checksums finds the adopted library valid, .work/ beside it",
+                 code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("validate-library-v2.py finds the adopted library valid", "jsonschema is not importable here")
+        code, mtext = run(MEDIA_CHECK, "--checksums", root)
+        t.ok("and the media check", code == 0 and mtext.strip().endswith("OK"), mtext)
+        code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
+                          "--ignore-fields", "id,path,hash", "--text-language", "und")
+        t.ok("and the rebuild agrees with the database the adopt left, the arrivals aside",
+             code == 0 and "the tree and the database agree" in ctext, ctext)
+
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", fresh, "--root", root, "--run", PF_RUN + "b")
+        report = jload(os.path.join(root, ".work", "migration", PF_RUN + "b", "report.json"))
+        t.ok("a run after the adopt stages nothing: every item is recorded",
+             code == 0 and report["counts"]["staged"] == 0 and report["counts"]["recorded"] == 4, report["counts"])
+
+
+def test_platform_problems(t):
+    """What the platform's library cannot hold as the store has it is reported by its class, and the
+    rest is staged: an episode under a season is in its series' folder, music is skipped, and a shard
+    narrows the run to the items whose folder is in it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "katalog")
+        export = legacy_store(root)
+        services_to(root, export)
+        e = jload(export)
+        season = "c3110000-0000-4000-8000-000000000031"
+        e["items"] += [{"id": season, "type": "season", "title": "Season 1", "parentId": PF_SERIES, "seasonNumber": 1},
+                       {"id": "d4220000-0000-4000-8000-000000000042", "type": "episode", "title": "Second",
+                        "parentId": season, "seasonNumber": 1, "episodeNumber": 2, "createdAt": "2026-07-01T09:00:00Z"},
+                       {"id": "d4330000-0000-4000-8000-000000000043", "type": "episode", "title": "Lost",
+                        "parentId": "ff000000-0000-4000-8000-0000000000ff", "seasonNumber": 1, "episodeNumber": 3},
+                       {"id": "a7000000-0000-4000-8000-000000000007", "type": "album", "title": "A Record"}]
+        e["items"][0]["externalIds"].append({"source": "letterboxd", "externalId": "x"})
+        jwrite(export, e)
+        code, text = run(FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", "p")
+        rundir = os.path.join(root, ".work", "migration", "p")
+        report = jload(os.path.join(rundir, "report.json"))
+        classes = {p["class"] for item in report["items"] for p in item["problems"]}
+        t.ok("each problem is reported by its class", {"season parent", "episode without series", "music",
+                                                      "dropped external-id source", "missing original",
+                                                      "extra not packaged"} <= classes, sorted(classes))
+        second = jload(os.path.join(rundir, "units", "d4220000-0000-4000-8000-000000000042.json"))
+        t.eq("an episode under a season is in its series' folder",
+             second["itemDir"], os.path.join(root, "series", PF_SERIES[:2], PF_SERIES, "episodes",
+                                             "d4220000-0000-4000-8000-000000000042"))
+        t.eq("and its record names the series, not the season",
+             jload(os.path.join(second["stagedDir"], "item.json"))["seriesId"], PF_SERIES)
+        t.ok("music and an episode no series holds are not staged",
+             not os.path.exists(os.path.join(rundir, "units", "a7000000-0000-4000-8000-000000000007.json"))
+             and not os.path.exists(os.path.join(rundir, "units", "d4330000-0000-4000-8000-000000000043.json")))
+
+        code, text = run(FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", "s", "--shard", "c3")
+        sharded = jload(os.path.join(root, ".work", "migration", "s", "report-c3.json"))
+        t.eq("a shard stages the items whose folder is in it: a series with its episodes, under a season too",
+             sorted(x["itemId"] for x in sharded["items"] if x["staged"]),
+             sorted([PF_SERIES, PF_EPISODE, "d4220000-0000-4000-8000-000000000042"]))
+        code, text = run(FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", "x", "--out", tmp)
+        t.ok("and --platform writes only into the run's folder: --out is refused", code == 2 and "--out" in text, text)
+
+
 # ---------------------------------------------------------------- credits
 CREDITED_SERIES = "22222222-3333-4444-8555-777777777777"
 
@@ -3791,6 +4174,8 @@ def main():
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),
                         ("catalog -> v2", test_from_catalog), ("the arrivals are not the record", test_arrivals),
+                        ("the platform's library, staged and adopted", test_platform),
+                        ("what the platform's library cannot hold", test_platform_problems),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras),
                         ("credits: a role, the source's own words, one order", test_credits), ("people", test_people),
                         ("the people list in full", test_people_in_full),

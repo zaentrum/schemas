@@ -8,6 +8,8 @@ Usage:
                              [--as-of TIMESTAMP] [--text-language LANG] [--dry-run]
   library-v2-from-catalog.py --export CATALOG.json --out LIBRARY --people-only [--items …] [--dry-run]
   library-v2-from-catalog.py --export CATALOG.json --out LIBRARY --projections-only [--items …] [--dry-run]
+  library-v2-from-catalog.py --platform --export CATALOG.json --root SHARE --run RUN [--shard aa]
+                             [--media DIR] [--packages DIR] [--extras DIR] [--items …] [--as-of …] [--dry-run]
 
 The catalog is the working copy and this writes the record beside the bytes: one item folder per
 row, holding the identity the row was created with, the texts and images the database held, the
@@ -98,14 +100,97 @@ cannot be invented from a path. Those items are listed at the end.
 
 Every generated id is a UUIDv5 of the item id and a stable name, and every "written at" stamp is
 --as-of (the export's own exportedAt by default), so running this twice writes the same tree.
+
+--platform stages the library of the platform from the store it kept before — originals under
+<root>/media, packages under <root>/packages, extras taken in under <root>/extras — for
+katalog-manager to adopt. It reads that store and writes nothing outside
+<root>/.work/migration/<run>/: the package files are hashed where they are, the originals probed
+where they are, and the only files written are small — the records, the images the database holds
+and copies of the sidecars:
+
+  staged/<itemId>/item/          the item folder as the library will hold it — item.json, metadata.json
+                                 and its images, sources/<sourceId>/ with the probe and a copy of each
+                                 sidecar, versions/<versionId>/ with version.json, checksums.sha256,
+                                 package.json and .complete but none of the package files, which the
+                                 checksums list where the adopt puts them, extras/<extraId>/ the same
+  staged-people/<personId>/      person.json and the portraits of everyone a staged item credits,
+                                 unless the library holds them already; the adopt puts them at
+                                 people/<aa>/<personId>/ once the items are in
+  units/<itemId>.json            the plan of one item (zaentrum.migration.unit/1), below
+  report.json                    what is ready, every problem by its class, and what deleting every
+                                 original would cost (report-<shard>.json for a shard)
+
+The records are the platform's: an original is never in the library, so a version keeps none
+(originalFiles []) and its package is canonical; the original goes to the arrivals, <root>/.work/
+incoming/ (an extra's to <root>/.work/extras/), at the path it had under media/ (extras/), and is
+deleted once its package is recorded — for an item whose original was already gone the source record
+has no fixity, its probe.note says why, and the adopt writes the original-deleted event (reason "gone
+before the library was recorded", accepted [] — the gate was never measured). A sidecar the scanner
+paired with the original is copied into the source folder, and the package's subtitle made from it
+— its manifest marks it external; they are paired by the order katalog-manager handed the packager
+the files, by path, and by language — names the copy as fromSidecar. Extras are the catalog's own rows
+(the export's extras), each named by its row's id and staged when its package finished; one without a
+finished package stays the catalog's, its original among the arrivals. An episode under a season is in
+its series' folder; music and anything else the library does not record is skipped. Ids are UUIDv5 of
+the item and a stable name — a source's is the database's own when it already has one — so staging
+again writes the same records; an item the library holds already, or whose package the database holds
+as complete, is not staged again.
+
+A unit plan says, for katalog-manager's adopt (POST /api/library/migrations/<run>/adopt), what to
+move and what to change, all paths absolute as the run saw them — run it with --root at the services'
+own path of the share:
+
+  {"schema": "zaentrum.migration.unit/1", "run", "itemId", "type", "itemDir", "stagedDir",
+   "moves": [{"kind", "from", "to"}, …]       renames, in this order, each undone in reverse:
+       package  an old package folder's hls/ subs/ trickplay/, and an extra's, into the staged records
+       publish  the staged item folder to itemDir (an episode's into its series' folder, which the
+                series' unit put in place first: series before episodes)
+       original the original to the arrivals, and an extra's original
+       sidecar  a file beside the original — a paired subtitle, a .nfo, .jpg, .png or .txt the source
+                keeps a copy of — to the arrivals beside it
+       legacy   what is left of an old package folder (manifest.json, .complete) to the run's legacy/
+   "guards": {"manifestSha256", "completeMtime", "listingSha256"}   checked again before the first
+       move — when one differs the plan is stale and the item is staged again:
+       manifestSha256  sha256:<hex> of the old package folder's manifest.json; null without one
+       completeMtime   the modification time of its .complete, RFC 3339 in UTC with nine digits of
+                       its fraction; null without a package
+       listingSha256   sha256:<hex> of one "<size> <path>\n" line per file under each package move's
+                       from — every regular file, the folders in the moves' order, one folder's files
+                       by their path within it; null without a package move
+   "db": {"recordedAt", "projectedDatabaseUpdatedAt",   when the item was recorded; the export's
+                                                          modifiedAt of the row, to the second, which
+                                                          its staged metadata.json reflects
+          "sources": [{"sourceId", "filename", "arrivalPath", "libraryPath", "sizeBytes", "qh1",
+                       "recordDir", "sidecars": [{"subtitleAssetId", "rendition", "path"}]}],
+                       arrivalPath and qh1 null for an original gone before the library was recorded;
+                       recordDir null for an original nothing packaged yet, recorded at its first package
+          "versions": [{"versionId", "packageId", "dir", "completedAt", "sourceIds", "verifiedAt",
+                        "verifiedLevel": "full"}]   every byte was hashed by the stage
+          "assets": [{"id", "path", "sourceId"} | {"id", "path", "versionId"}]   the original's row at
+                       the arrivals — or, gone before, at its source folder, a retired one — and the
+                       packaged row at <dir>/package.json; any other packaged row of the item goes
+          "subtitles": [{"id", "path"}]   the package's rows in the version folder, the sidecars' at the
+                       arrivals — or, the original gone before, where a retire points them
+          "extras": [{"id", "dir", "packageId", "sourcePath"}]   dir and packageId null for an extra
+                       that is not packaged; sourcePath its original among the arrivals, or null},
+   "problems": [{"class", "detail"}]}
+
+The problem classes: missing original, missing .complete, several packages, episode without series,
+episode without numbers, season parent, music, not a library item, no title, unmappable sidecar,
+subtitle row without its file, original outside the media root, dropped external-id source, artwork
+not an image, extra not packaged, extra of an episode, extra without an id, extra original gone.
+--dry-run writes report.json and nothing else, and hashes no package file. --shard narrows the run to
+the items whose folder is in that shard — left(coalesce(seriesId, id), 2), as the export narrows by
+it: run each shard of one run with the same --as-of, so the people two shards credit are staged alike.
 """
 import argparse, base64, datetime, hashlib, json, os, re, shutil, sys
 
 try:  # the record logic the packager writes the same records with: beside this tool, or piped in front of it
     from libv2_records import (
-        LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, chapter_marks, checksums, complete, did, external_ids, extra_record,
-        ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes, listdir, num, package_files, package_record,
-        peak_bandwidth, probe_chapters, qh1, record_entry, segments, sha_file, source_record, text, ts, ts_of_mtime,
+        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, chapter_marks, checksums, companion_files, complete,
+        deletion_gate, did, external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
+        listdir, num, package_files, package_record, peak_bandwidth, primary_language, probe_chapters, qh1,
+        record_entry, segments, sha_file, sidecar_entry, sidecar_names, source_record, text, ts, ts_of_mtime,
         version_record)
 except ImportError:
     if "LIBV2_RECORDS" not in globals():
@@ -304,7 +389,7 @@ class Build:
         return doc
 
     # -------------------------------------------------- metadata.json and the images
-    def metadata_json(self, row, d, version_ids, episodes):
+    def metadata_json(self, row, d, version_ids, episodes, extras=None):
         lg = self.a.text_language
         localized = {}
         body = {}
@@ -364,6 +449,8 @@ class Build:
         if row["type"] == "episode":
             library["numbering"] = {"aired": {"season": int(row["seasonNumber"]),
                                               "episode": int(row["episodeNumber"]), "episodeEnd": None}}
+        if extras and row["type"] in ("movie", "series"):
+            library["extras"] = extras  # how a viewer is shown the extras: decisions of the database
         doc["library"] = library
         doc["images"] = self.images(row, d)
         doc["videos"] = self.videos(row)
@@ -772,6 +859,9 @@ class Build:
         return os.path.dirname(p[i + len("/packages/"):] if i >= 0 else os.path.basename(p)) or "."
 
     # -------------------------------------------------- people
+    def person_dir(self, pid):
+        return os.path.join(self.a.out, "people", pid[:2], pid)
+
     def people(self, rows, everyone):
         """One person.json per person the rows credit — and, when the export lists its people and
         the run is not narrowed to some items, per person it lists. Returns how many were written."""
@@ -786,7 +876,7 @@ class Build:
                         names[pid].append(text(c["name"]))
         wanted = sorted(set(names) | ({pid for pid in listed if UUID_RE.match(pid)} if everyone else set()))
         for pid in wanted:
-            if self.projecting and not os.path.isfile(os.path.join(self.a.out, "people", pid[:2], pid, "person.json")):
+            if self.projecting and not os.path.isfile(os.path.join(self.person_dir(pid), "person.json")):
                 self.note(pid, "has no folder on storage, so no projection of them is written: --people-only writes "
                                "a person who is new")
                 continue
@@ -803,7 +893,7 @@ class Build:
         if len(credited_as) > 1:
             self.note(pid, f"credited under {len(credited_as)} names ({', '.join(map(repr, credited_as))}); "
                            f"person.json says {name!r}")
-        d = os.path.join(self.a.out, "people", pid[:2], pid)
+        d = self.person_dir(pid)
         locked = entry.get("lockedFields") if isinstance(entry.get("lockedFields"), list) else []
         doc = {"schema": "zaentrum.library.person/2", "personId": pid, "asOf": self.as_of,
                "projectedBy": "library-v2-from-catalog", **self.freshness(pid, entry),
@@ -893,13 +983,578 @@ class Build:
         return out
 
 
+# ---------------------------------------------------------------- --platform: the library staged from the old store
+# The types of rows the library does not record, and so the migration skips.
+MUSIC_TYPES = ("music", "album", "track", "artist", "song", "audiobook", "podcast")
+# The subtitle files katalog-manager hands the packager beside an original (subtitleFilesOf): what a
+# package's external subtitles were made from, so what they are mapped back to.
+PACKAGER_SIDECARS = (".srt", ".vtt", ".ass", ".ssa")
+PACKAGER_SIDECAR_MAX_BYTES = 50 * 1024 * 1024
+# The notes that are also a problem of the item they are about, by the class the report counts them in.
+PROBLEM_NOTES = (("has no v2 field, dropped", "dropped external-id source"),
+                 ("is not a JPEG, PNG or WebP, dropped", "artwork not an image"))
+GONE = ("the original was gone before the library was recorded: nothing could probe it or take its fixity, and "
+        "it is deleted outside the record")
+
+
+def listing_sha256(folders):
+    """The guard katalog-manager checks again before it moves a unit's package folders: sha256 over one
+    '<size> <path>' line, with a line break, per file under each folder — the folders in the order the
+    moves name them, the files of one by their path within it — so a package that changed after it was
+    staged is staged again, not adopted. Every regular file counts."""
+    h = hashlib.sha256()
+    for folder in folders:
+        rels = []
+        for base, dirs, files in os.walk(folder):
+            rels += [os.path.relpath(os.path.join(base, f), folder) for f in files]
+        for rel in sorted(rels):
+            p = os.path.join(folder, rel)
+            h.update(f"{os.path.getsize(p)} {p}\n".encode("utf-8"))
+    return "sha256:" + h.hexdigest()
+
+
+def mtime_ns(p):
+    """A file's modification time as RFC 3339 in UTC with nine digits of its fraction, the precision
+    katalog-manager reads it back with."""
+    ns = os.stat(p).st_mtime_ns
+    t = datetime.datetime.fromtimestamp(ns // 10 ** 9, datetime.timezone.utc)
+    return t.strftime("%Y-%m-%dT%H:%M:%S") + f".{ns % 10 ** 9:09d}Z"
+
+
+def now_utc():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class Platform(Build):
+    """--platform: every record of the items an export holds, staged under <root>/.work/migration/<run>/
+    for katalog-manager to adopt: one folder per item under staged/<itemId>/item/, written as the item
+    folder will hold it, the records of its package with the checksums computed from the package files
+    where they are, and units/<itemId>.json, the plan of what the adopt moves where and what it changes
+    in the database. It reads the old store and writes nothing outside the run's folder: the package
+    files are hashed in place, the originals probed in place, and only small files are written — the
+    records, the images the database holds and copies of the sidecars. people/ is staged under
+    staged-people/<personId>/. --dry-run writes report.json and nothing else, and hashes no package."""
+
+    def __init__(self, args, export):
+        super().__init__(args, export)
+        self.root = args.root
+        self.work = os.path.join(self.root, ".work")
+        self.run_dir = os.path.join(self.work, "migration", args.run)
+        self.by_id = {r["id"]: r for r in export.get("items") or [] if isinstance(r, dict) and r.get("id")}
+        self.extras_of, self.sources_of = {}, {}
+        for x in export.get("extras") or []:
+            if isinstance(x, dict):
+                self.extras_of.setdefault(x.get("itemId"), []).append(x)
+        for s in export.get("sources") or []:
+            if isinstance(s, dict):
+                self.sources_of.setdefault(s.get("itemId"), []).append(s)
+        # an item the database holds a complete version of has its record already
+        self.recorded = {v.get("itemId") for v in export.get("versions") or []
+                         if isinstance(v, dict) and v.get("state") == "complete"}
+        self.entries, self.staged_rows, self.current = [], [], None
+        self.gate, self.measured, self.unmeasured = {}, 0, 0
+        self.counts.update(units=0, recorded=0)
+
+    # -------------------------------------------------- where everything is
+    def series_of(self, row):
+        """The series an episode's folder is in: its parent, or the parent of the season it is under.
+        Returns (seriesId or None, whether it is found through a season)."""
+        parent = self.by_id.get(row.get("parentId"))
+        if parent and parent.get("type") == "season":
+            series = self.by_id.get(parent.get("parentId"))
+            return (series["id"] if series and series.get("type") == "series" else None), True
+        return (parent["id"] if parent and parent.get("type") == "series" else None), False
+
+    def shard_of(self, row):
+        """The shard an item's folder is in, as the export narrows by it: left(coalesce(seriesId, id), 2)."""
+        parent = self.by_id.get(row.get("parentId")) or {}
+        key = None
+        if row.get("type") == "episode":
+            key = parent.get("parentId") if parent.get("type") == "season" else row.get("parentId")
+        elif row.get("type") == "season":
+            key = row.get("parentId")
+        return str(key or row["id"])[:2]
+
+    def library_dir(self, row):
+        iid = row["id"]
+        if row["type"] == "episode":
+            sid = self.series_of(row)[0]
+            return os.path.join(self.root, "series", sid[:2], sid, "episodes", iid)
+        return os.path.join(self.root, "movies" if row["type"] == "movie" else "series", iid[:2], iid)
+
+    def item_dir(self, row, by_id=None):
+        return os.path.join(self.run_dir, "staged", row["id"], "item")
+
+    def person_dir(self, pid):
+        return os.path.join(self.run_dir, "staged-people", pid)
+
+    def arrival_of(self, local):
+        """Where a file of the old media or extras folder goes: the same place under .work/incoming or
+        .work/extras. Returns (the arrival path, the path relative to the arrivals), or (None, None)."""
+        for base, arrivals in ((self.a.media, "incoming"), (self.a.extras, "extras")):
+            if local.startswith(base + os.sep):
+                rel = os.path.relpath(local, base)
+                return os.path.join(self.work, arrivals, rel), rel.replace(os.sep, "/")
+        return None, None
+
+    def located(self, path, markers=("media",)):
+        """A file the catalog names, where it is on this share, or None."""
+        if not path:
+            return None
+        for marker in markers:
+            p = self.under(self.a.media if marker == "media" else self.a.extras, path, marker)
+            if os.path.isfile(p):
+                return p
+        return None
+
+    # -------------------------------------------------- what the report says of an item
+    def note(self, item_id, msg):
+        super().note(item_id, msg)
+        if self.current is not None and self.current["itemId"] == item_id:
+            for phrase, cls in PROBLEM_NOTES:
+                if phrase in msg:
+                    self.problem(cls, msg)
+
+    def problem(self, cls, detail):
+        self.current["problems"].append({"class": cls, "detail": detail})
+
+    def item_json(self, row):
+        doc = super().item_json(row)
+        if row["type"] == "episode":
+            doc["seriesId"] = self.series_of(row)[0]
+        return doc
+
+    # -------------------------------------------------- one item
+    def build(self, row, by_id, episodes):
+        if row.get("type") == "season":
+            return  # not a folder of its own: its episodes are in its series' folder
+        self.current = {"itemId": row["id"], "type": row.get("type"), "title": text(row.get("title")),
+                        "staged": False, "ready": False, "problems": []}
+        self.entries.append(self.current)
+        try:
+            self.stage(row)
+        finally:
+            self.current["ready"] = self.current["staged"] and not self.current["problems"]
+            self.current = None
+
+    def stage(self, row):
+        kind = row.get("type")
+        if kind in MUSIC_TYPES:
+            return self.problem("music", "music is not part of the library record: skipped")
+        if kind not in ("movie", "series", "episode"):
+            return self.problem("not a library item", f"a row of type {kind!r} has no folder in the library")
+        if not text(row.get("title")):
+            return self.problem("no title", "a record carries the title an item was created with, and the row has none")
+        if kind == "episode":
+            series, through_season = self.series_of(row)
+            if through_season:
+                self.problem("season parent", "its parent is a season: its folder is in the season's series")
+            if not series:
+                return self.problem("episode without series", "no series in the export holds it, so it has no folder")
+            if not text(self.by_id[series].get("title")):
+                return self.problem("episode without series", "its series cannot be recorded, so it has no folder")
+            if row.get("seasonNumber") is None or row.get("episodeNumber") is None:
+                return self.problem("episode without numbers", "an episode is recorded with its season and episode "
+                                                               "numbers, and the row lacks them")
+        target = self.library_dir(row)
+        if os.path.isfile(os.path.join(target, "item.json")) or row["id"] in self.recorded:
+            self.current["recorded"] = True
+            self.counts["recorded"] += 1
+            return  # adopted by an earlier run, or recorded by the platform since
+        d = self.item_dir(row)
+        if not self.a.dry_run:
+            shutil.rmtree(os.path.dirname(d), ignore_errors=True)
+        moves = {"package": [], "original": [], "legacy": []}
+        db = {"recordedAt": now_utc(), "projectedDatabaseUpdatedAt": self.moment(row["id"], "modifiedAt",
+                                                                                row.get("modifiedAt")),
+              "sources": [], "versions": [], "assets": [], "subtitles": [], "extras": []}
+        guards = {"manifestSha256": None, "completeMtime": None, "listingSha256": None}
+        version_ids = []
+        if kind != "series":
+            vid = self.media(row, d, target, moves, db, guards)
+            if vid:
+                version_ids.append(vid)
+        series_episodes = [r for r in self.by_id.values() if r.get("type") == "episode" and
+                           self.series_of(r)[0] == row["id"]] if kind == "series" else []
+        decisions = self.stage_extras(row, d, target, moves, db, series_episodes)
+        self.w.covered(d, {"item.json": json_bytes(self.item_json(row))})
+        self.w.write_json(os.path.join(d, "metadata.json"),
+                          self.metadata_json(row, d, version_ids, series_episodes, decisions))
+        if moves["package"]:
+            guards["listingSha256"] = None if self.a.dry_run else listing_sha256([m["from"] for m in moves["package"]])
+        unit = {"schema": "zaentrum.migration.unit/1", "run": self.a.run, "itemId": row["id"], "type": kind,
+                "itemDir": target, "stagedDir": d,
+                "moves": moves["package"] + [{"kind": "publish", "from": d, "to": target}] + moves["original"]
+                + moves["legacy"],
+                "guards": guards, "db": db, "problems": self.current["problems"]}
+        self.w.write_json(os.path.join(self.run_dir, "units", row["id"] + ".json"), unit)
+        self.current["staged"] = True
+        self.counts["units"] += 1
+        self.counts["items"] += 1
+        self.staged_rows.append(row)
+
+    # -------------------------------------------------- an item's original and its package
+    def media(self, row, d, target, moves, db, guards):
+        """The source record of the item's original and the version and package records of its package,
+        staged; the moves that put the package, the original and its sidecars where the record says,
+        and the rows that change with them. Returns the versionId, or None when nothing was packaged."""
+        iid = row["id"]
+        assets = row.get("playbackAssets") or []
+        primary = next((a for a in assets if a.get("kind") == "primary" and a.get("isPrimary")), None) \
+            or next((a for a in assets if a.get("kind") == "primary"), None)
+        packaged = sorted((a for a in assets if a.get("kind") == "packaged"), key=lambda a: str(a.get("path")))
+        original = self.located((primary or {}).get("path"))
+        if not primary:
+            self.problem("missing original", "the catalog names no original")
+        elif original is None:
+            self.problem("missing original", f"{primary['path']} is not on the share")
+        if len(packaged) > 1:
+            self.problem("several packages", f"{len(packaged)} packaged rows: {packaged[0]['path']} is the version, "
+                                             f"and adopting it drops the others, as a new package does")
+        pkg = None
+        if packaged:
+            a = packaged[0]
+            folder = os.path.dirname(self.under(self.a.packages, a["path"], "packages"))
+            if not os.path.isfile(os.path.join(folder, ".complete")):
+                self.problem("missing .complete", f"the package {a['path']} never finished: it is not recorded, and "
+                                                  f"the title is packaged again")
+            else:
+                mp = os.path.join(folder, "manifest.json")
+                try:
+                    pkg = (a, folder, json.load(open(mp, encoding="utf-8")) if os.path.isfile(mp) else {})
+                except (OSError, ValueError) as e:
+                    self.problem("missing .complete", f"the package manifest {mp} cannot be read ({e})")
+        name = os.path.basename(original or str((primary or {}).get("path") or "").replace("\\", "/"))
+        arrival, rel = self.arrival_of(original) if original else (None, None)
+        if original and arrival is None:
+            self.problem("original outside the media root", f"{original} stays where it is")
+            arrival = original
+        library_path = rel or os.path.basename(name)
+        if not original and primary:
+            p = str(primary.get("path") or "").replace("\\", "/")
+            i = p.rfind("/media/")
+            library_path = p[i + len("/media/"):] if i >= 0 else name
+
+        # the item's subtitle rows: its package's, and the files beside the original the scanner paired
+        package_rows, sidecar_rows = [], []
+        for s in row.get("subtitleAssets") or []:
+            sp = str(s.get("path") or "")
+            in_package = self.under(self.a.packages, sp, "packages") if pkg else ""
+            if pkg and in_package.startswith(pkg[1] + os.sep):
+                package_rows.append((s, os.path.relpath(in_package, pkg[1]).replace(os.sep, "/")))
+                continue
+            local = self.located(sp)
+            if local:
+                sidecar_rows.append((s, local))
+            elif sp:
+                self.problem("subtitle row without its file", f"subtitle {s.get('id')} names {sp}, which is no file "
+                                                              f"of the share: it is left as it is")
+        primary_folder = os.path.dirname(self.under(self.a.media, primary["path"], "media")) if primary else None
+        companions = companion_files(original) if original else []
+        copies = sidecar_names([os.path.basename(p) for _, p in sidecar_rows] + [os.path.basename(p) for p, _ in companions])
+        copy_of = {s.get("id"): c for (s, _), c in zip(sidecar_rows, copies)}
+
+        # the sidecar rows to the package subtitles the packager made from them: katalog-manager handed it
+        # the subtitle files in the original's folder, by path, and it made one subtitle of each it could
+        # read, marked external, in that order — each in its row's language
+        externals = [s for s in (pkg[2].get("subtitles") or []) if s.get("external")] if pkg else []
+        took = sorted([s for s, p in sidecar_rows if os.path.splitext(p)[1].lower() in PACKAGER_SIDECARS
+                       and os.path.getsize(p) <= PACKAGER_SIDECAR_MAX_BYTES
+                       and (primary_folder is None or p.startswith(primary_folder + os.sep))],
+                      key=lambda s: str(s.get("path")))
+        mapped = {}
+        for e in externals:
+            want = primary_language(e.get("language") or "und")
+            hit = next((s for s in took if primary_language(s.get("language") or "und") == want), None)
+            if hit is None:
+                self.problem("unmappable sidecar", f"subtitle {e.get('id')} of the package was made from a sidecar "
+                                                   f"no subtitle row of the item names in its language")
+                continue
+            took.remove(hit)
+            mapped[hit["id"]] = e
+        for s in took if pkg else []:
+            self.problem("unmappable sidecar", f"the sidecar {s.get('path')} is no subtitle of the package: its copy "
+                                               f"is kept with the source, and its row points at it once the original "
+                                               f"is gone")
+
+        sid = next((s["id"] for s in self.sources_of.get(iid, []) if s.get("state") == "present" and s.get("id")
+                    and (s.get("arrivalPath") == (primary or {}).get("path") or s.get("filename") == name)), None) \
+            or did(iid, "source", name)
+        source_dir = os.path.join(target, "sources", sid)
+        if original:
+            moves["original"].append({"kind": "original", "from": original, "to": arrival})
+            for local in [p for _, p in sidecar_rows] + [p for p, _ in companions]:
+                to = self.arrival_of(local)[0]
+                if to:
+                    moves["original"].append({"kind": "sidecar", "from": local, "to": to})
+            if primary:
+                db["assets"].append({"id": primary.get("id"), "path": arrival, "sourceId": sid})
+            for s, local in sidecar_rows:
+                to = self.arrival_of(local)[0]
+                if to:
+                    db["subtitles"].append({"id": s.get("id"), "path": to})
+
+        size = os.path.getsize(original) if original else num((primary or {}).get("sizeBytes"))
+        if pkg and size is None:
+            self.problem("missing original", "and the catalog recorded no size for it: no source record can be "
+                                             "written, so its package is not recorded")
+            pkg = None
+        if not pkg:
+            if original:
+                db["sources"].append({"sourceId": sid, "filename": name, "arrivalPath": arrival,
+                                      "libraryPath": library_path, "sizeBytes": size, "qh1": qh1(original),
+                                      "recordDir": None, "sidecars": []})
+            return None
+
+        # sources/<sourceId>/: the probe, the copies, the record
+        a, folder, man = pkg
+        probe = ffprobe(original) if original and self.probe_version else None
+        if probe:
+            self.counts["probed"] += 1
+        elif original:
+            self.note(iid, f"{name} was not probed: streams, fidelity and essence stay empty")
+        files = {}
+        entries = []
+        for (s, local), copy in zip(sidecar_rows, copies):
+            entries.append(sidecar_entry(sid, copy, local, os.path.basename(local), "subtitle", s.get("language")))
+            files[copy] = open(local, "rb").read()
+        for (local, kind), copy in zip(companions, copies[len(sidecar_rows):]):
+            entries.append(sidecar_entry(sid, copy, local, os.path.basename(local), kind))
+            files[copy] = open(local, "rb").read()
+        rec, raw = source_record(sid, name, size, taken_at=self.as_of, taken_by="library-v2-from-catalog",
+                                 library_path=library_path, qh1=qh1(original) if original else None,
+                                 mtime=ts_of_mtime(original) if original else None, origin_taken_by="import",
+                                 probe=probe, probe_version=self.probe_version, sidecars=entries,
+                                 note=None if original else GONE)
+        files["source.json"] = json_bytes(rec)
+        if raw is not None:
+            files["ffprobe.json"] = raw
+        self.w.covered(os.path.join(d, "sources", sid), files)
+        self.counts["sources"] += 1
+
+        # versions/<versionId>/: the records over the package, which the adopt moves in beside them
+        store = os.path.relpath(folder, self.a.packages)
+        vid, pid = did(iid, "version", store), did(iid, "package", store)
+        vp = os.path.join(d, "versions", vid)
+        marks, marks_from = chapter_marks(row.get("chapters")), "legacy-catalog"
+        if not marks:
+            marks, marks_from = probe_chapters(probe), "original-file"
+        version = version_record(vid, rec, created_at=ts(man.get("packagedAt")) or self.as_of,
+                                 created_by="library-v2-from-catalog", chapters=marks, chapters_from=marks_from,
+                                 segments=segments(row.get("segments")))
+        version_bytes = json_bytes(version)
+        listed = [] if self.a.dry_run else package_files(folder) + [record_entry("version.json", version_bytes)]
+        package, notes = package_record(
+            pid, man, listed, source=rec, created_at=self.as_of, duration_ms=a.get("durationMs"),
+            peak_bandwidth_bps=peak_bandwidth(folder, (man.get("hls") or {}).get("master") or "hls/master.m3u8")
+            or (num(a.get("bitrateKbps")) or 0) * 1000 or None,
+            sidecars={e.get("id"): f"sources/{sid}/{copy_of[row_id]}" for row_id, e in mapped.items()})
+        for n in notes:
+            self.note(iid, n)
+        if rec["streams"]:
+            self.measured += 1
+            for key in deletion_gate([rec["essence"]], package["essence"]):
+                self.gate[key] = self.gate.get(key, 0) + 1
+        else:
+            self.unmeasured += 1
+        package_bytes = json_bytes(package)
+        self.w.write(os.path.join(vp, "version.json"), version_bytes)
+        self.w.write(os.path.join(vp, "checksums.sha256"), checksums(listed)[0])
+        self.w.write(os.path.join(vp, "package.json"), package_bytes)
+        self.w.write(os.path.join(vp, ".complete"), complete(package_bytes))
+        self.counts["versions"] += 1
+        self.counts["packages"] += 1
+        for sub in PACKAGE_DIRS:
+            if os.path.isdir(os.path.join(folder, sub)):
+                moves["package"].append({"kind": "package", "from": os.path.join(folder, sub), "to": os.path.join(vp, sub)})
+        moves["legacy"].append({"kind": "legacy", "from": folder, "to": os.path.join(self.run_dir, "legacy", store)})
+        mp = os.path.join(folder, "manifest.json")
+        guards.update(manifestSha256=sha_file(mp) if os.path.isfile(mp) else None,
+                      completeMtime=mtime_ns(os.path.join(folder, ".complete")))
+
+        vdir = os.path.join(target, "versions", vid)
+        db["sources"].append({"sourceId": sid, "filename": name, "arrivalPath": arrival if original else None,
+                              "libraryPath": library_path, "sizeBytes": size,
+                              "qh1": rec["file"].get("fixity", {}).get("qh1"), "recordDir": source_dir,
+                              "sidecars": [{"subtitleAssetId": row_id, "rendition": e.get("id"), "path": e.get("path")}
+                                           for row_id, e in sorted(mapped.items())]})
+        db["versions"].append({"versionId": vid, "packageId": pid, "dir": vdir, "completedAt": package["createdAt"],
+                               "sourceIds": [sid], "verifiedAt": None if self.a.dry_run else now_utc(),
+                               "verifiedLevel": "full"})
+        db["assets"].append({"id": a.get("id"), "path": os.path.join(vdir, "package.json"), "versionId": vid})
+        if not original and primary:
+            # gone before the library was recorded: the original's row is a retired one, as a retire leaves it
+            db["assets"].append({"id": primary.get("id"), "path": source_dir, "sourceId": sid})
+        rendered = {s.get("path") for s in package["subtitles"]}
+        for s, rel_path in package_rows:
+            if rel_path in rendered or os.path.isfile(os.path.join(folder, rel_path)):
+                db["subtitles"].append({"id": s.get("id"), "path": os.path.join(vdir, rel_path)})
+            else:
+                self.problem("subtitle row without its file", f"subtitle {s.get('id')} names {s.get('path')}, which "
+                                                              f"the package does not hold: it is left as it is")
+        if not original:
+            for (s, _), copy in zip(sidecar_rows, copies):
+                e = mapped.get(s.get("id"))
+                db["subtitles"].append({"id": s.get("id"), "path": os.path.join(vdir, e["path"]) if e
+                                        else os.path.join(source_dir, copy)})
+        return vid
+
+    # -------------------------------------------------- the title's extras, from the catalog's
+    def stage_extras(self, row, d, target, moves, db, series_episodes):
+        """Every extra of the title the catalog holds (039), staged under extras/<extraId>/ when its
+        package finished: extra.json, the records over its package, which the adopt moves in, and what
+        it was packaged from. Returns the decisions about how they are shown, for library.extras."""
+        decisions = {}
+        seasons = {int(e["seasonNumber"]) for e in series_episodes if e.get("seasonNumber") is not None}
+        for x in sorted(self.extras_of.get(row["id"], []), key=lambda x: str(x.get("id"))):
+            xid = str(x.get("id") or "")
+            if row["type"] == "episode":
+                self.problem("extra of an episode", f"extra {xid} belongs to an episode, which has no extras")
+                continue
+            if not UUID_RE.match(xid):
+                self.problem("extra without an id", f"extra {xid!r} cannot name a folder")
+                continue
+            local = self.located(x.get("sourcePath"), ("media", "extras"))
+            arrival = self.arrival_of(local)[0] if local else None
+            if local and arrival:
+                moves["original"].append({"kind": "original", "from": local, "to": arrival})
+            folder = self.under(self.a.packages, x["packagePath"], "packages") if x.get("packagePath") else None
+            if not (x.get("state") == "ready" and x.get("packagedAt") and folder
+                    and os.path.isfile(os.path.join(folder, ".complete"))):
+                self.problem("extra not packaged", f"extra {xid} ({x.get('state')}) has no finished package: it stays "
+                                                   f"in the catalog, its original among the arrivals")
+                db["extras"].append({"id": xid, "dir": None, "packageId": None, "sourcePath": arrival or local})
+                continue
+            mp = os.path.join(folder, "manifest.json")
+            try:
+                man = json.load(open(mp, encoding="utf-8")) if os.path.isfile(mp) else {}
+            except (OSError, ValueError) as e:
+                self.problem("extra not packaged", f"extra {xid}'s package manifest cannot be read ({e})")
+                continue
+            if local:
+                made_from = [{"name": os.path.basename(local), "sizeBytes": os.path.getsize(local),
+                              "fixity": {"qh1": qh1(local)}}]
+            elif num(x.get("sourceSize")) is not None and re.fullmatch(r"sha256:[0-9a-f]{64}", str(x.get("sourceQh1"))):
+                made_from = [{"name": os.path.basename(str(x.get("sourcePath") or "original")),
+                              "sizeBytes": num(x["sourceSize"]), "fixity": {"qh1": x["sourceQh1"]}}]
+            else:
+                made_from = []
+                self.problem("extra original gone", f"extra {xid}'s original is gone and the catalog kept no fixity "
+                                                    f"of it: its record cannot say what it was packaged from")
+            season = num(x.get("seasonNumber"))
+            if season is not None and (row["type"] != "series" or season not in seasons):
+                self.note(row["id"], f"extra {xid} names season {season}, which the series does not hold: it is "
+                                     f"the series' as a whole")
+                season = None
+            origin = x.get("origin") if isinstance(x.get("origin"), dict) else None
+            if origin and (origin.get("kind") != "link"
+                           or set(origin) - {"kind", "site", "externalId", "url", "fetchedAt"}):
+                self.note(row["id"], f"extra {xid}'s origin {origin!r} is not a link the record can name, dropped")
+                origin = None
+            titles = {k: text(v) for k, v in (x.get("localizedTitles") or {}).items()
+                      if LANGUAGE_RE.match(str(k)) and text(v)}
+            language = text(x.get("language"))
+            probe = ffprobe(local) if local and self.probe_version else None
+            if probe:
+                self.counts["probed"] += 1
+            doc = extra_record(xid, created_at=self.moment(xid, "createdAt", x.get("createdAt")) or self.as_of,
+                               created_by=text(x.get("createdBy")) or "library-v2-from-catalog", kind=x.get("kind"),
+                               title=text(x.get("title")), localized_titles=titles,
+                               language=language if language and LANGUAGE_RE.match(language) else None,
+                               season_number=season, origin=origin, probe=probe, probe_version=self.probe_version,
+                               probed_at=self.as_of, packaged_from=made_from)
+            record = json_bytes(doc)
+            xp = os.path.join(d, "extras", xid)
+            store = os.path.relpath(folder, self.a.packages)
+            listed = [] if self.a.dry_run else package_files(folder, EXTRA_DIRS) + [record_entry("extra.json", record)]
+            package, notes = package_record(did(xid, "package", store), man, listed, source=doc if probe else None,
+                                            created_at=self.as_of, duration_ms=x.get("durationMs"),
+                                            peak_bandwidth_bps=peak_bandwidth(folder) or num(x.get("peakBandwidthBps")))
+            for n in notes:
+                self.note(row["id"], f"extra {xid}: {n}")
+            package_bytes = json_bytes(package)
+            self.w.write(os.path.join(xp, "extra.json"), record)
+            self.w.write(os.path.join(xp, "checksums.sha256"), checksums(listed)[0])
+            self.w.write(os.path.join(xp, "package.json"), package_bytes)
+            self.w.write(os.path.join(xp, ".complete"), complete(package_bytes))
+            for sub in EXTRA_DIRS:
+                if os.path.isdir(os.path.join(folder, sub)):
+                    moves["package"].append({"kind": "package", "from": os.path.join(folder, sub),
+                                             "to": os.path.join(xp, sub)})
+            moves["legacy"].append({"kind": "legacy", "from": folder, "to": os.path.join(self.run_dir, "legacy", store)})
+            db["extras"].append({"id": xid, "dir": os.path.join(target, "extras", xid),
+                                 "packageId": package["packageId"], "sourcePath": arrival or local})
+            decision = {k: v for k, v in (("order", num(x.get("sortOrder"))), ("hidden", x.get("hidden") is True or None),
+                                          ("label", text(x.get("label")))) if v is not None}
+            if decision:
+                decisions[xid] = decision
+            self.counts["extras"] += 1
+        return decisions
+
+    # -------------------------------------------------- people, and the report
+    def people(self, rows, everyone):
+        """The people the staged items credit, staged under staged-people/<personId>/ — but not one
+        whose folder the library holds already: that is the projector's."""
+        listed = {str(p["id"]): p for p in self.export.get("people") or [] if isinstance(p, dict) and p.get("id")}
+        names = {}
+        for row in self.staged_rows:
+            for c in row.get("people") or []:
+                pid = text(c.get("personId"))
+                if pid and UUID_RE.match(pid):
+                    names.setdefault(pid, [])
+                    if text(c.get("name")) and text(c["name"]) not in names[pid]:
+                        names[pid].append(text(c["name"]))
+        for pid in sorted(names):
+            if os.path.isfile(os.path.join(self.root, "people", pid[:2], pid, "person.json")):
+                continue
+            if not self.a.dry_run:
+                shutil.rmtree(self.person_dir(pid), ignore_errors=True)
+            try:
+                self.person(pid, listed.get(pid) or {}, names[pid])
+            except Exception as e:  # one unreadable person must not stop the run
+                self.skipped.append((pid, f"{type(e).__name__}: {e}"))
+
+    def finish(self):
+        """report.json — report-<shard>.json for a shard — written whatever else the run wrote: what is
+        ready, the problems of every item by class, and what deleting every original would cost."""
+        problems = {}
+        for e in self.entries:
+            for p in e["problems"]:
+                problems[p["class"]] = problems.get(p["class"], 0) + 1
+        report = {"schema": "zaentrum.migration.report/1", "run": self.a.run, "asOf": self.as_of,
+                  "dryRun": bool(self.a.dry_run), "shard": self.a.shard or None, "root": self.root,
+                  "counts": {"items": len(self.entries), "staged": self.counts["units"],
+                             "ready": sum(1 for e in self.entries if e["ready"]), "recorded": self.counts["recorded"],
+                             "versions": self.counts["versions"], "extras": self.counts["extras"],
+                             "people": self.counts["people"]},
+                  "problems": dict(sorted(problems.items())),
+                  "loss": {"measured": self.measured, "unmeasured": self.unmeasured,
+                           "gate": dict(sorted(self.gate.items(), key=lambda kv: (-kv[1], kv[0])))},
+                  "items": self.entries}
+        path = os.path.join(self.run_dir, f"report-{self.a.shard}.json" if self.a.shard else "report.json")
+        os.makedirs(self.run_dir, exist_ok=True)
+        with open(path + ".tmp", "wb") as f:
+            f.write(json_bytes(report))
+        os.replace(path + ".tmp", path)
+        return path, report
+
+
 def main():
     ap = argparse.ArgumentParser(prog="library-v2-from-catalog.py",
                                  description="Write v2 library records from a catalog export.")
     ap.add_argument("--export", required=True, help="the catalog export produced on the client side")
     ap.add_argument("--packages", help="the package store the catalog's packaged assets point into")
     ap.add_argument("--media", help="the folder the catalog's primary assets point into")
-    ap.add_argument("--out", required=True, help="the library root to write: movies/, series/ and people/ go here")
+    ap.add_argument("--out", help="the library root to write: movies/, series/ and people/ go here")
+    ap.add_argument("--platform", action="store_true",
+                    help="stage every record the platform's library needs under <root>/.work/migration/<run>/ for "
+                         "katalog-manager to adopt, with a plan per item of what moves where; writes nothing else")
+    ap.add_argument("--root", help="--platform: the share's root as the services see it, the library root that holds "
+                                   "movies/, series/, people/ and .work/")
+    ap.add_argument("--run", help="--platform: the migration run, the folder .work/migration/<run>/")
+    ap.add_argument("--extras", help="--platform: the folder extras were taken in from (default <root>/extras)")
+    ap.add_argument("--shard", help="--platform: only the items whose folder is in this shard, the first two "
+                                    "characters of the id of a movie or a series; with an export of that shard")
     ap.add_argument("--people-only", action="store_true",
                     help="write people/ and nothing else, so a tree written earlier gains its people "
                          "without a record being rewritten; needs neither --packages nor --media")
@@ -918,9 +1573,29 @@ def main():
                          "because the catalog does not record what language its texts are in")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    if args.platform:
+        if args.out or args.people_only or args.projections_only:
+            ap.error("--platform stages its records under <root>/.work/migration/<run>/: no --out, --people-only or "
+                     "--projections-only with it")
+        if not args.root or not args.run:
+            ap.error("--platform needs --root and --run")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run):
+            ap.error(f"--run {args.run!r} is not a folder name: letters, digits, '.', '_' and '-'")
+        if args.shard and not re.fullmatch(r"[0-9a-f]{2}", args.shard):
+            ap.error(f"--shard {args.shard!r} is not a shard: two lower-case hex characters")
+        args.root = os.path.abspath(args.root)
+        args.media = os.path.abspath(args.media or os.path.join(args.root, "media"))
+        args.packages = os.path.abspath(args.packages or os.path.join(args.root, "packages"))
+        args.extras = os.path.abspath(args.extras or os.path.join(args.root, "extras"))
+        args.out = args.root
+        args.media_mode = "none"
+    elif args.root or args.run or args.extras or args.shard:
+        ap.error("--root, --run, --extras and --shard go with --platform")
+    elif not args.out:
+        ap.error("--out is needed, unless --platform")
     if args.people_only and args.projections_only:
         ap.error("--people-only and --projections-only exclude each other: --projections-only rewrites people too")
-    if not (args.people_only or args.projections_only) and not (args.packages and args.media):
+    if not (args.platform or args.people_only or args.projections_only) and not (args.packages and args.media):
         ap.error("--packages and --media are needed, unless --people-only or --projections-only")
     args.packages_given = bool(args.packages)
     args.out = os.path.abspath(args.out)
@@ -931,6 +1606,7 @@ def main():
         export = json.load(f)
     rows = export.get("items") or []
     by_id = {r["id"]: r for r in rows}
+    b = (Platform if args.platform else Build)(args, export)
     wanted = [x.strip() for x in args.items.split(",") if x.strip()]
     if wanted:
         chosen = {x for x in wanted if x in by_id}
@@ -943,9 +1619,12 @@ def main():
                 chosen.add(row["parentId"])
             if row["type"] == "series":
                 chosen |= {r["id"] for r in rows if r.get("parentId") == x}
+        if args.platform:  # an episode under a season brings its series, and a series the episodes of its seasons
+            chosen |= {b.series_of(by_id[x])[0] for x in list(chosen) if by_id[x].get("type") == "episode"} - {None}
+            chosen |= {r["id"] for r in rows if r.get("type") == "episode" and b.series_of(r)[0] in chosen}
         rows = [r for r in rows if r["id"] in chosen]
-
-    b = Build(args, export)
+    if args.platform and args.shard:
+        rows = [r for r in rows if b.shard_of(r) == args.shard]
     if not b.probe_version and not (args.people_only or args.projections_only):
         print("note: ffprobe is not on PATH; source records will carry size, mtime and qh1 only")
     order = {"series": 0, "movie": 1, "episode": 2}
@@ -964,6 +1643,15 @@ def main():
         print("  note " + n)
     for iid, why in b.skipped:
         print(f"  skipped {iid}: {why}")
+    if args.platform:
+        path, report = b.finish()
+        print(f"report: {path}")
+        print(f"  {report['counts']}")
+        for cls, n in report["problems"].items():
+            print(f"  problem {cls}: {n}")
+        if report["loss"]["gate"] or report["loss"]["unmeasured"]:
+            print(f"  deleting every original would cost: {report['loss']['gate']} "
+                  f"({report['loss']['unmeasured']} not measured)")
     return 1 if b.skipped else 0
 
 
