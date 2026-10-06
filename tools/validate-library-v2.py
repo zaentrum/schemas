@@ -10,7 +10,11 @@ version, package, event, extra) or replaced whole by the one service that owns i
 person). Nothing here is merged, so the rules below are about records agreeing with each other and
 with the bytes beside them, never about a document being up to date.
 
-  layout       only movies/, series/ and people/ at the root; shard folders of two characters; itemId
+  layout       only movies/, series/ and people/ at the root, beside entries whose name begins with a
+               dot — .work/, where the platform keeps what is not the record — which are not looked
+               at, and, as a note until the migration's cleanup moves them aside, the folders of the
+               store before the library (media/, packages/, extras/, incoming/); shard folders of two
+               characters; itemId
                and personId equal the folder name and its shard; an item folder holds only item.json,
                checksums.sha256, metadata.json, metadata/, sources/, versions/, events/, extras/ (a
                series: episodes/ instead of sources/ and versions/; an episode: no extras/) — so no
@@ -90,6 +94,9 @@ BASE = "https://zaentrum.github.io/schemas/library/v2/"
 
 CATEGORIES = (("movies", "movie"), ("series", "series"))
 ROOT_ENTRIES = {"movies", "series", "people"}
+# The folders of the store the platform kept before the library, at the same root: the migration
+# empties them of everything the catalog knows, and its cleanup moves what is left to .work/legacy/.
+OLD_STORE = ("media", "packages", "extras", "incoming")
 SUMS = "checksums.sha256"
 ITEM_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "sources", "versions", "events", "extras"}
 SERIES_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "episodes", "events", "extras"}
@@ -1258,11 +1265,18 @@ class Checker:
         self.root_dir = r
         found = 0
         for name in listdir(r):
+            if name.startswith("."):
+                continue  # .work/ and every other dot-entry: what is beside the record is not the record
+            if name in OLD_STORE and os.path.isdir(os.path.join(r, name)):
+                self.note(os.path.join(r, name), "a folder of the store before the library: the migration's cleanup "
+                                                 "moves what is left in it to .work/legacy/")
+                continue
             if name == "_swept":
-                self.err(os.path.join(r, name), "the quarantine of a library-v2-sweep.py --apply that did not "
-                                                "finish; the next --apply finishes it")
+                self.err(os.path.join(r, name), "the quarantine of a library-v2-sweep.py --apply from before "
+                                                "2026-10-06 that did not finish; the next --apply finishes it")
             elif name not in ROOT_ENTRIES:
-                self.err(os.path.join(r, name), "a library root holds only movies/, series/ and people/")
+                self.err(os.path.join(r, name), "a library root holds only movies/, series/ and people/, and "
+                                                "entries whose name begins with a dot, such as .work/")
         for category, kind in CATEGORIES:
             base = os.path.join(r, category)
             if not os.path.isdir(base):

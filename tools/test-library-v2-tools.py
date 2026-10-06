@@ -680,6 +680,22 @@ def test_round_trip(t):
              and any("an episode has no extras" in n for n in built["notes"]), built["notes"])
 
 
+def test_work_tree(t):
+    """The share's root holds .work/ beside the record: every tool reads past it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        before, _ = rows_of(root)
+        work_tree(root)
+        after, _ = rows_of(root)
+        t.eq("the rebuild gives the same rows with the work tree beside the record", after, before)
+        code, text = run(SWEEP, root, "--grace", "0")
+        t.ok("and the sweep finds nothing in it to sweep", code == 0 and swept(text, root) == [], text)
+        if have_jsonschema():
+            code, text = run(VALIDATOR, root)
+            t.ok("and the validator does not look at it", code == 0 and text.strip().endswith("OK"), text)
+
+
 def test_proves_itself(t):
     """Every folder written once carries the checksums of what it holds, in the format the
     system's own sha256sum checks; a version's chain holds link by link; projections carry none."""
@@ -3382,6 +3398,7 @@ def test_media_check(t):
             "sourceId": jload(os.path.join(vp, "version.json"))["sourceIds"][0], "accepted": []})
     case("an original a version never kept, deleted once its package was recorded", True, deleted_outside, "OK",
          ("--checksums",))
+    case("the work tree beside the record, which is none of it", True, work_tree, "OK", ("--checksums",))
     case("a 5.1 companion whose folder is gone", False,
          lambda r: names(r, renditions={"audioSurround": [{"id": "a9", "dir": "hls/a9", "channels": 6}]}),
          "rendition folder hls/a9 is missing")
@@ -3564,6 +3581,17 @@ def test_media_check(t):
          resurrect_extra, "OK", ("--checksums",))
 
 
+def work_tree(root):
+    """.work/ beside movies/, series/ and people/, as the platform keeps the share: arrivals, a worker's
+    handoff, a packager's staging, the trash, a quarantine — files a record-reading tool must not see."""
+    for rel in ("incoming/Example Film (2024)/Example Film (2024).mkv", "extras/trailers/trailer.mov",
+                "inbox/f001aeff-0000-4000-8000-000000000000/renditions.json", "staging/9a2e0000/version/version.json",
+                "trash/20261006/0b6c0000/old.mkv", "quarantine/20261006T120000Z/sweep.json"):
+        os.makedirs(os.path.dirname(os.path.join(root, ".work", rel)), exist_ok=True)
+        with open(os.path.join(root, ".work", rel), "w") as f:
+            f.write("not the record\n")
+
+
 def rename_image(d):
     meta = jload(os.path.join(d, "metadata.json"))
     old = meta["images"][0]["file"]
@@ -3603,7 +3631,7 @@ def main():
     wanted = sys.argv[1:]
     for section, fn in (("the pieces", test_pieces), ("the records the packager writes", test_records),
                         ("the example tree", test_round_trip),
-                        ("a record proves itself", test_proves_itself),
+                        ("a record proves itself", test_proves_itself), ("the work tree beside the record", test_work_tree),
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),
                         ("the catalog's own export", test_export_sample),
                         ("v1 -> v2", test_from_v1),

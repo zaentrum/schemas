@@ -508,6 +508,18 @@ def deleted_outside(root, source="its own", accepted=()):
                                  "accepted": list(accepted)})
 
 
+def work_tree(root):
+    """The share's root as the platform keeps it: beside movies/, series/ and people/, .work/ holds the
+    arrivals, the workers' handoffs, the trash and a sweep's quarantine — nothing of the record."""
+    for rel, body in (("incoming/Example Film (2024)/Example Film (2024).mkv", "an original waiting"),
+                      ("inbox/" + NOWHERE + "/renditions.json", "{}"), ("staging/" + NOWHERE + "/.packaging", "{}"),
+                      ("trash/20261006/" + NOWHERE + "/old.mkv", "x"), ("quarantine/20261006T120000Z/sweep.json", "{}"),
+                      ("migration/2026-10-07a/units/" + NOWHERE + ".json", "{}")):
+        os.makedirs(os.path.dirname(os.path.join(root, ".work", rel)), exist_ok=True)
+        with open(os.path.join(root, ".work", rel), "w") as f:
+            f.write(body)
+
+
 def silent(root):
     """An original with no audio: the package has video only."""
     vp = primary(episode(root, 2))
@@ -537,6 +549,10 @@ CASES = [
     ("itemId differs from its folder", False, lambda r: edit(item(movie(r)), lambda d: d.update(itemId=NOWHERE)), "does not match folder", []),
     ("item in the wrong shard", False, lambda r: shutil.move(movie(r), os.path.join(r, "movies", "ff", os.path.basename(movie(r)))) if os.makedirs(os.path.join(r, "movies", "ff")) is None else None, "is not in shard", []),
     ("a category that is not movies, series or people", False, lambda r: os.makedirs(os.path.join(r, "music", "aa")), "holds only movies/, series/ and people/", []),
+    ("the work tree beside the record", True, work_tree, "OK", ["--check-checksums"]),
+    ("a file whose name begins with a dot at the root", True, lambda r: open(os.path.join(r, ".seed-done"), "w").write("x"), "OK", []),
+    ("the store before the library beside it, until the migration's cleanup", True, lambda r: [os.makedirs(os.path.join(r, n, "left")) for n in ("media", "packages", "extras", "incoming")], "a folder of the store before the library", []),
+    ("a file named like a folder of the store before the library", False, lambda r: open(os.path.join(r, "media"), "w").write("x"), "a library root holds only movies/, series/ and people/", []),
     ("a movie carrying episode numbering", False, lambda r: edit(item(movie(r)), lambda d: d.update(seasonNumber=1)), "must not have seasonNumber", []),
     ("an episode without its series", False, lambda r: edit(item(episode(r, 1)), lambda d: d.pop("seriesId")), "'seriesId' is a required property", []),
     ("a movie carrying an episode reference id", False, lambda r: edit(item(movie(r)), lambda d: d["externalIds"].update(tmdbEpisode="1")), "carries series or episode reference ids", []),
@@ -800,7 +816,7 @@ CASES = [
     ("a portrait a later projection dropped is a note", True, lambda r: dropped_image(lead(r)), "person.json no longer lists; library-v2-sweep.py", ["--check-media"]),
     ("a file beside a projection that claims a hash it does not have", False, lambda r: open(os.path.join(movie(r), "metadata", "a" * 64 + ".jpg"), "wb").write(b"\xff\xd8 other bytes"), "not named by the hash of its own content", []),
     ("a package that never finished is a note", True, unfinished_package, "a package that never finished", []),
-    ("a quarantine an interrupted sweep left", False, lambda r: os.makedirs(os.path.join(r, "_swept", "20261002T120000Z")), "the quarantine of a library-v2-sweep.py --apply that did not finish", []),
+    ("a quarantine an interrupted sweep left, from before the work tree", False, lambda r: os.makedirs(os.path.join(r, "_swept", "20261002T120000Z")), "the quarantine of a library-v2-sweep.py --apply from before 2026-10-06 that did not finish", []),
 
     # ---- bonus material: inside its movie or series, never an item of its own and never an episode's
     ("an extra of a kind the format does not know", False, lambda r: edit(xjson(featurette(r)), lambda d: d.update(kind="bonus")), "'bonus' is not one of", []),
