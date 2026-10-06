@@ -111,7 +111,20 @@
       "variant": null
     }
   ],
-  "sidecars": [],
+  "sidecars": [
+    {
+      "file": "sources/711a19f3-61aa-5d68-b4d3-7e9672694a15/Example Show (US) - S01E02-03 - Crosswind.de.srt",
+      "originalName": "Example Show (US) - S01E02-03 - Crosswind.de.srt",
+      "kind": "subtitle",
+      "format": "srt",
+      "language": "de",
+      "forced": false,
+      "hearingImpaired": false,
+      "purpose": "dialogue",
+      "sizeBytes": 38,
+      "sha256": "sha256:37db83633a86bf79edc5a0ba4efdb07326386e95321030b87df7f37ab284d3b4"
+    }
+  ],
   "covers": [],
   "essence": {
     "maxAudioChannels": 6,

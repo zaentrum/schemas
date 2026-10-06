@@ -1,0 +1,134 @@
+{
+  "schema": "zaentrum.library.extra/2",
+  "extraId": "3cc3d6ce-d037-5a6a-a3bb-126894095003",
+  "createdAt": "2026-09-19T09:00:00Z",
+  "createdBy": "ingest example",
+  "kind": "deleted-scene",
+  "title": "The Kiss",
+  "localizedTitles": {},
+  "language": "en",
+  "runtimeMs": 90000,
+  "originalFiles": [],
+  "originals": [],
+  "packagedFrom": [
+    {
+      "name": "Tears of Steel (2012) - Deleted Scene - The Kiss.mkv",
+      "sizeBytes": 90,
+      "fixity": {
+        "qh1": "sha256:1307b3ebf641783f98a51792cc9f25c17107afa7fc39dbc15a1df7a524866048"
+      }
+    }
+  ],
+  "container": {
+    "format": "matroska,webm",
+    "durationMs": 90000,
+    "bitrate": null,
+    "title": null,
+    "muxingApp": null,
+    "writingApp": null,
+    "creationTime": null,
+    "tags": {}
+  },
+  "streams": [
+    {
+      "index": 0,
+      "type": "video",
+      "codec": "h264",
+      "language": null,
+      "languageRaw": null,
+      "title": null,
+      "dispositions": {
+        "default": true
+      },
+      "profile": "Main",
+      "level": null,
+      "bitDepth": 8,
+      "pixelFormat": "yuv420p",
+      "width": 1920,
+      "height": 800,
+      "sampleAspectRatio": "1:1",
+      "displayAspectRatio": null,
+      "frameRate": "24/1",
+      "fieldOrder": "progressive",
+      "bitrate": null,
+      "colour": {
+        "primaries": "bt709",
+        "transfer": "bt709",
+        "matrix": null,
+        "range": "tv"
+      },
+      "hdr": {
+        "format": "sdr",
+        "masteringDisplay": null,
+        "contentLightLevel": null,
+        "dolbyVision": null
+      },
+      "stereo3d": null,
+      "closedCaptions": false,
+      "encoder": null
+    },
+    {
+      "index": 1,
+      "type": "audio",
+      "codec": "aac",
+      "language": "en",
+      "languageRaw": "eng",
+      "title": null,
+      "dispositions": {
+        "default": true,
+        "commentary": false
+      },
+      "profile": null,
+      "channels": 2,
+      "channelLayout": "stereo",
+      "sampleRate": 48000,
+      "bitDepth": null,
+      "bitrate": null,
+      "lossless": false,
+      "objectAudio": "none",
+      "titleClaim": null,
+      "encoder": null,
+      "purpose": "main",
+      "purposeFrom": "assumed",
+      "variant": null
+    }
+  ],
+  "fidelity": {
+    "class": "original",
+    "fingerprint": "h264/high/8bit/sdr/1920x800",
+    "evidence": []
+  },
+  "essence": {
+    "maxAudioChannels": 2,
+    "surround": false,
+    "losslessAudio": false,
+    "objectAudio": false,
+    "maxVideoHeight": 800,
+    "videoBitDepth": 8,
+    "hdr10Metadata": false,
+    "dolbyVision": false,
+    "stereo3d": false,
+    "interlaced": false,
+    "audioLanguages": [
+      "en"
+    ],
+    "subtitleLanguages": [],
+    "subtitleTracks": 0,
+    "imageSubtitles": false,
+    "styledSubtitles": false,
+    "fonts": false,
+    "chapters": false,
+    "commentaryTracks": 0,
+    "commentarySubtitles": 0,
+    "audioDescriptionTracks": 0,
+    "sdhSubtitleLanguages": [],
+    "forcedSubtitleLanguages": [],
+    "closedCaptions": false
+  },
+  "probe": {
+    "tool": "ffprobe",
+    "version": null,
+    "at": "2026-09-19T09:00:00Z",
+    "note": null
+  }
+}

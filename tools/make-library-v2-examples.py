@@ -11,12 +11,16 @@ every record the format has and the shapes a reader most needs to see:
            them, in extras/, a featurette kept as its original and a package of its own, which the
            projection puts first and labels, and the trailer videos[] links to, downloaded, whose
            origin names that link. It was first kept as its original alone and packaged later, as a
-           new extra folder: an extra-removed event retired the old one.
+           new extra folder: an extra-removed event retired the old one. And a deleted scene the
+           platform took in: only its package is kept, and packagedFrom says what it was made from.
   series/  one series with a season and two episodes. The first episode keeps its original and
-           carries forced, full and SDH subtitles and a commentary track; the second was packaged
-           from an original that was never kept here, so its package is canonical. Beside the
-           episodes, a behind-the-scenes extra of season 1, kept only as its original, which the
-           projection says nothing about.
+           carries forced, full and SDH subtitles and a commentary track; the second is the
+           platform's: packaged from an original that was never kept here, so its package is
+           canonical, the original deleted outside the record once the package was recorded — an
+           event names its source — and its second package as the packager writes one now, with a
+           5.1 companion, its HLS layout and a subtitle made from the sidecar its source keeps a copy
+           of. Beside the episodes, a behind-the-scenes extra of season 1, kept only as its original,
+           which the projection says nothing about.
   people/  the three people the items credit: the movie's director, with only what is known about
            him; the series' creator, a fictional person who wrote some of it too — two credits of
            one person, the writer's jobs joined in the source's own words; and the series' lead, a
@@ -24,7 +28,8 @@ every record the format has and the shapes a reader most needs to see:
            plays and how many episodes she is in — her primary portrait one a person picked, beside
            the one the reference source has.
 
-Every projection says which state of its database row it reflects (databaseUpdatedAt), and the two
+Every projection says which state of its database row it reflects (databaseUpdatedAt) and the
+reference ids the item has now (externalIds), and the two
 that were taken from the reference source — the movie and the lead — say when and how fresh that is
 (sources). Each image says where its bytes came from, and the one a reader shows for its kind is
 primary: the movie's poster, the series' poster and its season's, each person's portrait. Images
@@ -58,6 +63,8 @@ EXTRA_PACKAGED = "2026-09-19T08:40:00Z"  # and the featurette's package complete
 TRAILER_FETCHED = "2026-09-19T07:30:00Z"  # the trailer link was downloaded
 TRAILER_PACKAGED = "2026-09-19T10:00:00Z"  # and the trailer taken in with a package of its own
 TRAILER_RETIRED = "2026-09-19T10:05:00Z"   # the extra that had kept it as its original alone, retired
+ORIGINAL_RETIRED = "2026-09-19T13:20:00Z"  # an original that waited outside the library, deleted once packaged
+SCENE_TAKEN = "2026-09-19T09:00:00Z"       # a deleted scene taken in by the platform: only its package is kept
 
 # A fixed 1x1 JPEG and a fixed 1x1 transparent PNG, as bytes rather than generated, so the fixture
 # hashes do not depend on the library build that happens to run the generator.
@@ -312,14 +319,15 @@ def version_record(vdir, vid, edition, presentation, runtime_ms, source_ids, ori
 
 def package_record(vdir, pid, role, duration_ms, ren, pkg_essence, losses, size_bytes,
                    subtitles=(), recipe=None, created=PACKAGED, record="version.json", originals=(),
-                   folders=PACKAGE_DIRS):
+                   folders=PACKAGE_DIRS, hls=None):
     """The record and the package files must already be written: the checksums cover them. Closes
     the chain: checksums, then package.json with their hash, then .complete with package.json's."""
     doc = {
         "schema": "zaentrum.library.package/2", "packageId": pid, "createdAt": created,
         "packagedBy": "packager example", "state": "complete", "role": role, "durationMs": duration_ms,
         "recipe": recipe or {"video": "hevc re-encode", "audio": "aac-lc 2ch 192k", "subtitles": None},
-        "renditions": ren, "subtitles": list(subtitles), "trickplay": dict(TRICKPLAY), "trailers": [],
+        "renditions": ren, "subtitles": list(subtitles), "trickplay": dict(TRICKPLAY), **({"hls": hls} if hls else {}),
+        "trailers": [],
         "sizeBytes": size_bytes, "peakBandwidthBps": 8192000,
         "fidelity": {"lossless": not losses, "losses": list(losses),
                      "droppedSourceStreams": sorted({l["sourceStreamIndex"] for l in losses
@@ -343,22 +351,26 @@ def event(item_dir, at, kind, by="librarian example", **fields):
 
 
 def extra(item_dir, xid, kind, title, original, runtime_ms, streams, src_essence, fingerprint,
-          localized=None, season=None, package=None, origin=None, created=EXTRA_TAKEN):
+          localized=None, season=None, package=None, origin=None, created=EXTRA_TAKEN, kept=True):
     """extras/<xid>/: extra.json and its original beside it, as the probe found it, and with package
     a package of its own. An extra is written whole, in one step: the checksums over extra.json and
     every file beside it come last — the completion signal of an extra that keeps only its original —
     or, for a packaged one, the chain closes over them. package(xdir, record) writes the package files
-    and closes the chain."""
+    and closes the chain. Not kept, the original waited outside the library, as the platform keeps it,
+    and the folder holds the package alone and says what it was made from."""
     xdir = os.path.join(item_dir, "extras", xid)
-    data = write(os.path.join(xdir, original), b"placeholder for the original file of " + original.encode() + b"\n")
+    data = b"placeholder for the original file of " + original.encode() + b"\n"
+    if kept:
+        write(os.path.join(xdir, original), data)
     record = {
         "schema": "zaentrum.library.extra/2", "extraId": xid, "createdAt": created, "createdBy": "ingest example",
         "kind": kind, "title": title, "localizedTitles": dict(localized or {}), "language": "en",
         "runtimeMs": runtime_ms, **({"seasonNumber": season} if season is not None else {}),
-        "originalFiles": [original],
+        "originalFiles": [original] if kept else [],
         # what a source record says of its file, said here of each original: there is no source record
         "originals": [{"name": original, "sizeBytes": len(data),
-                       "fixity": {"qh1": qh1(data), "sha256": sha(data), "sha256At": created}}],
+                       "fixity": {"qh1": qh1(data), "sha256": sha(data), "sha256At": created}}] if kept else [],
+        **({} if kept else {"packagedFrom": [{"name": original, "sizeBytes": len(data), "fixity": {"qh1": qh1(data)}}]}),
         **({"origin": origin} if origin else {}),
         "container": {"format": "matroska,webm", "durationMs": runtime_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
@@ -499,6 +511,23 @@ def movie():
           "h264/high/8bit/sdr/1920x800", package=trailer_package, created=TRAILER_PACKAGED,
           origin={"kind": "link", "site": "example.org", "externalId": "tears-of-steel-trailer", "url": None,
                   "fetchedAt": TRAILER_FETCHED})
+    # --- a deleted scene the platform took in: its original waited outside the library and was deleted
+    # once the package was recorded, so the folder keeps the package alone, and packagedFrom says what
+    # it was made from.
+    def scene_package(xdir, record):
+        ren = renditions(1920, 800, False, 2)
+        for r in ren["video"] + ren["audio"]:
+            keep(os.path.join(xdir, r["dir"]))
+        trickplay_files(xdir, record["runtimeMs"])
+        package_record(xdir, uid(mid, "package", "deleted-scene"), "canonical", record["runtimeMs"], ren,
+                       essence(maxVideoHeight=800), [], 40000000, created=SCENE_TAKEN, record="extra.json",
+                       folders=EXTRA_DIRS)
+
+    extra(mdir, uid(mid, "extra", "deleted-scene"), "deleted-scene", "The Kiss",
+          "Tears of Steel (2012) - Deleted Scene - The Kiss.mkv", 90000,
+          [video(0, "h264", 1920, 800), audio(1, "aac", 2, "stereo")], essence(maxVideoHeight=800),
+          "h264/high/8bit/sdr/1920x800", package=scene_package, created=SCENE_TAKEN, kept=False)
+
     # The trailer was first kept as its original alone. An extra's checksums are written once, so it was
     # packaged into a new extra folder — the one above — and this event retired the old one, whose
     # folder is gone now: the event is all that is left of it.
@@ -510,6 +539,8 @@ def movie():
         "asOf": PROJECTED, "projectedBy": "catalog example",
         # the row as it was last modified, and when its texts were last taken from the reference source
         "databaseUpdatedAt": ROW_UPDATED, "sources": {"tmdb": {"fetchedAt": TMDB_FETCHED, "changedAt": TMDB_CHANGED}},
+        # the reference ids the database holds now, which item.json, written once, cannot follow
+        "externalIds": {"tmdbMovie": "133701", "imdb": "tt2285752"},
         "titles": {"primary": "Tears of Steel", "original": "Tears of Steel", "sort": "tears of steel",
                    "qualifier": None,
                    "localized": {"en": {"title": "Tears of Steel", "sortTitle": "tears of steel", "tagline": None,
@@ -543,8 +574,11 @@ def movie():
     })
 
 
-def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, packaged_at, role):
-    """One version folder of an episode, with its package."""
+def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, packaged_at, role, platform=None):
+    """One version folder of an episode, with its package. platform, the sidecar a German subtitle was
+    made from, makes the package the platform writes now: the original's own HDR stream copied as the
+    top rung, a 5.1 companion of the surround track in an audio group of its own, every rendition named
+    as the master playlist names it, the HLS layout, and the subtitle made from the sidecar."""
     vdir = os.path.join(edir, "versions", vid)
     version_record(vdir, vid,
                    {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": created_at,
@@ -575,15 +609,40 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
                  "purposeFrom": "disposition", "variant": None}]
         for i in range(3):
             write(os.path.join(vdir, "subs", f"{i}.vtt"), b"WEBVTT\n")
-    for r in ren["video"] + ren["audio"]:
+    losses = [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
+              {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}]
+    pkg_essence = essence(maxVideoHeight=2160, videoBitDepth=10, **tracks)
+    recipe = {"video": "hevc re-encode", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt" if tracks else None}
+    hls = None
+    if platform:
+        for v, (label, encoder) in zip(ren["video"], (("source", "copy"), ("1440p", "hevc_nvenc"))):
+            v.update(peakBitrateBps=v["bitrateBps"] * 2, videoRange="PQ", label=label, encoder=encoder)
+        ren["audio"][0].update(group="audio", name="English")
+        ren["audioSurround"] = [{"id": "a1", "dir": "hls/a1", "codec": "ec-3", "language": "eng", "title": "",
+                                 "default": True, "channels": 6, "bitrateBps": 640000, "segments": 15, "visible": True,
+                                 "sourceStreamIndex": 1, "sourceChannels": 6, "purpose": "main",
+                                 "purposeFrom": "assumed", "variant": None, "original": True,
+                                 "group": "audio-surround", "name": "English 5.1"}]
+        subs = [{"id": "sub0", "path": "subs/0.vtt", "language": "ger", "title": "Deutsch", "default": False,
+                 "forced": False, "format": "webvtt", "visible": True, "purpose": "dialogue", "purposeFrom": "assumed",
+                 "variant": None, "name": "Deutsch", "hls": "hls/s0", "fromSidecar": f"sources/{sid}/{platform}"}]
+        write(os.path.join(vdir, "subs", "0.vtt"), b"WEBVTT\n")
+        keep(os.path.join(vdir, "hls", "s0"))
+        write(os.path.join(vdir, "hls", "master.m3u8"),
+              b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8192000\nv0/playlist.m3u8\n")
+        hls = {"master": "hls/master.m3u8", "segmentSeconds": 6, "audioGroups": ["audio", "audio-surround"],
+               "subtitleGroup": "subs"}
+        # the surround track and the HDR10 metadata of the copied stream are carried: only the codec is lost
+        losses = [{"kind": "audio-codec", "detail": "eac3 -> aac/eac3", "sourceStreamIndex": 1}]
+        pkg_essence = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10,
+                              hdr10Metadata=True, subtitleLanguages=["de"], subtitleTracks=1)
+        recipe = {"video": "hevc copy, and a 1440p encode", "audio": "aac-lc 2ch 192k, and the 5.1 track copied",
+                  "subtitles": "sidecar srt -> webvtt"}
+    for r in ren["video"] + ren["audio"] + ren.get("audioSurround", []):
         keep(os.path.join(vdir, r["dir"]))
     trickplay_files(vdir, 2700000)
-    package_record(vdir, pid, role, 2700000, ren, essence(maxVideoHeight=2160, videoBitDepth=10, **tracks),
-                   [{"kind": "audio-downmix", "detail": "6ch -> 2ch (a0)", "sourceStreamIndex": 1},
-                    {"kind": "audio-codec", "detail": "eac3 -> mp4a.40.2", "sourceStreamIndex": 1}],
-                   2700000000, subtitles=subs, created=packaged_at,
-                   recipe={"video": "hevc re-encode", "audio": "aac-lc 2ch 192k",
-                           "subtitles": "text -> webvtt" if tracks else None})
+    package_record(vdir, pid, role, 2700000, ren, pkg_essence, losses, 2700000000, subtitles=subs,
+                   created=packaged_at, recipe=recipe, hls=hls)
 
 
 def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps_original):
@@ -620,19 +679,31 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
                         VERSIONED, PACKAGED, "derived")
     else:
         # the original was never kept here, so each package is the only copy; the first was
-        # re-packaged into a new folder and an event says which one took over.
+        # re-packaged into a new folder and an event says which one took over. A German subtitle came
+        # with the original as a file beside it: the source folder keeps a copy of it, and the second
+        # package made a subtitle of it. The original waited outside the library until that package was
+        # recorded, and was deleted then: an event names the source whose original it was.
+        sidecar = "Example Show (US) - S01E02-03 - Crosswind.de.srt"
+        data = write(os.path.join(edir, "sources", sid, sidecar), b"1\n00:00:01,000 --> 00:00:02,000\nHallo\n")
+        src["sidecars"].append({"file": f"sources/{sid}/{sidecar}", "originalName": sidecar, "kind": "subtitle",
+                                "format": "srt", "language": "de", "forced": False, "hearingImpaired": False,
+                                "purpose": "dialogue", "sizeBytes": len(data), "sha256": sha(data)})
         finish_source(edir, src)
         old, old_pkg = uid(eid, "version", "first"), uid(eid, "package", "first")
         primary, new_pkg = uid(eid, "version", "repackaged"), uid(eid, "package", "repackaged")
         episode_version(edir, old, old_pkg, sid, None, tracks, False, VERSIONED, PACKAGED, "canonical")
-        episode_version(edir, primary, new_pkg, sid, None, tracks, True, REPACKAGED, REPACKAGED, "canonical")
+        episode_version(edir, primary, new_pkg, sid, None, tracks, True, REPACKAGED, REPACKAGED, "canonical",
+                        platform=sidecar)
         event(edir, SUPERSEDED, "package-superseded", by="packager example", versionId=old,
               packageId=old_pkg, supersededBy={"versionId": primary, "packageId": new_pkg},
               reason="re-packaged with a second rung")
+        event(edir, ORIGINAL_RETIRED, "original-deleted", by="catalog example (originals are not kept)",
+              versionId=primary, sourceId=sid, reason="originals are not kept: the package is the record",
+              accepted=[])
 
     write(os.path.join(edir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": eid, "type": "episode",
-        "asOf": PROJECTED, "projectedBy": "catalog example", "databaseUpdatedAt": ROW_UPDATED,
+        "asOf": PROJECTED, "projectedBy": "catalog example", "databaseUpdatedAt": ROW_UPDATED, "externalIds": {},
         "titles": {"primary": title, "original": None, "sort": title.lower(), "qualifier": None,
                    "localized": {"en": {"title": title, "sortTitle": title.lower(), "tagline": None,
                                         "overview": overview}}},
@@ -664,7 +735,7 @@ def series():
     })
     write(os.path.join(sdir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": sid, "type": "series",
-        "asOf": PROJECTED, "projectedBy": "catalog example", "databaseUpdatedAt": ROW_UPDATED,
+        "asOf": PROJECTED, "projectedBy": "catalog example", "databaseUpdatedAt": ROW_UPDATED, "externalIds": {},
         "titles": {"primary": "Example Show", "original": None, "sort": "example show", "qualifier": "US",
                    "localized": {"en": {"title": "Example Show", "sortTitle": "example show", "tagline": None,
                                         "overview": "A fictional series used to illustrate the library layout."}}},

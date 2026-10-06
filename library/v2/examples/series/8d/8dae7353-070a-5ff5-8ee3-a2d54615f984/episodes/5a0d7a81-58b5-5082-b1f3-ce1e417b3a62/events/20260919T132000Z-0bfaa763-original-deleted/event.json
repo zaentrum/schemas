@@ -1,0 +1,11 @@
+{
+  "schema": "zaentrum.library.event/2",
+  "eventId": "0bfaa763-dbac-510a-8a08-6f50f35bc7cc",
+  "at": "2026-09-19T13:20:00Z",
+  "by": "catalog example (originals are not kept)",
+  "kind": "original-deleted",
+  "versionId": "aac8ebcf-d846-5c1e-9880-a7d021c6bfc0",
+  "sourceId": "711a19f3-61aa-5d68-b4d3-7e9672694a15",
+  "reason": "originals are not kept: the package is the record",
+  "accepted": []
+}

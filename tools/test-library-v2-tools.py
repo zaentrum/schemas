@@ -688,7 +688,7 @@ def test_round_trip(t):
         tree = os.path.join(tmp, "library")
         shutil.copytree(EXAMPLES, tree)
         movie_dir = glob.glob(os.path.join(tree, "movies", "*", "*"))[0]
-        featurette, trailer = extra_of(tree, "featurette"), extra_of(tree, "trailer")
+        featurette, trailer, scene = extra_of(tree, "featurette"), extra_of(tree, "trailer"), extra_of(tree, "deleted-scene")
         early, late = "00000000-0000-4000-8000-0000000000e1", "00000000-0000-4000-8000-0000000000e2"
         for xid, at in ((late, "2026-09-19T09:00:00Z"), (early, "2026-09-19T07:00:00Z")):
             shutil.copytree(featurette, os.path.join(movie_dir, "extras", xid))
@@ -701,7 +701,7 @@ def test_round_trip(t):
         extras = rows_of(tree)[1]["extras"]
         t.eq("an item's extras are listed as a viewer sees them: by the order a person gave, then as they were taken in",
              [r["id"] for r in extras if r["itemId"] == os.path.basename(movie_dir)],
-             [os.path.basename(featurette), early, late, os.path.basename(trailer)])
+             [os.path.basename(featurette), early, late, os.path.basename(scene), os.path.basename(trailer)])
         t.ok("and one a person hid is still a row, marked hidden",
              next(r for r in extras if r["id"] == late)["hidden"] is True)
 
@@ -713,7 +713,7 @@ def test_round_trip(t):
         t.ok("an extra that never finished is left out — one with no checksums, a packaged one without its .complete — "
              "and the rebuild says so",
              not ids & {os.path.basename(bts), os.path.basename(featurette)}
-             and ids == {early, late, os.path.basename(trailer)}
+             and ids == {early, late, os.path.basename(scene), os.path.basename(trailer)}
              and sum("never finished, so it is left out" in n for n in built["notes"]) == 2, built["notes"])
 
         episode = glob.glob(os.path.join(tree, "series", "*", "*", "episodes", "*"))[0]
@@ -1003,7 +1003,7 @@ def test_compare(t):
     code, text = compare(lambda e: None)
     t.ok("a tree and the export it rebuilds to agree", code == 0 and "the tree and the database agree" in text, text)
     t.ok("and its extras are counted, not compared: the catalog has no table for them yet",
-         "extras: 3 on storage, not compared" in text, text)
+         "extras: 4 on storage, not compared" in text, text)
 
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
     t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",
@@ -3941,12 +3941,12 @@ def test_media_check(t):
          lambda r: names(r, renditions={"audioSurround": [{"id": "a9", "dir": "hls/a9", "channels": 6}]}),
          "rendition folder hls/a9 is missing")
     case("a subtitle's HLS rendition that is gone", False,
-         lambda r: names(r, subtitles=[{"id": "sub0", "hls": "hls/s0"}]),
-         "the HLS rendition hls/s0 of subtitle sub0 is missing")
+         lambda r: names(r, subtitles=[{"id": "sub0", "hls": "hls/s9"}]),
+         "the HLS rendition hls/s9 of subtitle sub0 is missing")
     case("a master playlist that is gone", False,
-         lambda r: names(r, hls={"master": "hls/master.m3u8", "segmentSeconds": 6, "audioGroups": ["audio"],
+         lambda r: names(r, hls={"master": "hls/gone.m3u8", "segmentSeconds": 6, "audioGroups": ["audio"],
                                  "subtitleGroup": None}),
-         "master playlist hls/master.m3u8 is missing")
+         "master playlist hls/gone.m3u8 is missing")
     case("a probe a source record names that is gone", False,
          lambda r: os.unlink(glob.glob(os.path.join(movie(r), "sources", "*", "ffprobe.json"))[0]),
          "probe file a source record names is missing")

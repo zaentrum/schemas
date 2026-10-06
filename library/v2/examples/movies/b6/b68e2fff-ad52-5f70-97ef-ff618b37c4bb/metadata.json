@@ -11,6 +11,10 @@
       "changedAt": "2026-09-16"
     }
   },
+  "externalIds": {
+    "tmdbMovie": "133701",
+    "imdb": "tt2285752"
+  },
   "titles": {
     "primary": "Tears of Steel",
     "original": "Tears of Steel",

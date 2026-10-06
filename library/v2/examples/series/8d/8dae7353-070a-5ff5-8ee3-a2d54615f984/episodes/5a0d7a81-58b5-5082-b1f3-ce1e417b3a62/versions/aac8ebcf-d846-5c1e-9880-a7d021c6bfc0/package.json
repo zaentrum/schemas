@@ -7,9 +7,9 @@
   "role": "canonical",
   "durationMs": 2700000,
   "recipe": {
-    "video": "hevc re-encode",
-    "audio": "aac-lc 2ch 192k",
-    "subtitles": null
+    "video": "hevc copy, and a 1440p encode",
+    "audio": "aac-lc 2ch 192k, and the 5.1 track copied",
+    "subtitles": "sidecar srt -> webvtt"
   },
   "renditions": {
     "video": [
@@ -25,7 +25,11 @@
         "segments": 10,
         "targetDuration": 6,
         "dynamicRange": "hdr10",
-        "sourceStreamIndex": 0
+        "sourceStreamIndex": 0,
+        "peakBitrateBps": 16000000,
+        "videoRange": "PQ",
+        "label": "source",
+        "encoder": "copy"
       },
       {
         "id": "v1",
@@ -39,7 +43,11 @@
         "segments": 10,
         "targetDuration": 6,
         "dynamicRange": "hdr10",
-        "sourceStreamIndex": 0
+        "sourceStreamIndex": 0,
+        "peakBitrateBps": 6000000,
+        "videoRange": "PQ",
+        "label": "1440p",
+        "encoder": "hevc_nvenc"
       }
     ],
     "audio": [
@@ -59,11 +67,52 @@
         "purpose": "main",
         "purposeFrom": "assumed",
         "variant": null,
-        "original": true
+        "original": true,
+        "group": "audio",
+        "name": "English"
+      }
+    ],
+    "audioSurround": [
+      {
+        "id": "a1",
+        "dir": "hls/a1",
+        "codec": "ec-3",
+        "language": "eng",
+        "title": "",
+        "default": true,
+        "channels": 6,
+        "bitrateBps": 640000,
+        "segments": 15,
+        "visible": true,
+        "sourceStreamIndex": 1,
+        "sourceChannels": 6,
+        "purpose": "main",
+        "purposeFrom": "assumed",
+        "variant": null,
+        "original": true,
+        "group": "audio-surround",
+        "name": "English 5.1"
       }
     ]
   },
-  "subtitles": [],
+  "subtitles": [
+    {
+      "id": "sub0",
+      "path": "subs/0.vtt",
+      "language": "ger",
+      "title": "Deutsch",
+      "default": false,
+      "forced": false,
+      "format": "webvtt",
+      "visible": true,
+      "purpose": "dialogue",
+      "purposeFrom": "assumed",
+      "variant": null,
+      "name": "Deutsch",
+      "hls": "hls/s0",
+      "fromSidecar": "sources/711a19f3-61aa-5d68-b4d3-7e9672694a15/Example Show (US) - S01E02-03 - Crosswind.de.srt"
+    }
+  ],
   "trickplay": {
     "vttPath": "trickplay/thumbnails.vtt",
     "spritePattern": "trickplay/sprite-%04d.jpg",
@@ -73,6 +122,15 @@
     "gridCols": 10,
     "gridRows": 10
   },
+  "hls": {
+    "master": "hls/master.m3u8",
+    "segmentSeconds": 6,
+    "audioGroups": [
+      "audio",
+      "audio-surround"
+    ],
+    "subtitleGroup": "subs"
+  },
   "trailers": [],
   "sizeBytes": 2700000000,
   "peakBandwidthBps": 8192000,
@@ -80,34 +138,31 @@
     "lossless": false,
     "losses": [
       {
-        "kind": "audio-downmix",
-        "detail": "6ch -> 2ch (a0)",
-        "sourceStreamIndex": 1
-      },
-      {
         "kind": "audio-codec",
-        "detail": "eac3 -> mp4a.40.2",
+        "detail": "eac3 -> aac/eac3",
         "sourceStreamIndex": 1
       }
     ],
     "droppedSourceStreams": []
   },
   "essence": {
-    "maxAudioChannels": 2,
-    "surround": false,
+    "maxAudioChannels": 6,
+    "surround": true,
     "losslessAudio": false,
     "objectAudio": false,
     "maxVideoHeight": 2160,
     "videoBitDepth": 10,
-    "hdr10Metadata": false,
+    "hdr10Metadata": true,
     "dolbyVision": false,
     "stereo3d": false,
     "interlaced": false,
     "audioLanguages": [
       "en"
     ],
-    "subtitleLanguages": [],
-    "subtitleTracks": 0,
+    "subtitleLanguages": [
+      "de"
+    ],
+    "subtitleTracks": 1,
     "imageSubtitles": false,
     "styledSubtitles": false,
     "fonts": false,
@@ -122,8 +177,8 @@
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",
-    "sha256": "sha256:fef8a18cf92a44bf5fccc54beb7e2ed4c7438d1ef22626be76a36509b21be6d6",
-    "files": 8,
-    "bytes": 19766
+    "sha256": "sha256:4243f9b2f47edb481f23d24cddf186c744fb86f15175fd0e5fb82d537252c83e",
+    "files": 12,
+    "bytes": 19834
   }
 }
