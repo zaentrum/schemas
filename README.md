@@ -247,7 +247,9 @@ movies/<aa>/<itemId>/
     checksums.sha256               extra.json and every file above, the original included
     package.json  .complete        as a version's, when it is packaged
 series/<aa>/<seriesId>/            item.json, checksums.sha256, metadata.json, metadata/, extras/,
-                                   episodes/<episodeId>/ (no extras/ in an episode)
+                                   episodes/<episodeId>/ (no extras/ in an episode; one that another
+                                   episode's file covers holds item.json, checksums.sha256,
+                                   metadata.json and metadata/ alone)
 people/<aa>/<personId>/
   person.json                      the database's person, projected
   <sha256>.jpg                     the portraits it lists, named by their own content hash
@@ -283,6 +285,19 @@ values parsed from them, `labels` and `naming`; no record keeps a container's ti
 a source keeps is the tool's output with two edits, `format.filename` the library's name and no title
 tag. `libv2_records.py` makes every one of these names, so the packager and the migration agree on them,
 and `library-v2-neutral-names.py` gives them to a tree written before 2026-10-08.
+
+**One file, several episodes.** A file that holds two episodes or more — two episodes cut as one, which
+have no clean boundary between them — is never split: it is packaged once, and serves every episode it
+holds. It is its holder's, the first episode it covers. The holder's folder keeps its source and its
+versions, as any episode's, and the source's `covers` lists the episodes the file holds in episode
+order, the holder first. Every other episode it covers is an item of its own — `item.json` and a
+`metadata.json` with its own title, overview and images — and keeps no source and no version: its
+projection names the holder (`library.coveredBy`) and plays a version of the holder made from that
+source (`library.primaryVersionId`), and the holder's numbering ends where the last of them sits
+(`library.numbering`'s `episodeEnd`, in each ordering). One package, one pipeline run and one retire
+serve them all, the holder's. An episode with a file of its own is never covered: its own file wins.
+The source is written once, so an episode the database no longer counts as covered stays listed in it,
+and its own projection no longer names the holder.
 
 **People are a category of their own.** A credit names a person by `personId`, and people are
 shared by every item that credits them, so a person's biography, dates, the department they are
@@ -435,6 +450,12 @@ each version's chain holds, `package.json` exists exactly when `.complete` does 
 holds its original alone — images are named by their own hash, events reference records that exist —
 or a version a `version-removed` event of the same item removed, and its package — and a deletion
 accepts no more than the gate its records compute, episodes do not contradict their own numbering, a
+source's `covers` lists its holder first and the episodes after it in episode order — a movie's file
+covers none — and an episode whose projection names a holder follows it in its season, keeps no source
+or version of its own, is listed by a source of the holder and plays and labels only the holder's
+versions, the one it plays made from a source that covers it, while the holder's `episodeEnd` is where
+the last episode it covers sits — a covers entry no projection agrees with, an `episodeEnd` no covered
+episode explains and a holder whose file has no source yet are notes — a
 person folder holds its record and the images it lists, at most one image of a kind is primary — in
 a series one per kind and season — extras sit under a movie or a series and never an episode, an
 extra's checksums list `extra.json` and every file beside it and its `originals` describe exactly
@@ -597,7 +618,10 @@ derives it, with or without `--packages`.
 A rebuilt catalog is only as complete as the record: the tree holds no per-user state, of a row's
 modification times only the one its projection reflects, the paths it hands back are the version
 folders the bytes moved into, and what a source record could not be told (an original that is
-already gone, a file nothing probed) stays empty rather than guessed.
+already gone, a file nothing probed) stays empty rather than guessed. An episode another episode's
+file covers is a row with no playback rows of its own, linked to its holder (`coveredBy`) by the source
+that covers it — its own projection decides only where nothing records the holder's file yet — and
+`--compare` compares the link where the export carries one.
 
 Bonus material becomes rows of its own, under `extras` in the rows JSON: what `extra.json` records,
 the `order`, `hidden` and `label` the projection decided, and its original and package as playback
@@ -644,6 +668,22 @@ a stable name, so staging again writes the same records, and an item the library
 staged again. `--dry-run` writes only `report.json` and hashes nothing; `--shard aa` stages the items
 whose folder is in one shard, from an export of that shard.
 
+A file that holds several episodes is staged in its holder's folder. Which episodes it covers, the
+export says where its rows link a covered episode to its holder (an episode row's `coveredBy`), and
+otherwise the numbering of the name the original arrived under, read as the catalog's scanner reads a
+name — `S05E15-E16`, `S05E15E16` or `S05E15-16`, each episode after the one before and at most ten,
+never a resolution such as `-720p` — when it numbers the holder's own season and episode; an episode
+with a file of its own, any playback row but a trailer's, is never covered. The holder's source covers
+them, the holder first, and so does its row in the plan's `db.sources` (`covers`, `[]` for a file of
+one episode), from which the adopt links each to the holder; its numbering's `episodeEnd` is the last
+of them. Each episode it covers is staged as its record and its projection alone, naming the holder and
+the version the holder is staged with, and its unit is its publish and nothing else. An episode the
+name numbers and the export does not hold is the problem *covered episode missing*, and no id is made
+up for it. A disc image (`.iso`, `.img`) is no original the library holds: an item whose original is
+one is the problem *disc image*, left out of the plan — with every episode its file covers — and listed
+in the report until its owner converts it to a single file. The report counts the files of several
+episodes it staged (`covering`) and the episodes they cover (`covered`).
+
 Once adopted, the library is verified where it is: `validate-library-v2.py --check-media` and the
 media check on the share's root — `.work/` beside the record is not looked at — and
 `library-v2-rebuild.py --compare` of a fresh export with `--arrivals-root <root>/.work`: an original
@@ -651,7 +691,9 @@ in its version folder is compared like every other row, the rows of files waitin
 the subtitle files that came with the originals, the extras' originals — and of an original retired
 since are no part of the record, and a subtitle the package made from a sidecar has no row of its
 own until its original is deleted — the catalog's row of the sidecar stands for it. A subtitle row's
-`isDefault` is never compared: the adopt keeps a default a person chose, and no record holds one.
+`isDefault` is never compared: the adopt keeps a default a person chose, and no record holds one. A
+covered episode's row is linked to the holder whose source covers it, compared where the export
+carries `coveredBy`, and an item the plan left out — a disc image — is a record storage does not hold.
 
 ### Telling an orphan from a loss
 
@@ -746,9 +788,9 @@ reason, and with `--apply` removes it:
 |---|---|
 | a deleted item's folder | the export's deletion log names the id as an item's, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
 | a deleted person's folder | the export's deletion log names the id as a person's (`type: person`), the database does not hold them again — not in its people list, not credited by any of its items — nothing in the folder is newer than the deletion, the deletion is older than the grace, and no item record on storage still credits them: one that does keeps the folder until it is projected again (`--projections-only`), unless the same sweep removes that item's folder as a deleted item. It is checked last in the quarantine, against the credits on storage once every other target is settled |
-| an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it, and one that holds its original and no package — taken in — is no garbage at all |
+| an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, the item's or an episode's its file covers, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it, and one that holds its original and no package — taken in — is no garbage at all |
 | an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not another event, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
-| a removed version's folder | a `version-removed` event names it and is older than the grace, and nothing names the version but its history — not `metadata.json`, not the export: the whole folder, whatever it holds but an original. The catalog deletes it itself after the grace a superseded version keeps, once its original is retired; this collects one that delete missed, and leaves a folder that still holds an original, which may be the only copy |
+| a removed version's folder | a `version-removed` event names it and is older than the grace, and nothing names the version but its history — not `metadata.json`, the item's or an episode's its file covers, not the export: the whole folder, whatever it holds but an original. The catalog deletes it itself after the grace a superseded version keeps, once its original is retired; this collects one that delete missed, and leaves a folder that still holds an original, which may be the only copy |
 | a removed extra's folder | an `extra-removed` event names it and is older than the grace, and nothing else names the extra — not `library.extras`, not another event, not the export: the whole folder, whatever it holds |
 | a dropped image | named by the hash of its own bytes, in an item's `metadata/` or beside a `person.json`, and not listed by a projection that is itself older than the grace |
 
@@ -774,6 +816,36 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-08 (b)** — one file, several episodes, and no disc images. A file that holds two episodes or
+  more — two episodes cut as one have no clean boundary — is never split: it is packaged once and serves
+  every episode it holds. The published contract had the fields, and the texts now say how they fit
+  together: the file is its holder's, the first episode it covers, whose folder keeps its source and
+  versions, and the source's `covers` lists the episodes it holds in episode order, the holder first;
+  every other episode it covers keeps its own item and projection, and no source or version.
+  `metadata.json`'s `library` gains `coveredBy`, optional and an episode's only: the holder, absent or
+  null for an episode whose file is its own. A covered episode's `primaryVersionId` names a version of
+  its holder made from a source that covers it, its `versionLabels` the holder's versions, and the
+  holder's `numbering` ends, as `episodeEnd`, where the last episode its file covers sits. Every change
+  is text, or a field that is new and optional — the one constraint added keeps `coveredBy` off a movie
+  and a series — so the `$id`s are the published ones and every record written before validates as it
+  is. `libv2_records.py` (3) takes `covers` in `source_record()`, and its `naming` reads a range as the
+  catalog's scanner does — each episode after the one before, at most ten from the first to the last,
+  `S05E15E16E17` from 15 to 17, never `-720p` or `-264` — so a source's `naming` says the range the
+  catalog links the file's episodes by; a record of a name the two readings differ on is written
+  otherwise than before, and every other record byte for byte. The validator holds a file of several
+  episodes to its holder and the episodes it covers, and says as a note where a source and a projection
+  merely part — an episode unlinked since — where an `episodeEnd` is one no covered episode explains,
+  and where a holder has no source yet; the rebuild links a covered episode's row to its holder
+  (`coveredBy`) from the source that covers it, and `--compare` compares the link where the export
+  carries one; the sweep keeps a version the projection of an episode its file covers names.
+  `library-v2-from-catalog.py --platform` stages a file of several episodes in its holder's folder —
+  which episodes, from the export's `coveredBy`, else from the numbering of the name its original
+  arrived under — with `covers` in its plan's `db.sources`, each covered episode as its record and its
+  projection alone, and two problem classes: *covered episode missing*, an episode the name numbers that
+  the export does not hold, and *disc image*, an item whose original is a disc image (`.iso`, `.img`),
+  left out of the plan until its owner converts it; the report counts what it staged as `covering` and
+  `covered`. The examples show a double episode: the second episode's file holds the third, which has a
+  folder of its own and nothing in it but its record and its projection.
 - **2026-10-08 (a)** — an original lives in its version folder, and nothing is named as it arrived.
   This takes back the rule of 2026-10-06 (a) that an original never enters the library: the
   published model holds, and a version folder is the one place its media lives — its original, the
