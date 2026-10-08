@@ -4,7 +4,7 @@
   "createdAt": "2026-10-06T10:00:00.250000Z",
   "packagedBy": "shaka-packager v3.4.2",
   "state": "complete",
-  "role": "canonical",
+  "role": "derived",
   "durationMs": 60000,
   "renditions": {
     "video": [
@@ -136,7 +136,7 @@
       "purposeFrom": "assumed",
       "variant": null,
       "hls": "hls/s3",
-      "fromSidecar": "sources/8bca399e-7836-5df6-a6a1-edf538b03074/Example Film (2024) - 2160p.de.srt"
+      "fromSidecar": "sources/8bca399e-7836-5df6-a6a1-edf538b03074/subtitle-1.de.srt"
     }
   ],
   "trickplay": {
@@ -206,8 +206,8 @@
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",
-    "sha256": "sha256:cff5218daab0e02e92c32c26719744ed1b5d0e4ac8826c8f6a7a8fd96a8f1e44",
+    "sha256": "sha256:7d367baf5cfa46ca71ec4cf8d56d929d104c7eda2346116583ba9e610a5243f6",
     "files": 23,
-    "bytes": 1957
+    "bytes": 1979
   }
 }

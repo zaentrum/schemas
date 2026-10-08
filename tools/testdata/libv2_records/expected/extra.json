@@ -12,7 +12,7 @@
   "originals": [],
   "packagedFrom": [
     {
-      "name": "trailer.mov",
+      "name": "original.mov",
       "sizeBytes": 3400,
       "fixity": {
         "qh1": "sha256:273dca4a68e0f97ccf4786e2fc911ed0cfed49d195486b9d1829e92ed00a8b81"

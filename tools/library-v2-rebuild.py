@@ -108,9 +108,10 @@ Fields that cannot agree by construction are ignored by default (--ignore-fields
   path   the bytes moved into the version folder, so the database's old paths are stale
   hash   never filled by either side
 Ignoring modifiedAt leaves the freshness of every projection unjudged.
-A trailer link's localPath is compared by its file name for the same reason: a downloaded trailer
-moved into its extra's folder and kept its name, so whether the link has a local copy, and which
-file it is, can be compared, and where it lives cannot.
+A trailer link's localPath is compared only for whether there is one, for the same reason: a
+downloaded trailer moved into its extra's folder, under the name the library gives an original, so
+whether the link has a local copy can be compared, and neither where it lives nor the name it came
+with.
 
 A subtitle row's isDefault is never compared, whatever --ignore-fields says, and the rebuild writes
 it false: which subtitle a viewer gets is behaviour — the player's rule, or a default a person
@@ -563,8 +564,12 @@ class Rebuild:
 
     def assets(self, item, v, sources, is_primary):
         out = []
+        # an original is found among the sources of its own version: every version names its original
+        # original.<ext>, so another version's source may carry the same name
+        ids = (v.get("version") or {}).get("sourceIds")
+        mine = [sources[s] for s in ids if s in sources] if isinstance(ids, list) else list(sources.values())
         for i, name in enumerate(v["kept"]):
-            src = next((s for s in sources.values() if s.get("file", {}).get("name") == name), None)
+            src = next((s for s in mine if s.get("file", {}).get("name") == name), None)
             stream = next((x for x in (src or {}).get("streams") or []
                            if x.get("type") == "video" and not (x.get("dispositions") or {}).get("attachedPic")), None)
             out.append({"id": did(item["itemId"], "asset", v["id"], name), "kind": "primary",
@@ -788,10 +793,11 @@ def normalise(row):
     if "tmdbChangedAt" in out:
         out["tmdbChangedAt"] = day(out["tmdbChangedAt"])
     if isinstance(row.get("trailers"), list):
-        # a downloaded trailer moved into its extra's folder and kept its name, so its local copy is
-        # compared by that name: whether there is one, and that it is the same file
-        out["trailers"] = [dict(t, localPath=os.path.basename(str(t["localPath"]).replace("\\", "/")))
-                           if isinstance(t, dict) and t.get("localPath") else t for t in row["trailers"]]
+        # a downloaded trailer moved into its extra's folder, under the name the library gives an
+        # original, so of its local copy only whether there is one can be compared: neither where it
+        # lives nor the name it came with
+        out["trailers"] = [dict(t, localPath="a local copy") if isinstance(t, dict) and t.get("localPath") else t
+                           for t in row["trailers"]]
     return out
 
 

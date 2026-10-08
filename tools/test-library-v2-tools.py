@@ -70,10 +70,12 @@ rule and checks the tool notices:
   the pieces     the JPEG and PNG header parsing, the qh1 fingerprint and the generated ids
   records        the record module the packager vendors writes, from the probes and manifests of
                  testdata/libv2_records, the source, version, package and extra records expected/
-                 holds, byte for byte; each chain holds, and the check of one bites; piped behind a
-                 tool, the module has none of its names redefined by it
+                 holds, byte for byte; each chain holds, and the check of one bites; it names an
+                 original, its parts and the copy of a subtitle file as the library does, its probe
+                 is the tool's output with two edits, and nothing it writes names a file as it
+                 arrived; piped behind a tool, the module has none of its names redefined by it
 """
-import base64, datetime, glob, hashlib, importlib.util, json, os, shutil, subprocess, sys, tempfile, time, uuid
+import base64, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES = os.path.join(TOOLS, "..", "library", "v2", "examples")
@@ -359,10 +361,11 @@ def package_placeholders(folder, manifest):
 
 
 def golden_tree(root, rec):
-    """The item folder a packager writes when it first packages an original that came with a German
-    sidecar and a .nfo, and the folder of a trailer of the movie it packaged too: every record built
-    with the record module from the fixtures' probes and manifests, every moment and id fixed. Returns
-    (item folder, sourceId, versionId, extraId)."""
+    """The item folder a packager writes when it establishes a version — it first packages an original
+    that came with a German subtitle file and a .nfo beside it — and the folder of a trailer of the
+    movie it packaged too: every record built with the record module from the fixtures' probes and
+    manifests, every moment and id fixed, and the original renamed last into the version folder, under
+    the name the library gives it. Returns (item folder, sourceId, versionId, notes)."""
     arrivals = os.path.join(root, "arrivals", "Example Film (2024)")
     os.makedirs(arrivals)
     original = os.path.join(arrivals, GOLDEN_ORIGINAL)
@@ -382,16 +385,14 @@ def golden_tree(root, rec):
                                                  "type": "movie", "asOf": GOLDEN_AT,
                                                  "titles": {"primary": "Example Film"}, "images": []})
 
-    # sources/<sourceId>/: the probe, the copies of the sidecar and the companion, the record, the checksums
+    # sources/<sourceId>/: the probe, the copy of the subtitle file — and nothing of the .nfo — the record,
+    # the checksums
     sid, vid, pid = (rec.did(GOLDEN_ITEM, kind, GOLDEN_ORIGINAL) for kind in ("source", "version", "package"))
     sp = os.path.join(item, "sources", sid)
     os.makedirs(sp)
-    files = [(os.path.join(arrivals, GOLDEN_SIDECAR), "subtitle", "de")] + \
-            [(p, kind, None) for p, kind in rec.companion_files(original)]
-    sidecars = []
-    for (path, kind, language), name in zip(files, rec.sidecar_names([os.path.basename(p) for p, _, _ in files])):
-        shutil.copyfile(path, os.path.join(sp, name))
-        sidecars.append(rec.sidecar_entry(sid, name, os.path.join(sp, name), os.path.basename(path), kind, language))
+    sidecar = os.path.join(arrivals, GOLDEN_SIDECAR)
+    sidecars = [rec.sidecar_entry(sid, 1, sidecar, GOLDEN_SIDECAR, "de")]
+    shutil.copyfile(sidecar, os.path.join(item, sidecars[0]["file"]))
     probe = jload(os.path.join(GOLDEN, "probe.json"))
     source, raw = rec.source_record(sid, GOLDEN_ORIGINAL, os.path.getsize(original), taken_at=GOLDEN_AT,
                                     taken_by="packager", library_path=f"Example Film (2024)/{GOLDEN_ORIGINAL}",
@@ -404,7 +405,8 @@ def golden_tree(root, rec):
     with open(os.path.join(sp, "checksums.sha256"), "wb") as f:
         f.write(sums)
 
-    # versions/<versionId>/: the package, the record, then the chain
+    # versions/<versionId>/: the package, the record, then the chain — and last the original, which no link of
+    # the chain lists: the version keeps it beside its package, so the package is derived
     manifest = jload(os.path.join(GOLDEN, "manifest.json"))
     vp = os.path.join(item, "versions", vid)
     package_placeholders(vp, manifest)
@@ -413,10 +415,11 @@ def golden_tree(root, rec):
                                  segments=rec.segments([{"kind": "credits", "startMs": 50000, "endMs": 60000,
                                                          "source": "chapter", "confidence": 0.9, "label": None},
                                                         {"kind": "outro", "startMs": 55000, "endMs": 60000,
-                                                         "source": "blackframe", "confidence": None, "label": None}]))
+                                                         "source": "blackframe", "confidence": None, "label": None}]),
+                                 original_files=[source["file"]["name"]])
     version_bytes = rec.json_bytes(version)
     listed = rec.package_files(vp) + [rec.record_entry("version.json", version_bytes)]
-    package, notes = rec.package_record(pid, manifest, listed, source=source,
+    package, notes = rec.package_record(pid, manifest, listed, source=source, role="derived",
                                         peak_bandwidth_bps=rec.peak_bandwidth(vp, manifest["hls"]["master"]),
                                         sidecars={"sub3": sidecars[0]["file"]})
     package_bytes = rec.json_bytes(package)
@@ -424,6 +427,7 @@ def golden_tree(root, rec):
                        ("package.json", package_bytes), (".complete", rec.complete(package_bytes))):
         with open(os.path.join(vp, name), "wb") as f:
             f.write(data)
+    os.rename(original, os.path.join(vp, rec.library_original_name(GOLDEN_ORIGINAL)))
 
     # extras/<extraId>/: an extra keeps no original; its record names the one it was packaged from
     trailer = os.path.join(root, "arrivals", "extras", "trailer.mov")
@@ -495,25 +499,66 @@ def test_records(t):
              (False, ["fonts", "hdr10Metadata", "maxAudioChannels", "surround"]))
         t.eq("a rendition made from a sidecar names the copy the source folder keeps",
              [s.get("fromSidecar") for s in package["subtitles"]],
-             [None, None, None, f"sources/{sid}/{GOLDEN_SIDECAR}"])
-        t.eq("the source folder keeps the sidecar and the companion, each described",
-             [(x["originalName"], x["kind"], x.get("language"), x.get("purpose"))
-              for x in jload(os.path.join(item, "sources", sid, "source.json"))["sidecars"]],
-             [(GOLDEN_SIDECAR, "subtitle", "de", "dialogue"), (GOLDEN_COMPANION, "nfo", None, None)])
+             [None, None, None, f"sources/{sid}/subtitle-1.de.srt"])
+        recorded = jload(os.path.join(item, "sources", sid, "source.json"))
+        t.eq("the source folder keeps a copy of the subtitle file that came with the original, under the name the "
+             "library gives it, described without the name it came with — and nothing of the .nfo beside it",
+             ([(x["file"], x["kind"], x.get("language"), x.get("purpose"), "originalName" in x) for x in recorded["sidecars"]],
+              rec.listdir(os.path.join(item, "sources", sid))),
+             ([(f"sources/{sid}/subtitle-1.de.srt", "subtitle", "de", "dialogue", False)],
+              ["checksums.sha256", "ffprobe.json", "source.json", "subtitle-1.de.srt"]))
+        t.eq("the record names the original as the library does, keeps what its name and folder claimed and no "
+             "name, and not where it came from",
+             (recorded["file"]["name"], "origin" in recorded, recorded["labels"]["quality"],
+              recorded["container"]["title"], sorted(recorded["container"]["tags"])),
+             ("original.mkv", False, "2160p", None, ["ENCODER"]))
+        written = jload(os.path.join(item, "sources", sid, "ffprobe.json"))
+        fixture = jload(os.path.join(GOLDEN, "probe.json"))
+        t.eq("its probe is the tool's output with two edits: the library's name for the file, and no title tag",
+             (written["format"].pop("filename"), written["format"]["tags"].pop("title", None),
+              written == dict(fixture, format={k: v for k, v in fixture["format"].items() if k != "filename"}
+                              | {"tags": {k: v for k, v in fixture["format"]["tags"].items() if k != "title"}})),
+             ("original.mkv", None, True))
+        t.eq("the version keeps the original beside its package, renamed in last under the same name, so the "
+             "package is derived",
+             (jload(os.path.join(vp, "version.json"))["originalFiles"], package["role"],
+              os.path.getsize(os.path.join(vp, "original.mkv")), "original.mkv" in listing(vp)),
+             (["original.mkv"], "derived", recorded["file"]["sizeBytes"], False))
+        extra = jload(os.path.join(xp, "extra.json"))
+        t.eq("an extra names what it was packaged from as the library names an original, and keeps no title tag",
+             ([x["name"] for x in extra["packagedFrom"]], extra["container"]["title"]), (["original.mov"], None))
+        arrived = [n.encode() for n in (os.path.splitext(GOLDEN_ORIGINAL)[0], "Example Film (2024)", "trailer.mov",
+                                        os.path.splitext(GOLDEN_COMPANION)[1])]
+        named = sorted(rel for rel, data in tree_files(os.path.join(tmp, "library")).items() if any(a in data for a in arrived))
+        odd = sorted(rel for rel in tree_files(os.path.join(tmp, "library"))
+                     if not all(re.fullmatch(r"[a-z0-9.-]+", part) for part in rel.split(os.sep)))
+        t.eq("no file the packager wrote names the original, its folder or the trailer as they arrived, and every "
+             "name in the tree is of letters, digits, dots and dashes", (named, odd), ([], []))
 
-        # a subtitle made from a sidecar: the sidecar's own row stands for it while the original waits beside
-        # it, so the rebuild gives it none; once the original is deleted it is a row in the sidecar's language
+        # a subtitle made from a sidecar: the sidecar's own row stands for it while the original is there, so the
+        # rebuild gives it none; once the original is deleted it is a row in the sidecar's language
         rows, _ = rows_of(os.path.join(tmp, "library"), "--text-language", "und")
-        t.eq("the rebuild gives no row to a subtitle made from a sidecar while the original is there",
-             [(x["language"], os.path.basename(x["path"])) for x in rows[GOLDEN_ITEM]["subtitleAssets"]],
-             [("eng", "0.vtt"), ("eng", "1.vtt"), ("ger", "2.sup")])
+        t.eq("the rebuild gives no row to a subtitle made from a sidecar while the original is there, and plays "
+             "the original from its version folder",
+             ([(x["language"], os.path.basename(x["path"])) for x in rows[GOLDEN_ITEM]["subtitleAssets"]],
+              sorted((a["kind"], os.path.basename(a["path"]), a["sizeBytes"]) for a in rows[GOLDEN_ITEM]["playbackAssets"])),
+             ([("eng", "0.vtt"), ("eng", "1.vtt"), ("ger", "2.sup")],
+              [("packaged", "package.json", package["sizeBytes"]), ("primary", "original.mkv", recorded["file"]["sizeBytes"])]))
+        os.makedirs(os.path.join(tmp, "trash"))
+        os.rename(os.path.join(vp, "original.mkv"), os.path.join(tmp, "trash", "original.mkv"))
         write_event(item, {"schema": "zaentrum.library.event/2", "eventId": "0d000000-0000-4000-8000-000000000001",
                            "at": "2026-10-06T11:00:00Z", "by": "test", "kind": "original-deleted", "versionId": vid,
                            "sourceId": sid, "accepted": ["fonts"]})
         rows, _ = rows_of(os.path.join(tmp, "library"), "--text-language", "und")
-        t.eq("and once the original is deleted, a row of the package's subtitle in the sidecar's language",
-             [(x["language"], os.path.basename(x["path"])) for x in rows[GOLDEN_ITEM]["subtitleAssets"]],
-             [("eng", "0.vtt"), ("eng", "1.vtt"), ("ger", "2.sup"), ("de", "3.vtt")])
+        t.eq("and once the original is deleted from its version folder, a row of the package's subtitle in the "
+             "sidecar's language, and the package plays alone",
+             ([(x["language"], os.path.basename(x["path"])) for x in rows[GOLDEN_ITEM]["subtitleAssets"]],
+              [a["kind"] for a in rows[GOLDEN_ITEM]["playbackAssets"]]),
+             ([("eng", "0.vtt"), ("eng", "1.vtt"), ("ger", "2.sup"), ("de", "3.vtt")], ["packaged"]))
+        if have_jsonschema():
+            code, text = run(VALIDATOR, "--check-media", os.path.join(tmp, "library"))
+            t.ok("and the tree its retire leaves is valid, the original named by its version and gone from it",
+                 code == 0 and text.strip().endswith("OK"), text)
 
         # the chain check bites: a package file changed, a file nobody listed, a record changed
         with open(os.path.join(vp, "subs", "1.vtt"), "ab") as f:
@@ -531,19 +576,81 @@ def test_records(t):
              "extra.json does not match the digest checksums.sha256 lists for it"
              in rec.chain_problems(xp, "extra.json", rec.EXTRA_DIRS))
 
-    t.eq("a sidecar named like a record of its folder, or like one copied before it, gets a number",
-         rec.sidecar_names(["source.json", "a.srt", "a.srt", "checksums.sha256"]),
-         ["source-1.json", "a.srt", "a-1.srt", "checksums-1.sha256"])
     try:
         rec.source_record(GOLDEN_ITEM, "gone.mkv", 1, taken_at=GOLDEN_AT, taken_by="x", library_path="gone.mkv")
         refused = False
     except ValueError:
         refused = True
     t.ok("a source record without fixity is refused unless a note says why it has none", refused)
-    gone, raw = rec.source_record(GOLDEN_ITEM, "gone.mkv", 1, taken_at=GOLDEN_AT, taken_by="x", library_path="gone.mkv",
+    gone, raw = rec.source_record(GOLDEN_ITEM, "Gone Film (2023).MKV", 1, taken_at=GOLDEN_AT, taken_by="x",
+                                  library_path="Gone Film (2023)/Gone Film (2023).MKV",
                                   note="the original was gone before the library was recorded")
-    t.ok("and with one it is a record of the file's name and size alone",
-         raw is None and "fixity" not in gone["file"] and gone["probe"]["note"].startswith("the original was gone"))
+    t.ok("and with one it is a record of the file's name — the library's — and size alone",
+         raw is None and "fixity" not in gone["file"] and gone["file"]["name"] == "original.mkv"
+         and "origin" not in gone and gone["probe"]["note"].startswith("the original was gone"), gone)
+    t.eq("a version made from a source says what its name claimed of its edition, and never the name",
+         [rec.version_record("v", rec.source_record(GOLDEN_ITEM, arrived, 1, taken_at=GOLDEN_AT, taken_by="x",
+                                                    library_path=f"{folder}/{arrived}", note="no fixity")[0],
+                             created_at=GOLDEN_AT, created_by="x")["edition"]
+          for arrived, folder in (("Example Film (2024) - Director's Cut.mkv", "Example Film (2024)"),
+                                  ("Example Film (2024).mkv", "Example Film - Unrated (2024)"),
+                                  ("Example Film (2024).mkv", "Example Film (2024)"))],
+         [{"kind": "directors-cut", "label": None, "decidedBy": "inferred", "decidedAt": GOLDEN_AT,
+           "evidence": [{"signal": "filename", "value": "directors-cut", "weight": 0.6}]},
+          {"kind": "unrated", "label": "Unrated", "decidedBy": "inferred", "decidedAt": GOLDEN_AT,
+           "evidence": [{"signal": "folder-name", "value": "Unrated", "weight": 0.6}]},
+          {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": GOLDEN_AT, "evidence": []}])
+
+    # the names the library gives: of an original, its parts, and the copy of a subtitle file that came with it
+    t.eq("an original is original.<ext>, its extension lower-cased, and bin when it is no extension of letters "
+         "and digits", [rec.library_original_name(n) for n in ("Example Film (2024) - 2160p.mkv", "FILM.M2TS",
+                                                              "a/b/Show - S01E02.Mp4", "no extension", "odd.mk_v",
+                                                              "long.extension9", ".mkv", "C:\\x\\film.ts")],
+         ["original.mkv", "original.m2ts", "original.mp4", "original.bin", "original.bin", "original.bin",
+          "original.bin", "original.ts"])
+    t.eq("the parts of a version split into several are numbered in part order",
+         [rec.library_original_name("Example Film - part1.mkv", 1), rec.library_original_name("Example Film - part2.mkv", 2)],
+         ["original-1.mkv", "original-2.mkv"])
+    for bad in (0, -1, "2", True):
+        try:
+            rec.library_original_name("a.mkv", bad)
+            refused = False
+        except ValueError:
+            refused = True
+        t.ok(f"a part numbered {bad!r} is refused: parts are numbered from 1", refused)
+    t.eq("a subtitle file's copy is subtitle-<n>.<lang>[.forced][.sdh].<ext>, lang the BCP 47 primary subtag",
+         [rec.subtitle_copy_name(1, "ger", False, False, ".SRT"), rec.subtitle_copy_name(2, "en-GB", True, False, "srt"),
+          rec.subtitle_copy_name(3, None, False, True, "ass"), rec.subtitle_copy_name(4, "pt_BR", True, True, "vtt"),
+          rec.subtitle_copy_name(5, "Deutsch", False, False, "s-r-t"), rec.subtitle_copy_name(6, "zh-Hant-TW", False, False, "")],
+         ["subtitle-1.de.srt", "subtitle-2.en.forced.srt", "subtitle-3.und.sdh.ass", "subtitle-4.pt.forced.sdh.vtt",
+          "subtitle-5.und.bin", "subtitle-6.zh.bin"])
+    t.ok("and every name either gives is a neutral one",
+         all(rec.ORIGINAL_NAME_RE.match(rec.library_original_name(n, p)) for n in ("x.mkv", "y", "z.TS") for p in (None, 3))
+         and all(rec.SUBTITLE_COPY_RE.match(rec.subtitle_copy_name(n, l, f, s, e)) for n in (1, 12)
+                 for l in ("de", "eng", None, "x-klingon") for f in (False, True) for s in (False, True)
+                 for e in ("srt", ".VTT", "")))
+    with tempfile.TemporaryDirectory() as tmp:
+        arrived = os.path.join(tmp, "Example Film (2024).en.forced.SDH.srt")
+        with open(arrived, "w") as f:
+            f.write("1\n00:00:01,000 --> 00:00:02,000\nHello\n")
+        entry, size = rec.sidecar_entry(GOLDEN_ITEM, 2, arrived, os.path.basename(arrived), "eng"), os.path.getsize(arrived)
+    t.eq("a sidecar entry names the copy and keeps what the name and the catalog said of it, never the name",
+         (entry["file"], entry["language"], entry["forced"], entry["hearingImpaired"], entry["purpose"],
+          "originalName" in entry, entry["format"], entry["sizeBytes"]),
+         (f"sources/{GOLDEN_ITEM}/subtitle-2.en.forced.sdh.srt", "eng", True, True, "forced", False, "srt", size))
+    probe = {"format": {"filename": "/media/Example Film (2024)/Example Film (2024).mkv", "duration": "1.0",
+                        "tags": {"TITLE": "Example.Film.2024", "title": "Example Film", "Title": "x", "ENCODER": "e",
+                                 "subtitle": "kept"}},
+             "streams": [{"index": 0, "codec_type": "audio", "tags": {"title": "Commentary"}}]}
+    before = json.dumps(probe, sort_keys=True)
+    scrubbed = rec.scrub_probe(probe, "original.mkv")
+    t.eq("a probe is kept with the library's name for its file and no title tag in any case, and nothing else changed",
+         scrubbed, {"format": {"filename": "original.mkv", "duration": "1.0", "tags": {"ENCODER": "e", "subtitle": "kept"}},
+                    "streams": [{"index": 0, "codec_type": "audio", "tags": {"title": "Commentary"}}]})
+    t.ok("and the probe it was given is left as it was", json.dumps(probe, sort_keys=True) == before)
+    t.eq("a probe with no format, or no tags, keeps what it has",
+         (rec.scrub_probe({"streams": []}, "original.mkv"), rec.scrub_probe({"format": {}}, "original.mkv")),
+         ({"streams": []}, {"format": {"filename": "original.mkv"}}))
     t.eq("an unknown kind of detected range is 'other', labelled with the catalog's kind",
          [(s["kind"], s["label"]) for s in rec.segments([{"kind": "outro", "startMs": 1, "endMs": 2, "label": "x"},
                                                          {"kind": "credits", "startMs": 3, "endMs": 4, "label": "black"}])],
@@ -1564,8 +1671,11 @@ def test_from_catalog(t):
              source["file"]["sizeBytes"] == size and source["file"]["mtime"].endswith("Z")
              and source["file"]["fixity"]["qh1"].startswith("sha256:"))
         version = jload(glob.glob(os.path.join(out, "movies", "*", "*", "versions", "*", "version.json"))[0])
-        t.eq("the version keeps the original it was given", version["originalFiles"],
-             ["Example Film (2024).mkv"])
+        vp = glob.glob(os.path.join(out, "movies", "*", "*", "versions", "*"))[0]
+        t.eq("the version keeps the original it was given, under the name the library gives it, which its source "
+             "record names too", (version["originalFiles"], source["file"]["name"], "origin" in source,
+                                  os.path.getsize(os.path.join(vp, "original.mkv"))),
+             (["original.mkv"], "original.mkv", False, size))
         package = jload(glob.glob(os.path.join(out, "movies", "*", "*", "versions", "*", "package.json"))[0])
         t.eq("the package is derived while the original is beside it", package["role"], "derived")
         t.eq("its peak bandwidth is the one the master playlist advertises",
@@ -1658,20 +1768,22 @@ def test_from_catalog_extras(t):
         xp = os.path.dirname(found[0]) if found else tmp
         t.ok("a downloaded trailer becomes an extra of kind trailer beside its movie",
              code == 0 and len(found) == 1 and x.get("kind") == "trailer", text)
-        t.eq("which keeps the file under its own name, with the title of its link",
-             (x.get("originalFiles"), x.get("title")), ([TRAILER], "Trailer"))
+        t.eq("which keeps the file under the name the library gives an original, with the title of its link",
+             (x.get("originalFiles"), x.get("title")), (["original.mp4"], "Trailer"))
         t.ok("copied in, so the share keeps its own",
-             os.path.isfile(os.path.join(xp, TRAILER)) and open(os.path.join(xp, TRAILER), "rb").read()
+             os.path.isfile(os.path.join(xp, "original.mp4")) and open(os.path.join(xp, "original.mp4"), "rb").read()
              == open(os.path.join(media, "trailers", TRAILER), "rb").read())
-        kept, mc = os.path.join(xp, TRAILER), load_tool(MEDIA_CHECK)
+        kept, mc = os.path.join(xp, "original.mp4"), load_tool(MEDIA_CHECK)
         t.eq("and described as a source record describes its file: its size, its qh1 and its sha256",
-             x.get("originals"), [{"name": TRAILER, "sizeBytes": os.path.getsize(kept) if found else None,
+             x.get("originals"), [{"name": "original.mp4", "sizeBytes": os.path.getsize(kept) if found else None,
                                    "fixity": {"qh1": mc.qh1(kept) if found else None,
                                               "sha256": mc.sha_file(kept) if found else None,
                                               "sha256At": "2026-09-21T17:00:00Z"}}])
         t.eq("and finished by the checksums written last, over the record and the file",
              sorted(listing(xp)) if os.path.isfile(os.path.join(xp, "checksums.sha256")) else None,
-             sorted(["extra.json", TRAILER]))
+             sorted(["extra.json", "original.mp4"]))
+        t.ok("and nothing in its folder names the file as it came", not any(
+            b"Trailer.mp4" in open(os.path.join(xp, n), "rb").read() for n in ("extra.json", "checksums.sha256")))
         t.ok("a trailer nothing could probe says so rather than guessing", "probe" not in x and x.get("runtimeMs") is None
              and "trailer Example Film - Trailer.mp4 was not probed" in text, text)
         t.eq("its link is still a link", [(v["site"], v["key"]) for v in jload(os.path.join(d, "metadata.json"))["videos"]],
@@ -1690,11 +1802,18 @@ def test_from_catalog_extras(t):
              [(r["itemId"], r["kind"], [a["kind"] for a in r["playbackAssets"]]) for r in built["extras"]],
              [(iid, "trailer", ["primary"])])
         t.eq("and gives the link its local copy back: the trailer the extra keeps",
-             [v["localPath"] for v in rows[iid]["trailers"]], [os.path.join(xp, TRAILER)])
+             [v["localPath"] for v in rows[iid]["trailers"]], [os.path.join(xp, "original.mp4")])
         code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und",
                           "--ignore-fields", "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes")
-        t.ok("so it agrees with the export it came from, the link's localPath included: the same file, in its extra",
+        t.ok("so it agrees with the export it came from, the link's localPath included: it has its local copy",
              code == 0 and "the tree and the database agree" in ctext and "localPath" not in ctext, ctext)
+        e = jload(export)
+        e["items"][0]["trailers"][0]["localPath"] = None
+        jwrite(os.path.join(tmp, "no-copy.json"), e)
+        code, ctext = run(REBUILD, out, "--compare", os.path.join(tmp, "no-copy.json"), "--text-language", "und",
+                          "--ignore-fields", "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes")
+        t.ok("and a link the database holds no local copy of differs from one the tree gives its copy back",
+             code == 1 and "localPath" in ctext, ctext)
         again = os.path.join(tmp, "library-again")
         code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", again)
         t.ok("a second run into a fresh folder writes the same bytes", code == 0 and tree_files(out) == tree_files(again), text)
@@ -1709,7 +1828,7 @@ def test_from_catalog_extras(t):
                          "--media-mode", "move")
         xp = (glob.glob(os.path.join(out, "movies", "*", "*", "extras", "*")) or [tmp])[0]
         t.ok("with --media-mode move the trailer moves into its extra",
-             code == 0 and os.path.isfile(os.path.join(xp, TRAILER))
+             code == 0 and os.path.isfile(os.path.join(xp, "original.mp4"))
              and not os.path.exists(os.path.join(media, "trailers", TRAILER)), text)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1754,8 +1873,9 @@ def test_from_catalog_extras(t):
         x = jload(found[0]) if found else {}
         t.ok("a series' downloaded trailer is the series' extra, of no particular season",
              code == 0 and len(found) == 1 and x.get("kind") == "trailer" and "seasonNumber" not in x, text)
-        t.eq("titled by its file when its link has no title, its origin naming only what the link says",
-             (x.get("title"), x.get("origin")), ("series", {"kind": "link", "site": "YouTube", "externalId": "series"}))
+        t.eq("titled Trailer when its link has no title — never by the name of its file — its origin naming only "
+             "what the link says",
+             (x.get("title"), x.get("origin")), ("Trailer", {"kind": "link", "site": "YouTube", "externalId": "series"}))
         t.ok("an episode's stays a link, because an episode has no extras",
              not os.path.exists(os.path.join(sdir, "episodes", eid, "extras"))
              and "trailer episode.mp4 stays a link: an episode has no extras" in text, text)
@@ -2050,8 +2170,6 @@ def test_platform(t):
                  ".work/incoming/Example Film (2024)/Example Film (2024).mkv"),
                 ("sidecar", "media/Example Film (2024)/Example Film (2024).de.srt",
                  ".work/incoming/Example Film (2024)/Example Film (2024).de.srt"),
-                ("sidecar", "media/Example Film (2024)/Example Film (2024).nfo",
-                 ".work/incoming/Example Film (2024)/Example Film (2024).nfo"),
                 ("original", "extras/example-film/trailer.mov", ".work/extras/example-film/trailer.mov"),
                 ("original", "extras/example-film/making-of.mov", ".work/extras/example-film/making-of.mov"),
                 ("legacy", pkg_rel, os.path.join(legacy, "movies", PF_MOVIE[:2], PF_MOVIE)),
@@ -2069,9 +2187,12 @@ def test_platform(t):
              [i["kind"] for i in staged_images] == ["backdrop", "poster"] and len({i["file"] for i in staged_images}) == 1
              and os.listdir(os.path.join(unit["stagedDir"], "metadata")) == [staged_images[0]["file"]], staged_images)
         package = jload(os.path.join(unit["stagedDir"], "versions", unit["db"]["versions"][0]["versionId"], "package.json"))
-        t.eq("the subtitle made from the sidecar names the copy the source folder keeps",
-             [s.get("fromSidecar") for s in package["subtitles"]],
-             [None, f"sources/{sid}/Example Film (2024).de.srt"])
+        t.eq("the subtitle made from the sidecar names the copy the source folder keeps, under the name the library "
+             "gives it — and the .nfo beside the original is neither copied nor moved",
+             ([s.get("fromSidecar") for s in package["subtitles"]],
+              sorted(os.listdir(os.path.join(unit["stagedDir"], "sources", sid)))),
+             ([None, f"sources/{sid}/subtitle-1.de.srt"],
+              ["checksums.sha256", "ffprobe.json", "source.json", "subtitle-1.de.srt"]))
         gone = jload(os.path.join(rundir, "units", PF_GONE + ".json"))
         gone_source = jload(glob.glob(os.path.join(gone["stagedDir"], "sources", "*", "source.json"))[0])
         t.ok("a package whose original is gone gets a source record without fixity, which says why",

@@ -14,13 +14,15 @@ Usage:
 The catalog is the working copy and this writes the record beside the bytes: one item folder per
 row, holding the identity the row was created with, the texts and images the database held, the
 original each row points at as the file itself reports it, and one version folder per packaged
-asset with the package moved or copied in — and one folder per person the rows credit.
+asset with the package moved or copied in — and one folder per person the rows credit. Nothing is
+named as it arrived: an original moved or copied in is original.<ext> beside its package, the name
+its source record gives it too, and a downloaded trailer the same in its extra.
 
   <out>/movies/<aa>/<itemId>/          item.json  checksums.sha256  metadata.json  metadata/<sha256>.jpg
                                        sources/<sourceId>/source.json  ffprobe.json  checksums.sha256
-                                       versions/<versionId>/version.json  hls/ subs/ trickplay/
+                                       versions/<versionId>/version.json  original.<ext>  hls/ subs/ trickplay/
                                                              checksums.sha256  package.json  .complete
-                                       extras/<extraId>/extra.json  <the trailer>  checksums.sha256
+                                       extras/<extraId>/extra.json  original.<ext>  checksums.sha256
   <out>/series/<aa>/<seriesId>/        item.json  checksums.sha256  metadata.json  metadata/  extras/
                                        episodes/<episodeId>/ (as a movie, without extras/)
   <out>/people/<aa>/<personId>/        person.json  <sha256>.jpg
@@ -86,9 +88,10 @@ What it can fill in, and what it cannot:
   * the identity, texts, images, people, chapters, segments and trailers come from the export;
   * a trailer the catalog downloaded — one whose localPath is a file on the share — also becomes an
     extra of kind trailer beside its movie or series, its file copied or moved in as --media-mode
-    says, its link kept in metadata.json's videos and named by the extra's origin, so a rebuild gives
-    the link its localPath back. An episode's stays a link, because an episode has no extras, and so
-    does every one with --media-mode none, because an extra holds its own file;
+    says, titled by its link (Trailer when the link has none), its link kept in metadata.json's
+    videos and named by the extra's origin, so a rebuild gives the link its localPath back. An
+    episode's stays a link, because an episode has no extras, and so does every one with
+    --media-mode none, because an extra holds its own file;
   * the container, streams, fidelity and essence of an original come from `ffprobe`, which is used
     when it is on PATH — without it a source record still carries the file's size, mtime and qh1
     fingerprint, and says in `probe.note` that nothing was probed;
@@ -108,11 +111,11 @@ Every generated id is a UUIDv5 of the item id and a stable name, and every "writ
 katalog-manager to adopt. It reads that store and writes nothing outside
 <root>/.work/migration/<run>/: the package files are hashed where they are, the originals probed
 where they are, and the only files written are small — the records, the images the database holds
-and copies of the sidecars:
+and copies of the subtitle files that came with the originals:
 
   staged/<itemId>/item/          the item folder as the library will hold it — item.json, metadata.json
                                  and its images, sources/<sourceId>/ with the probe and a copy of each
-                                 sidecar, versions/<versionId>/ with version.json, checksums.sha256,
+                                 subtitle file, versions/<versionId>/ with version.json, checksums.sha256,
                                  package.json and .complete but none of the package files, which the
                                  checksums list where the adopt puts them, extras/<extraId>/ the same
   staged-people/<personId>/      person.json and the portraits of everyone a staged item credits,
@@ -127,10 +130,12 @@ The records are the platform's: an original is never in the library, so a versio
 incoming/ (an extra's to <root>/.work/extras/), at the path it had under media/ (extras/), and is
 deleted once its package is recorded — for an item whose original was already gone the source record
 has no fixity, its probe.note says why, and the adopt writes the original-deleted event (reason "gone
-before the library was recorded", accepted [] — the gate was never measured). A sidecar the scanner
-paired with the original is copied into the source folder, and the package's subtitle made from it
-— its manifest marks it external; they are paired by the order katalog-manager handed the packager
-the files, by path, and by language — names the copy as fromSidecar. Extras are the catalog's own rows
+before the library was recorded", accepted [] — the gate was never measured). A subtitle file the
+scanner paired with the original is copied into the source folder under the name the library gives
+it, subtitle-<n>.<lang>[.forced][.sdh].<ext>, and the package's subtitle made from it — its manifest
+marks it external; they are paired by the order katalog-manager handed the packager the files, by
+path, and by language — names the copy as fromSidecar. Nothing else beside the original is copied or
+moved: a .nfo, an image or a text file is no part of the record, and stays for the cleanup. Extras are the catalog's own rows
 (the export's extras), each named by its row's id and staged when its package finished; one without a
 finished package stays the catalog's, its original among the arrivals. An episode under a season is in
 its series' folder; music and anything else the library does not record is skipped. Ids are UUIDv5 of
@@ -148,8 +153,8 @@ own path of the share:
        publish  the staged item folder to itemDir (an episode's into its series' folder, which the
                 series' unit put in place first: series before episodes)
        original the original to the arrivals, and an extra's original
-       sidecar  a file beside the original — a paired subtitle, a .nfo, .jpg, .png or .txt the source
-                keeps a copy of — to the arrivals beside it
+       sidecar  a subtitle file the scanner paired with the original, of which the source keeps a
+                copy, to the arrivals beside it
        legacy   what is left of an old package folder (manifest.json, .complete) to the run's legacy/
    "guards": {"manifestSha256", "completeMtime", "listingSha256"}   checked again before the first
        move — when one differs the plan is stale and the item is staged again:
@@ -189,10 +194,10 @@ import argparse, base64, datetime, hashlib, json, os, re, shutil, sys
 
 try:  # the record logic the packager writes the same records with: beside this tool, or piped in front of it
     from libv2_records import (
-        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, chapter_marks, checksums, companion_files, complete,
-        deletion_gate, did, external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
-        listdir, num, package_files, package_record, peak_bandwidth, primary_language, probe_chapters, qh1,
-        record_entry, segments, sha_file, sidecar_entry, sidecar_names, source_record, text, ts, ts_of_mtime,
+        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, chapter_marks, checksums, complete, deletion_gate, did,
+        external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
+        library_original_name, listdir, num, package_files, package_record, peak_bandwidth, primary_language,
+        probe_chapters, qh1, record_entry, segments, sha_file, sidecar_entry, source_record, text, ts, ts_of_mtime,
         version_record)
 except ImportError:
     if "LIBV2_RECORDS" not in globals():
@@ -214,8 +219,6 @@ DATE_RE = re.compile(r"^([0-9]{4})(-[0-9]{2}(-[0-9]{2})?)?")
 # Where a projection's field came from, as fieldOrigins in defs.schema.json names it.
 FIELD_ORIGINS = {"tmdb", "legacy-catalog", "filename", "folder-name", "file-tags", "manual"}
 EXT_OF = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-# The names an extra's folder keeps for itself, which an original beside them cannot have.
-EXTRA_RECORDS = {"extra.json", "package.json", "checksums.sha256", ".complete", "hls", "subs", "trickplay", ".", ".."}
 
 
 # ---------------------------------------------------------------- small helpers
@@ -631,9 +634,7 @@ class Build:
             self.note(row["id"], f"{name} was not probed: streams, fidelity and essence stay empty")
         rec, raw = source_record(did(row["id"], "source", name), name, os.path.getsize(path), taken_at=self.as_of,
                                  taken_by="library-v2-from-catalog", library_path=rel, qh1=qh1(path),
-                                 mtime=ts_of_mtime(path),
-                                 origin_taken_by={"copy": "copy", "move": "move"}.get(self.a.media_mode),
-                                 probe=probe, probe_version=self.probe_version)
+                                 mtime=ts_of_mtime(path), probe=probe, probe_version=self.probe_version)
         return {"record": rec, "probe": raw, "chapters": probe_chapters(probe), "path": path}, None
 
     # -------------------------------------------------- versions and packages
@@ -707,8 +708,10 @@ class Build:
     def extras(self, row, d):
         """A trailer the catalog downloaded — a link whose localPath is a file on this share — becomes an
         extra of kind trailer beside its movie or series: extra.json, the file copied or moved in like
-        an original, and the checksums over both, written last because they say the extra is finished.
-        The link stays in metadata.json's videos, where it is still published. Returns how many."""
+        an original, under the name the library gives an original, and the checksums over both, written
+        last because they say the extra is finished. The link stays in metadata.json's videos, where it
+        is still published, and titles the extra; a link with no title titles it Trailer, because the
+        record keeps nothing of the name the file came with. Returns how many."""
         written, names = 0, set()
         for t in row.get("trailers") or []:
             local = str(t.get("localPath") or "").strip()
@@ -726,12 +729,13 @@ class Build:
                 self.note(row["id"], f"trailer {name} stays a link: --media-mode none leaves its file where it is, "
                                      f"and an extra holds its own file")
                 continue
-            if name in EXTRA_RECORDS or name in names or name != text(name):
-                self.note(row["id"], f"trailer {name!r} cannot be an original's name in an extra's folder, so it stays a link")
+            if name in names:
+                self.note(row["id"], f"trailer {name!r} is another link's file too, so it stays a link")
                 continue
             names.add(name)
             xid = did(row["id"], "extra", name)
             xp = os.path.join(d, "extras", xid)
+            kept = library_original_name(name)
             digest, size = sha_file(path), os.path.getsize(path)
             site, key = link_of(t)
             probe = ffprobe(path) if self.probe_version else None
@@ -740,20 +744,20 @@ class Build:
             else:
                 self.note(row["id"], f"trailer {name} was not probed: its streams, fidelity and essence stay empty")
             doc = extra_record(xid, created_at=self.as_of, created_by="library-v2-from-catalog", kind="trailer",
-                               title=text(t.get("title")) or os.path.splitext(name)[0],
+                               title=text(t.get("title")) or "Trailer",
                                origin={"kind": "link", **{k: v for k, v in (
                                    ("site", site), ("externalId", key), ("url", text(t.get("url"))),
                                    ("fetchedAt", ts(t.get("fetchedAt")))) if v}},
-                               probe=probe, probe_version=self.probe_version, original_files=[name],
-                               originals=[{"name": name, "sizeBytes": size,
+                               probe=probe, probe_version=self.probe_version, original_files=[kept],
+                               originals=[{"name": kept, "sizeBytes": size,
                                            "fixity": {"qh1": qh1(path), "sha256": digest, "sha256At": self.as_of}}])
             record = json_bytes(doc)
             self.w.write(os.path.join(xp, "extra.json"), record)
-            if not self.w.place(path, os.path.join(xp, name), self.a.media_mode):
+            if not self.w.place(path, os.path.join(xp, kept), self.a.media_mode):
                 self.note(row["id"], f"trailer {name} could not be placed; its extra never finished")
                 continue
             self.w.write(os.path.join(xp, "checksums.sha256"),
-                         checksums([record_entry("extra.json", record), (name, digest.split(":", 1)[1], size)])[0])
+                         checksums([record_entry("extra.json", record), (kept, digest.split(":", 1)[1], size)])[0])
             written += 1
         self.counts["extras"] += written
         return written
@@ -1045,7 +1049,7 @@ class Platform(Build):
     where they are, and units/<itemId>.json, the plan of what the adopt moves where and what it changes
     in the database. It reads the old store and writes nothing outside the run's folder: the package
     files are hashed in place, the originals probed in place, and only small files are written — the
-    records, the images the database holds and copies of the sidecars. people/ is staged under
+    records, the images the database holds and copies of the subtitle files. people/ is staged under
     staged-people/<personId>/. --dry-run writes report.json and nothing else, and hashes no package."""
 
     def __init__(self, args, export):
@@ -1263,9 +1267,6 @@ class Platform(Build):
                 self.problem("subtitle row without its file", f"subtitle {s.get('id')} names {sp}, which is no file "
                                                               f"of the share: it is left as it is")
         primary_folder = os.path.dirname(self.under(self.a.media, primary["path"], "media")) if primary else None
-        companions = companion_files(original) if original else []
-        copies = sidecar_names([os.path.basename(p) for _, p in sidecar_rows] + [os.path.basename(p) for p, _ in companions])
-        copy_of = {s.get("id"): c for (s, _), c in zip(sidecar_rows, copies)}
 
         # the sidecar rows to the package subtitles the packager made from them: katalog-manager handed it
         # the subtitle files in the original's folder, by path, and it made one subtitle of each it could
@@ -1294,9 +1295,14 @@ class Platform(Build):
                     and (s.get("arrivalPath") == (primary or {}).get("path") or s.get("filename") == name)), None) \
             or did(iid, "source", name)
         source_dir = os.path.join(target, "sources", sid)
+        # the copy the source folder keeps of each subtitle file that came with the original, in the order the
+        # catalog lists them, under the name the record logic gives it: nothing else beside the original is kept
+        entries = [sidecar_entry(sid, n, local, os.path.basename(local), s.get("language"))
+                   for n, (s, local) in enumerate(sidecar_rows, 1)]
+        copy_of = {s.get("id"): e["file"] for (s, _), e in zip(sidecar_rows, entries)}
         if original:
             moves["original"].append({"kind": "original", "from": original, "to": arrival})
-            for local in [p for _, p in sidecar_rows] + [p for p, _ in companions]:
+            for local in [p for _, p in sidecar_rows]:
                 to = self.arrival_of(local)[0]
                 if to:
                     moves["original"].append({"kind": "sidecar", "from": local, "to": to})
@@ -1326,17 +1332,10 @@ class Platform(Build):
             self.counts["probed"] += 1
         elif original:
             self.note(iid, f"{name} was not probed: streams, fidelity and essence stay empty")
-        files = {}
-        entries = []
-        for (s, local), copy in zip(sidecar_rows, copies):
-            entries.append(sidecar_entry(sid, copy, local, os.path.basename(local), "subtitle", s.get("language")))
-            files[copy] = open(local, "rb").read()
-        for (local, kind), copy in zip(companions, copies[len(sidecar_rows):]):
-            entries.append(sidecar_entry(sid, copy, local, os.path.basename(local), kind))
-            files[copy] = open(local, "rb").read()
+        files = {os.path.basename(e["file"]): open(local, "rb").read() for (_, local), e in zip(sidecar_rows, entries)}
         rec, raw = source_record(sid, name, size, taken_at=self.as_of, taken_by="library-v2-from-catalog",
                                  library_path=library_path, qh1=qh1(original) if original else None,
-                                 mtime=ts_of_mtime(original) if original else None, origin_taken_by="import",
+                                 mtime=ts_of_mtime(original) if original else None,
                                  probe=probe, probe_version=self.probe_version, sidecars=entries,
                                  note=None if original else GONE)
         files["source.json"] = json_bytes(rec)
@@ -1361,7 +1360,7 @@ class Platform(Build):
             pid, man, listed, source=rec, created_at=self.as_of, duration_ms=a.get("durationMs"),
             peak_bandwidth_bps=peak_bandwidth(folder, (man.get("hls") or {}).get("master") or "hls/master.m3u8")
             or (num(a.get("bitrateKbps")) or 0) * 1000 or None,
-            sidecars={e.get("id"): f"sources/{sid}/{copy_of[row_id]}" for row_id, e in mapped.items()})
+            sidecars={e.get("id"): copy_of[row_id] for row_id, e in mapped.items()})
         for n in notes:
             self.note(iid, n)
         if rec["streams"]:
@@ -1406,10 +1405,10 @@ class Platform(Build):
                 self.problem("subtitle row without its file", f"subtitle {s.get('id')} names {s.get('path')}, which "
                                                               f"the package does not hold: it is left as it is")
         if not original:
-            for (s, _), copy in zip(sidecar_rows, copies):
+            for s, _ in sidecar_rows:
                 e = mapped.get(s.get("id"))
                 db["subtitles"].append({"id": s.get("id"), "path": os.path.join(vdir, e["path"]) if e
-                                        else os.path.join(source_dir, copy)})
+                                        else os.path.join(target, copy_of[s.get("id")])})
         return vid
 
     # -------------------------------------------------- the title's extras, from the catalog's
