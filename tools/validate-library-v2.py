@@ -56,6 +56,16 @@ with the bytes beside them, never about a document being up to date.
                itself consistently, does not collide with another episode, and sits in a season the
                series' metadata lists; its own numbering does not contradict the numbers item.json
                was created with, and no two episodes claim one place in one ordering
+  covering     one file, several episodes: a source's covers lists the episodes its file holds, the
+               holder first — the episode whose folder keeps the source — and the others after it in
+               episode order, and a movie's file covers none; an episode whose projection names a
+               holder (library.coveredBy) is a later episode of the holder's season, keeps no source
+               or version of its own, is listed by a source of the holder, plays and labels only
+               versions of the holder (primaryVersionId, versionLabels) — the one it plays made from
+               a source that covers it — and the holder's numbering ends (episodeEnd) at the place of
+               the last episode it covers, a covered episode's own at none. A covers entry no
+               projection agrees with — an episode unlinked since, or never recorded — an episodeEnd
+               no covered episode explains, and a holder whose file has no source yet are notes
   events       the folder name is the event's own moment, eventId and kind; every source, version, package
                and extra it names exists, or is a version a version-removed event of the same item
                removed — or that version's package, by the packageId an event of the item pairs with
@@ -480,6 +490,18 @@ class Checker:
                 self.err(where, "an episode carries movie reference ids")
         if expect_type == "episode":
             self.episode(ip, item, meta, series)
+            if series is not None:
+                # what the rules of a file that covers several episodes read of each episode, once they
+                # have all been read: they span episode folders
+                series["members"][item["itemId"]] = {
+                    "dir": d, "item": item, "meta": meta, "sources": sources, "versions": versions,
+                    "removed": removed,
+                    "dropped": {e["sourceId"] for e in events if e["kind"] == "source-removed" and e.get("sourceId")}}
+        elif expect_type == "movie":
+            for sid, src in sorted(sources.items()):
+                if src.get("covers"):
+                    self.err(os.path.join(d, "sources", sid, "source.json"),
+                             "covers names episodes, and a movie's file holds none: only an episode's file covers episodes")
 
         self.event_subjects(events, sources, versions, packages, removed, extras, retired)
         if expect_type == "series":
@@ -601,13 +623,15 @@ class Checker:
 
     def projected_decisions(self, where, meta, versions, removed, extras=(), retired=()):
         """metadata.library holds what the database decided about this item's storage, so every
-        version and every extra it names has to be one that is really there."""
+        version and every extra it names has to be one that is really there. The versions a covered
+        episode names are its holder's, in another episode's folder, and covering() checks them once
+        every episode of the series has been read."""
         lib = meta.get("library") or {}
         primary = lib.get("primaryVersionId")
-        if primary and primary not in versions:
+        if primary and primary not in versions and not lib.get("coveredBy"):
             self.err(where, f"library.primaryVersionId {primary} names "
                             + ("a version that was removed" if primary in removed else "no version folder"))
-        for vid in sorted(lib.get("versionLabels") or {}):
+        for vid in sorted(lib.get("versionLabels") or {}) if not lib.get("coveredBy") else []:
             if vid not in versions:
                 self.err(where, f"library.versionLabels names {vid}, which is "
                                 + ("a removed version" if vid in removed else "no version folder"))
@@ -1261,9 +1285,14 @@ class Checker:
                     self.err(os.path.join(ed, name), "unexpected file among the episode folders")
         context = {"itemId": item["itemId"], "tmdbTv": (item.get("externalIds") or {}).get("tmdbTv"),
                    "seasons": {s["number"] for s in ((meta or {}).get("series") or {}).get("seasons") or []},
-                   "listed": {}, "places": {}, "where": os.path.join(d, "metadata.json")}
+                   "listed": {}, "places": {}, "where": os.path.join(d, "metadata.json"),
+                   "folders": folders, "members": {}}
         for name in sorted(folders):
             self.item(os.path.join(ed, name), "episode", series=context)
+        try:
+            self.covering(context)
+        except Exception as e:  # a malformed record must not stop the run
+            self.err(ed, f"cannot check the episodes a file covers: {type(e).__name__}: {e}")
 
     def episode(self, where, item, meta, series):
         if series is None:
@@ -1301,6 +1330,127 @@ class Checker:
             if other:
                 self.err(where, f"library.numbering.{name} puts this episode where {other} already is")
             series["places"][at] = item["itemId"]
+
+    def covering(self, series):
+        """One file, several episodes. The file is its holder's — the first episode it covers, whose
+        folder keeps its source and versions — and its source's covers lists the episodes it holds,
+        the holder first; every other one keeps its own item and projection and nothing else, and its
+        projection names the holder (library.coveredBy) and plays and labels the holder's versions. The
+        rules span the episode folders of a series, so they run once all of them have been read.
+
+        covers is written once and coveredBy projected, so the two can part: the database may no longer
+        count an episode as covered, or a projection may not say so yet. Where a record and a projection
+        merely part like that it is a note; where a projection contradicts the records, an error."""
+        members, folders = series["members"], series["folders"]
+        number = lambda m: (m["item"]["seasonNumber"], m["item"]["episodeNumber"])
+        code = lambda m: f"S{m['item']['seasonNumber']:02d}E{m['item']['episodeNumber']:02d}"
+        lib = lambda m: (m["meta"] or {}).get("library") or {}
+        meta_of = lambda m: os.path.join(m["dir"], "metadata.json")
+        covered_by = {iid: lib(m)["coveredBy"] for iid, m in sorted(members.items()) if lib(m).get("coveredBy")}
+
+        # the source records: what a file of several episodes holds, its holder first, in episode order
+        for iid, m in sorted(members.items()):
+            for sid, src in sorted(m["sources"].items()):
+                covers = src.get("covers") or []
+                if not covers:
+                    continue
+                where = os.path.join(m["dir"], "sources", sid, "source.json")
+                if covers[0] != iid:
+                    self.err(where, f"covers begins with {covers[0]}: a file's holder — the episode whose folder keeps "
+                                    f"its source, the first episode it covers — is listed first")
+                twice = sorted({c for c in covers if covers.count(c) > 1})
+                if twice:
+                    self.err(where, f"covers lists {', '.join(twice)} more than once")
+                places = [(number(members[c]), c) for c in dict.fromkeys(covers) if c in members]
+                if any(a[0] >= b[0] for a, b in zip(places, places[1:])):
+                    self.err(where, "covers lists the episodes the file holds out of episode order: "
+                                    + ", ".join(f"{c} ({code(members[c])})" for _, c in places))
+                for c in covers[1:] if sid not in m["dropped"] else []:
+                    if c == iid:
+                        continue
+                    if c not in folders:
+                        self.note(where, f"covers {c}, which has no episode folder in this series: an episode the "
+                                         f"database removed since, or one it never recorded")
+                    elif c in members and covered_by.get(c) != iid:
+                        self.note(where, f"covers {c} ({code(members[c])}), whose projection does not name this "
+                                         f"episode as the holder of its file (library.coveredBy): unlinked since the "
+                                         f"source was recorded, or not linked yet")
+
+        # the covered episodes: nothing of their own but their item and projection, and their holder's versions
+        held = {}
+        for iid, holder in sorted(covered_by.items()):
+            m, where = members[iid], meta_of(members[iid])
+            for sub in ("sources", "versions"):
+                p = os.path.join(m["dir"], sub)
+                if os.path.isdir(p) and listdir(p):
+                    self.err(p, f"a covered episode keeps no {sub[:-1]} of its own: the file that covers it is its "
+                                f"holder's, {holder}, whose folder keeps its source and versions")
+            if holder == iid:
+                self.err(where, "library.coveredBy names this episode itself: a covered episode names the holder "
+                                "whose file covers it, another episode of its series")
+                continue
+            if holder not in members:
+                if holder not in folders:  # one that is there but cannot be read says so itself
+                    self.err(where, f"library.coveredBy names {holder}, which is no episode of this series")
+                continue
+            h = members[holder]
+            if covered_by.get(holder):
+                self.err(where, f"library.coveredBy names {holder}, which is covered by {covered_by[holder]} itself: a "
+                                f"file has one holder, the first episode it covers, and every other episode it "
+                                f"covers names that one")
+                continue
+            if number(m)[0] != number(h)[0] or number(m) <= number(h):
+                self.err(where, f"this episode is {code(m)} and its holder {holder} {code(h)}: a file's holder is the "
+                                f"first episode it covers, and the others follow it in its season")
+            else:
+                held.setdefault(holder, []).append(iid)
+            counted = {sid: s for sid, s in h["sources"].items() if sid not in h["dropped"]}
+            holding = {sid for sid, s in counted.items() if iid in (s.get("covers") or [])[1:]}
+            if counted and not holding:
+                self.err(where, f"library.coveredBy names {holder}, but no source of {holder} covers this episode: "
+                                f"the source of a file that holds several episodes lists every one of them "
+                                f"(source.json covers)")
+            elif not counted:
+                self.note(where, f"covered by {holder}, whose file has no source recorded yet")
+            primary = lib(m).get("primaryVersionId")
+            if primary and primary in h["removed"]:
+                self.err(where, f"library.primaryVersionId {primary} names a version of its holder {holder} that was "
+                                f"removed")
+            elif primary and primary not in h["versions"]:
+                self.err(where, f"library.primaryVersionId {primary} names no version folder of its holder {holder}: a "
+                                f"covered episode plays a version of the episode whose file covers it")
+            elif primary and not set(h["versions"][primary]["sourceIds"]) & holding:
+                self.err(where, f"library.primaryVersionId {primary} names a version of {holder} made from no source "
+                                f"that covers this episode")
+            for vid in sorted(lib(m).get("versionLabels") or {}):
+                if vid not in h["versions"]:
+                    self.err(where, f"library.versionLabels names {vid}, which is "
+                                    + (f"a removed version of its holder {holder}" if vid in h["removed"]
+                                       else f"no version folder of its holder {holder}"))
+            for name, place in sorted((lib(m).get("numbering") or {}).items()):
+                if place.get("episodeEnd") is not None:
+                    self.err(where, f"library.numbering.{name}.episodeEnd is {place['episodeEnd']}, and this episode is "
+                                    f"covered by {holder}: only the holder, whose file it is, numbers the last episode "
+                                    f"the file covers")
+
+        # the holders: where the last episode a file covers sits, in each ordering the holder has a place in
+        for iid, m in sorted(members.items()):
+            if iid in covered_by:
+                continue
+            last = members[max(held[iid], key=lambda c: number(members[c]))] if held.get(iid) else None
+            for name, place in sorted((lib(m).get("numbering") or {}).items()):
+                end = place.get("episodeEnd")
+                if last is None:
+                    if end is not None:
+                        self.note(meta_of(m), f"library.numbering.{name}.episodeEnd is {end}, and no episode names this "
+                                              f"one as the holder of its file (library.coveredBy)")
+                    continue
+                theirs = ((lib(last).get("numbering") or {}).get(name) or {}).get("episode") if name != "aired" \
+                    else last["item"]["episodeNumber"]
+                if theirs is not None and end != theirs:
+                    self.err(meta_of(m), f"library.numbering.{name}.episodeEnd is {'null' if end is None else end}, but "
+                                         f"the last episode its file covers, {last['item']['itemId']} ({code(last)}), is "
+                                         f"episode {theirs} there: the holder's place ends where that one sits")
 
     # ------------------------------------------------------------ people/
     def person(self, d):

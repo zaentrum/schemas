@@ -6,7 +6,7 @@ validator, and checks the exit code and a phrase of the reason. Every rule the v
 has a case here that fails without it. Run from anywhere; exits non-zero when any case behaves
 unexpectedly. Words on the command line run only the cases whose names contain one of them.
 """
-import glob, hashlib, json, os, shutil, subprocess, sys, tempfile
+import glob, hashlib, json, os, shutil, subprocess, sys, tempfile, uuid
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES = os.path.join(TOOLS, "..", "library", "v2", "examples")
@@ -649,6 +649,68 @@ def taken_in(root):
         os.remove(os.path.join(vp, name))
 
 
+def new_episode(root, number, title, season=1, covered_by=None, primary=None, end=None):
+    """An episode folder of the example series with its record, the checksums over it and its projection,
+    and nothing else — as a covered episode is, or one whose file has not been recorded yet; end is where
+    its place ends, as a holder's does."""
+    sdir = series(root)
+    eid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"test:episode:{season}:{number}"))
+    d = os.path.join(sdir, "episodes", eid)
+    write_json(item(d), {"schema": "zaentrum.library.item/2", "itemId": eid, "type": "episode", "title": title,
+                         "externalIds": {}, "createdAt": "2026-09-18T09:00:00Z", "createdBy": "test",
+                         "seriesId": os.path.basename(sdir), "seasonNumber": season, "episodeNumber": number,
+                         "episodeCode": f"S{season:02d}E{number:02d}"})
+    write_sums(d, ["item.json"])
+    library = {"primaryVersionId": primary, "numbering": {"aired": {"season": season, "episode": number, "episodeEnd": end}},
+               **({"coveredBy": covered_by} if covered_by else {})}
+    write_json(meta(d), {"schema": "zaentrum.library.metadata/2", "itemId": eid, "type": "episode",
+                         "asOf": "2026-09-20T12:00:00Z", "titles": {"primary": title}, "images": [], "library": library})
+    return d
+
+
+def third_on_one_file(root, **library):
+    """Episode 2 as a file that holds episode 3 too — the second episode, and the third on one file: its
+    source covers both, the holder first, and episode 3 is a folder of its own, its record and its
+    projection, which names the holder and plays the holder's version. library changes episode 3's
+    projection. Returns episode 3's folder."""
+    holder = episode(root, 2)
+    third = new_episode(root, 3, "Headwind", covered_by=os.path.basename(holder),
+                        primary=os.path.basename(primary(holder)))
+    edit(episode_source(root, 2), lambda d: d.update(covers=[os.path.basename(holder), os.path.basename(third)]))
+    if library:
+        edit(meta(third), lambda d: d["library"].update(library))
+    return third
+
+
+def covers_of(root, covers):
+    """Episode 2's source covering the episodes covers names, given by episode number or as an id."""
+    edit(episode_source(root, 2), lambda d: d.update(
+        covers=[os.path.basename(episode(root, c)) if isinstance(c, int) else c for c in covers]))
+
+
+def numbering_of(root, number, **place):
+    """The aired place of an episode, changed in its projection."""
+    edit(meta(episode(root, number)), lambda d: d["library"]["numbering"]["aired"].update(place))
+
+
+def second_file_of_holder(root):
+    """Episode 4's source and the version taken in from it copied into episode 2: a second source of the
+    holder, which covers nothing, and a version made from it. Returns that version's id."""
+    tailwind = episode(root, 4)
+    for sub in ("sources", "versions"):
+        for name in os.listdir(os.path.join(tailwind, sub)):
+            shutil.copytree(os.path.join(tailwind, sub, name), os.path.join(episode(root, 2), sub, name))
+    return os.listdir(os.path.join(tailwind, "versions"))[0]
+
+
+def removed_from_holder(root):
+    """Episode 2's first version — its original deleted, its package superseded — removed by an event and its
+    folder deleted, as the retire job does after the grace. Returns its id."""
+    old = json.load(open(supersede(root)))["versionId"]
+    remove_version(episode(root, 2), os.path.join(episode(root, 2), "versions", old))
+    return old
+
+
 CASES = [
     # (name, expect_ok, change(root), reason phrase, extra args)
     ("examples are valid", True, lambda r: None, "OK", []),
@@ -1098,6 +1160,72 @@ CASES = [
      "packagedFrom names 'On Location.mkv'", []),
     ("an extra keeping the container's title", False, lambda r: edit(xjson(featurette(r)), lambda d: d["container"].update(title="On.Location")),
      "keeps the container's title tag", []),
+
+    # ---- one file, several episodes: the holder keeps it, and the episodes it covers name the holder
+    ("a file that covers two episodes: the holder keeps it, the other names the holder and plays its version", True,
+     third_on_one_file, "OK", ["--check-checksums"]),
+    ("a covered episode the database chose no version for", True, lambda r: third_on_one_file(r, primaryVersionId=None), "OK", []),
+    ("a covered episode labelling its holder's version", True,
+     lambda r: third_on_one_file(r, versionLabels={os.path.basename(primary(episode(r, 2))): "Extended"}), "OK", []),
+    ("a covered episode that keeps a source of its own", False,
+     lambda r: shutil.copytree(os.path.dirname(episode_source(r, 2)), os.path.join(third_on_one_file(r), "sources",
+                                                                                  os.path.basename(os.path.dirname(episode_source(r, 2))))),
+     "a covered episode keeps no source of its own: the file that covers it is its holder's", []),
+    ("a covered episode that keeps a version of its own", False,
+     lambda r: shutil.copytree(primary(episode(r, 2)), os.path.join(third_on_one_file(r), "versions",
+                                                                    os.path.basename(primary(episode(r, 2))))),
+     "a covered episode keeps no version of its own", []),
+    ("a covered episode naming itself", False, lambda r: (lambda d: edit(meta(d), lambda m: m["library"].update(
+        coveredBy=os.path.basename(d))))(third_on_one_file(r)), "library.coveredBy names this episode itself", []),
+    ("a covered episode naming no episode of its series", False, lambda r: third_on_one_file(r, coveredBy=NOWHERE),
+     f"library.coveredBy names {NOWHERE}, which is no episode of this series", []),
+    ("a covered episode whose holder is covered itself", False,
+     lambda r: (third_on_one_file(r), edit(meta(episode(r, 2)), lambda m: m["library"].update(
+         coveredBy=os.path.basename(episode(r, 1))))), "which is covered by", []),
+    ("a covered episode before its holder", False,
+     lambda r: (lambda h: new_episode(r, 5, "Earlier", covered_by=os.path.basename(h)))(new_episode(r, 6, "Later")),
+     "a file's holder is the first episode it covers, and the others follow it in its season", []),
+    ("a covered episode of another season than its holder", False,
+     lambda r: (edit(meta(series(r)), lambda d: d["series"]["seasons"].append(dict(d["series"]["seasons"][0], number=2))),
+                new_episode(r, 1, "Gale", season=2, covered_by=os.path.basename(episode(r, 2)))),
+     "a file's holder is the first episode it covers, and the others follow it in its season", []),
+    ("a covered episode no source of its holder covers", False,
+     lambda r: (third_on_one_file(r), covers_of(r, [])), "but no source of", []),
+    ("a covered episode whose holder's file has no source recorded yet is a note", True,
+     lambda r: (lambda h: new_episode(r, 8, "Downwind", covered_by=os.path.basename(h)))(new_episode(r, 7, "Upwind", end=8)),
+     "whose file has no source recorded yet", []),
+    ("a covered episode playing no version of its holder", False, lambda r: third_on_one_file(r, primaryVersionId=NOWHERE),
+     f"library.primaryVersionId {NOWHERE} names no version folder of its holder", []),
+    ("a covered episode playing a version of its holder that was removed", False,
+     lambda r: third_on_one_file(r, primaryVersionId=removed_from_holder(r)), "that was removed", []),
+    ("a covered episode playing a version of its holder made from a source that does not cover it", False,
+     lambda r: third_on_one_file(r, primaryVersionId=second_file_of_holder(r)),
+     "made from no source that covers this episode", ["--check-checksums"]),
+    ("a covered episode labelling a version that is not its holder's", False,
+     lambda r: third_on_one_file(r, versionLabels={NOWHERE: "Extended"}), f"no version folder of its holder", []),
+    ("a covered episode numbering where its file ends", False,
+     lambda r: (third_on_one_file(r), numbering_of(r, 3, episodeEnd=4)), "only the holder, whose file it is", []),
+    ("a coveredBy that is no id", False, lambda r: third_on_one_file(r, coveredBy="S01E02"), "$.library.coveredBy", []),
+    ("a movie covered by another item's file", False,
+     lambda r: edit(meta(movie(r)), lambda d: d["library"].update(coveredBy=NOWHERE)), "must not have coveredBy here", []),
+    ("a movie's file covering episodes", False, lambda r: edit(movie_source(r), lambda d: d.update(covers=[NOWHERE])),
+     "a movie's file holds none", []),
+    ("a source whose covers does not begin with its holder", False,
+     lambda r: (third_on_one_file(r), covers_of(r, [3, 2])), "covers begins with", []),
+    ("a source covering an episode twice", False, lambda r: (third_on_one_file(r), covers_of(r, [2, 3, 3])),
+     "more than once", []),
+    ("a source covering episodes out of their order", False, lambda r: (third_on_one_file(r), covers_of(r, [2, 3, 1])),
+     "out of episode order", []),
+    ("a source covering an episode the series has no folder of is a note", True,
+     lambda r: (third_on_one_file(r), covers_of(r, [2, 3, NOWHERE])), "which has no episode folder in this series", []),
+    ("a source covering an episode the database no longer counts as covered is a note", True,
+     lambda r: (third_on_one_file(r, coveredBy=None, primaryVersionId=None)), "whose projection does not name this episode", []),
+    ("the holder's numbering ending short of the last episode its file covers", False,
+     lambda r: (third_on_one_file(r), numbering_of(r, 2, episodeEnd=2)), "but the last episode its file covers", []),
+    ("the holder's numbering ending nowhere", False, lambda r: (third_on_one_file(r), numbering_of(r, 2, episodeEnd=None)),
+     "episodeEnd is null, but the last episode its file covers", []),
+    ("an episode's numbering ending where no covered episode explains it is a note", True,
+     lambda r: numbering_of(r, 4, episodeEnd=5), "and no episode names this one as the holder of its file", []),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
