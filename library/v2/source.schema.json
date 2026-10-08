@@ -131,7 +131,7 @@
     },
     "covers": {
       "type": "array",
-      "description": "Episode item ids this one file contains, in order, when a single file holds several episodes.",
+      "description": "Episode item ids this one file contains, in order, when a single file holds several episodes. Such a file is never split — two episodes cut as one have no clean boundary between them — so it is packaged once and serves every episode it holds. The first id is the holder's: the episode whose folder keeps this source, the first episode the file covers, the one its versions belong to. Every episode after it, in episode order, is covered: it keeps its own item and projection — its own titles, overview and images — and no source or version of its own; its projection names the holder (library.coveredBy) and plays a version of the holder made from this source (library.primaryVersionId), and the holder's own projection numbers the last of them (library.numbering's episodeEnd). Empty for a file of one episode, as on every movie's source. Written once like the rest of this record: an episode the database no longer counts as covered stays listed here, and its own projection no longer names the holder.",
       "items": { "$ref": "defs.schema.json#/$defs/uuid" }
     },
     "essence": { "$ref": "defs.schema.json#/$defs/essence", "description": "What this original carries that a package can fail to carry. The deletion gate compares it with the package's." },

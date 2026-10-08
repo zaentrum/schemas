@@ -28,6 +28,11 @@
       "then": { "properties": { "library": { "not": { "required": ["numbering"] } } } }
     },
     {
+      "$comment": "Only an episode is covered by another's file, and only by another episode of its series.",
+      "if": { "not": { "properties": { "type": { "const": "episode" } }, "required": ["type"] } },
+      "then": { "properties": { "library": { "not": { "required": ["coveredBy"] } } } }
+    },
+    {
       "$comment": "Bonus material sits beside its movie or series, never on an episode.",
       "if": { "properties": { "type": { "const": "episode" } }, "required": ["type"] },
       "then": { "properties": { "library": { "not": { "required": ["extras"] } } } }
@@ -188,13 +193,17 @@
       "properties": {
         "primaryVersionId": {
           "oneOf": [{ "$ref": "defs.schema.json#/$defs/uuid" }, { "type": "null" }],
-          "description": "The version that plays when the viewer does not choose. Null when the database never decided, and a reader then picks for itself. It is a decision, not a place: it never moves a file."
+          "description": "The version that plays when the viewer does not choose. Null when the database never decided, and a reader then picks for itself. It is a decision, not a place: it never moves a file. A covered episode's (coveredBy) names a version of its holder — the version of the episode whose file covers it, in that episode's folder, made from a source that lists this one among the episodes it covers — since it has no version of its own."
         },
         "versionLabels": {
           "type": "object",
-          "description": "versionId -> what a viewer picks between, e.g. 'Director's Cut', 'Black & White'. Listed only where a person set one; every other version is labelled at read time from its edition and presentation, so an unlisted version is not an omission.",
+          "description": "versionId -> what a viewer picks between, e.g. 'Director's Cut', 'Black & White'. Listed only where a person set one; every other version is labelled at read time from its edition and presentation, so an unlisted version is not an omission. A covered episode's label versions of its holder, as its primaryVersionId names one.",
           "propertyNames": { "$ref": "defs.schema.json#/$defs/uuid" },
           "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "coveredBy": {
+          "oneOf": [{ "$ref": "defs.schema.json#/$defs/uuid" }, { "type": "null" }],
+          "description": "Episode only: the episode whose file covers this one too, when one file holds several episodes and this episode has none of its own — the holder, the first episode the file covers, of the same series and season. A covered episode keeps its own item and its own texts and images here, and no source or version of its own: it plays what its holder plays, one package for every episode the file holds, and its primaryVersionId names a version of the holder whose source lists this episode among the ones it covers (source.json covers). Absent, or null, for an episode whose file is its own or that has none yet, and from a projection written before 2026-10-08."
         },
         "match": {
           "description": "Whether and how this item is identified against the reference database. item.json carries the reference ids; this says how far to trust them, so a re-sync can skip what is unmatched or disputed and never overwrite what a person decided.",
@@ -231,7 +240,7 @@
             "properties": {
               "season": { "type": ["integer", "null"], "minimum": 0 },
               "episode": { "type": "integer", "minimum": 0 },
-              "episodeEnd": { "type": ["integer", "null"], "minimum": 0, "description": "Set when this one file covers several episodes." }
+              "episodeEnd": { "type": ["integer", "null"], "minimum": 0, "description": "Set when this one file covers several episodes: on the holder, the first of them, to the number in this ordering of the last episode its file covers — the place there of the last episode whose coveredBy names this one. Null on every other episode, a covered one among them, which has a place of its own." }
             }
           }
         },
