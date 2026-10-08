@@ -44,6 +44,12 @@ rule and checks the tool notices:
                  nothing, and whatever contradicts its records is refused and left as it was
   proves itself  sha256sum -c passes in every write-once folder, and each version and packaged
                  extra is one chain
+  neutral names  a tree written before 2026-10-08 is given the names the library gives its files: a
+                 dry run lists every change and makes none, --apply — piped into the pod's Python —
+                 leaves byte for byte the tree the record logic writes now, a copy that is no subtitle
+                 kept in the run's folder, journaled; a second run does nothing, a stopped one is
+                 finished by the next, two never act at once, and whatever contradicts its records is
+                 refused and left as it was
   sweep          a dry run finds every kind of garbage and only it, --apply removes exactly that
                  through a quarantine it checks again — putting back what is referenced by then — and
                  finishes one an interrupted run left; whatever is referenced, younger than the
@@ -88,8 +94,9 @@ UPGRADE = os.path.join(TOOLS, "library-v2-upgrade.py")
 SWEEP = os.path.join(TOOLS, "library-v2-sweep.py")
 VALIDATOR = os.path.join(TOOLS, "validate-library-v2.py")
 RECORDS = os.path.join(TOOLS, "libv2_records.py")
+NEUTRAL = os.path.join(TOOLS, "library-v2-neutral-names.py")
 # The tools that import the record module the packager vendors, and so are piped behind it.
-USES_RECORDS = (FROM_CATALOG,)
+USES_RECORDS = (FROM_CATALOG, NEUTRAL)
 
 
 class Tally:
@@ -3364,6 +3371,214 @@ def test_upgrade(t):
              code == 0 and stamps(vp) == before and "removed by an event" in text, text)
 
 
+# ---------------------------------------------------------------- a tree from before, given neutral names
+NAMED_FEATURETTE = "Example Film (2024) - Featurette.mkv"
+NAMED_EXTRA = "27aa63f3-5555-4666-8777-999999999999"
+
+
+def named_tree(root, rec):
+    """The golden tree twice over: as the record logic writes it now — an extra keeping its original
+    added — and, in place, as it wrote it before 2026-10-08: the source naming its original as it
+    arrived and where it came from, the container's title tag kept, its probe verbatim, a copy of the
+    subtitle file and of the .nfo under the names they came with, the version keeping the original under
+    its own name, the subtitle made from the copy naming it so, and the extras naming their originals
+    as they arrived — every chain closed over them as a writer then closed it. Returns (the library, the
+    tree as it is written now: {path: bytes}, its sourceId)."""
+    item, sid, vid, _ = golden_tree(root, rec)
+    library = os.path.join(root, "library")
+    xp2 = os.path.join(item, "extras", NAMED_EXTRA)
+    os.makedirs(xp2)
+    body = b"a featurette that is only an example\n" * 50
+    with open(os.path.join(xp2, "original.mkv"), "wb") as f:
+        f.write(body)
+    fixity = {"qh1": rec.qh1(os.path.join(xp2, "original.mkv"))}
+    extra2 = lambda name: rec.json_bytes(rec.extra_record(
+        NAMED_EXTRA, created_at=GOLDEN_AT, created_by="test", kind="featurette", title="On Set", original_files=[name],
+        originals=[{"name": name, "sizeBytes": len(body), "fixity": fixity}]))
+    with open(os.path.join(xp2, "extra.json"), "wb") as f:
+        f.write(extra2("original.mkv"))
+    write_sums(xp2, ["extra.json", "original.mkv"])
+    now = tree_files(library)
+
+    def put(path, data):
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def chain(folder, record):
+        """The chain closed again over a record, from the bottom up, as a writer closes it."""
+        names = sorted({n for n in listing(folder)})
+        write_sums(folder, names)
+        pp = os.path.join(folder, "package.json")
+        doc = jload(pp)
+        doc["checksums"].update(sha256="sha256:" + digest(os.path.join(folder, "checksums.sha256")), files=len(names),
+                                bytes=sum(os.path.getsize(os.path.join(folder, n)) for n in names))
+        put(pp, rec.json_bytes(doc))
+        close(folder)
+
+    sp = os.path.join(item, "sources", sid)
+    doc = jload(os.path.join(sp, "source.json"))
+    probe = rec.json_bytes(jload(os.path.join(GOLDEN, "probe.json")))
+    old = {}
+    for key, value in doc.items():
+        old[key] = value
+        if key == "file":
+            old["origin"] = {"libraryPath": f"Example Film (2024)/{GOLDEN_ORIGINAL}", "takenBy": "import",
+                             "folder": "Example Film (2024)"}
+    title = jload(os.path.join(GOLDEN, "probe.json"))["format"]["tags"]["title"]
+    old["file"] = dict(doc["file"], name=GOLDEN_ORIGINAL)
+    old["container"] = dict(doc["container"], title=title, tags={"title": title, **doc["container"]["tags"]})
+    nfo = b"<movie><title>Example Film</title></movie>\n"
+    old["sidecars"] = [{"file": f"sources/{sid}/{GOLDEN_SIDECAR}", "originalName": GOLDEN_SIDECAR,
+                        **{k: v for k, v in doc["sidecars"][0].items() if k != "file"}},
+                       {"file": f"sources/{sid}/{GOLDEN_COMPANION}", "originalName": GOLDEN_COMPANION, "kind": "nfo",
+                        "format": "nfo", "sizeBytes": len(nfo), "sha256": "sha256:" + hashlib.sha256(nfo).hexdigest()}]
+    old["probe"] = dict(doc["probe"], sha256=rec.sha_bytes(probe))
+    os.rename(os.path.join(sp, "subtitle-1.de.srt"), os.path.join(sp, GOLDEN_SIDECAR))
+    put(os.path.join(sp, GOLDEN_COMPANION), nfo)
+    put(os.path.join(sp, "ffprobe.json"), probe)
+    put(os.path.join(sp, "source.json"), rec.json_bytes(old))
+    write_sums(sp, ["source.json", "ffprobe.json", GOLDEN_SIDECAR, GOLDEN_COMPANION])
+
+    vp = os.path.join(item, "versions", vid)
+    os.rename(os.path.join(vp, "original.mkv"), os.path.join(vp, GOLDEN_ORIGINAL))
+    put(os.path.join(vp, "version.json"), rec.json_bytes(dict(jload(os.path.join(vp, "version.json")),
+                                                              originalFiles=[GOLDEN_ORIGINAL])))
+    package = jload(os.path.join(vp, "package.json"))
+    for s in package["subtitles"]:
+        if s.get("fromSidecar"):
+            s["fromSidecar"] = f"sources/{sid}/{GOLDEN_SIDECAR}"
+    put(os.path.join(vp, "package.json"), rec.json_bytes(package))
+    chain(vp, "version.json")
+
+    xp = os.path.join(item, "extras", GOLDEN_EXTRA)
+    x = jload(os.path.join(xp, "extra.json"))
+    put(os.path.join(xp, "extra.json"), rec.json_bytes(dict(x, packagedFrom=[dict(x["packagedFrom"][0], name="trailer.mov")])))
+    chain(xp, "extra.json")
+    os.rename(os.path.join(xp2, "original.mkv"), os.path.join(xp2, NAMED_FEATURETTE))
+    put(os.path.join(xp2, "extra.json"), extra2(NAMED_FEATURETTE))
+    write_sums(xp2, ["extra.json", NAMED_FEATURETTE])
+    return library, now, sid
+
+
+def test_neutral_names(t):
+    """A tree written before 2026-10-08 is given the names the library gives its files: every rename and
+    rewrite listed by a dry run that changes nothing, made by --apply — piped into a pod's Python — with
+    the journal under the run's folder, to exactly the tree the record logic writes now; a copy that is
+    no subtitle leaves the record for the run's folder; a second run does nothing, an interrupted one is
+    finished by the next, two runs never act at once, and a folder whose records contradict it is left
+    as it was."""
+    rec = load_tool(RECORDS)
+    with tempfile.TemporaryDirectory() as tmp:
+        library, now, sid = named_tree(tmp, rec)
+        named = tree_files(library)
+        before = stamps(library)
+        code, text = run(NEUTRAL, library)
+        t.ok("a dry run says what it would rename, rewrite and take out of the record, and changes nothing",
+             code == 0 and stamps(library) == before and not os.path.exists(os.path.join(library, ".work"))
+             and f"would rename  movies/{GOLDEN_ITEM[:2]}/{GOLDEN_ITEM}/sources/{sid}/{GOLDEN_SIDECAR} -> subtitle-1.de.srt"
+             in text and f"{GOLDEN_ORIGINAL} -> original.mkv" in text and f"{NAMED_FEATURETTE} -> original.mkv" in text
+             and f"would remove  movies/{GOLDEN_ITEM[:2]}/{GOLDEN_ITEM}/sources/{sid}/{GOLDEN_COMPANION}" in text
+             and "run again with --apply" in text, text)
+        code, text = run_piped(NEUTRAL, library, "--apply")
+        rundir = os.path.join(library, ".work", "migration", "neutral-names")
+        after = {k: v for k, v in tree_files(library).items() if not k.startswith(".work")}
+        t.ok("--apply, piped into a pod's Python behind the record module, gives the tree its names",
+             code == 0 and "gave" in text and "files renamed: 3" in text, text)
+        t.eq("and leaves exactly the tree the record logic writes now", sorted(k for k in after if after[k] != now.get(k))
+             + sorted(set(now) - set(after)), [])
+        t.ok("the .nfo leaves the record, kept in the run's folder",
+             open(os.path.join(rundir, "removed", "movies", GOLDEN_ITEM[:2], GOLDEN_ITEM, "sources", sid, GOLDEN_COMPANION),
+                  "rb").read() == named[f"movies/{GOLDEN_ITEM[:2]}/{GOLDEN_ITEM}/sources/{sid}/{GOLDEN_COMPANION}"])
+        journal = [json.loads(line) for line in open(os.path.join(rundir, "journal.jsonl"))]
+        plan = next(e for e in journal if e["op"] == "plan")
+        t.ok("the journal holds the item's plan, each step as it was done, then done — and every file it rewrote, as "
+             "it was and as it is",
+             [e["op"] for e in journal] == ["plan"] + [s["op"] for s in plan["steps"]] + ["done"]
+             and all(open(os.path.join(rundir, "before", *s["path"].split("/")), "rb").read()
+                     == named[s["path"].replace("/", os.sep)] for s in plan["steps"] if s["op"] == "rewrite")
+             and all(rec.sha_file(os.path.join(rundir, "after", *s["path"].split("/"))) == s["after"]
+                     for s in plan["steps"] if s["op"] == "rewrite")
+             and {(s["from"].rsplit("/", 1)[-1], s["to"].rsplit("/", 1)[-1]) for s in plan["steps"] if s["op"] == "rename"}
+             == {(GOLDEN_SIDECAR, "subtitle-1.de.srt"), (GOLDEN_ORIGINAL, "original.mkv"),
+                 (NAMED_FEATURETTE, "original.mkv")}, journal[:2])
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", library)
+            t.ok("the tree it leaves is valid", code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("the tree it leaves is valid", "jsonschema is not importable here")
+        code, mtext = run(MEDIA_CHECK, "--checksums", library)
+        t.ok("and passes the media check", code == 0 and mtext.strip().endswith("OK"), mtext)
+        stamped = stamps(library)
+        code, text = run(NEUTRAL, library, "--apply")
+        t.ok("a second run does nothing", code == 0 and "nothing to do" in text and stamps(library) == stamped, text)
+
+    # ---- stopped after its third step, the run is finished by the next, to the same tree
+    with tempfile.TemporaryDirectory() as tmp:
+        library, now, sid = named_tree(tmp, rec)
+        tool = load_tool(NEUTRAL)
+        n = tool.Neutral(library, "neutral-names", True, False)
+        logged, write = [], n.log
+
+        def stop(item, entry):
+            write(item, entry)
+            logged.append(entry["op"])
+            if logged.count("rename") + logged.count("remove") + logged.count("rewrite") == 3:
+                raise SystemExit("stopped")
+        n.log = stop
+        try:
+            n.run()
+        except SystemExit:
+            pass
+        n.journal.close()
+        half = tree_files(library)
+        code, text = run(NEUTRAL, library, "--apply")
+        after = {k: v for k, v in tree_files(library).items() if not k.startswith(".work")}
+        t.ok("a run stopped after three steps is finished by the next, to the same tree",
+             logged[:1] == ["plan"] and half != now and code == 0 and "an interrupted run of neutral-names is finished"
+             in text and after == now, text)
+
+    # ---- what contradicts its records is refused, and its item left exactly as it was
+    def refused(name, change, phrase):
+        with tempfile.TemporaryDirectory() as tmp:
+            library, _, sid = named_tree(tmp, rec)
+            change(os.path.join(library, "movies", GOLDEN_ITEM[:2], GOLDEN_ITEM), sid)
+            snapshot = stamps(library)
+            code, text = run(NEUTRAL, library, "--apply")
+            t.ok(f"it refuses {name}, and leaves the item as it was",
+                 code == 1 and phrase in text and {k: v for k, v in stamps(library).items() if not k.startswith(".work")}
+                 == snapshot, text)
+
+    def append(path):
+        with open(path, "ab") as f:
+            f.write(b"x")
+    refused("a copy that changed after its checksums were written",
+            lambda d, sid: append(os.path.join(d, "sources", sid, GOLDEN_SIDECAR)), "does not match its checksum")
+    refused("a package whose .complete does not name its package.json",
+            lambda d, sid: append(glob.glob(os.path.join(d, "versions", "*", ".complete"))[0]),
+            ".complete does not name its package.json")
+    refused("an original that is not the size its record says",
+            lambda d, sid: append(glob.glob(os.path.join(d, "versions", "*", GOLDEN_ORIGINAL))[0]),
+            "is not the size its source record says")
+    refused("a source in the layout before 2026-10-02 (b)",
+            lambda d, sid: shutil.move(os.path.join(d, "sources", sid, "source.json"), os.path.join(d, "sources", sid + ".json")),
+            "library-v2-upgrade.py upgrades the tree first")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        library, _, _ = named_tree(tmp, rec)
+        rundir = os.path.join(library, ".work", "migration", "neutral-names")
+        os.makedirs(rundir)
+        import fcntl
+        with open(os.path.join(rundir, "journal.jsonl"), "a") as held:
+            fcntl.lockf(held, fcntl.LOCK_EX)
+            code, text = run(NEUTRAL, library, "--apply")
+        t.ok("and two runs never act on one tree at once", code == 1 and "is locked" in text
+             and os.path.isfile(glob.glob(os.path.join(library, "movies", "*", "*", "versions", "*", GOLDEN_ORIGINAL))[0]),
+             text)
+        code, text = run(NEUTRAL, library, "--run", "../elsewhere")
+        t.ok("a run is named as a folder is", code == 2 and "is not a folder name" in text, text)
+
+
+
 # ---------------------------------------------------------------- sweeping provable garbage
 GONE = "0d0d0d0d-0000-4000-8000-000000000001"           # an item the database deleted
 GONE_PERSON = "0d0d0d0d-0000-4000-8000-0000000000aa"    # a person it deleted, because no title credits them
@@ -4503,7 +4718,8 @@ def main():
                         ("credits: a role, the source's own words, one order", test_credits), ("people", test_people),
                         ("the people list in full", test_people_in_full),
                         ("projecting again, and nothing else", test_projections_only),
-                        ("upgrading a tree in place", test_upgrade), ("sweeping garbage", test_sweep),
+                        ("upgrading a tree in place", test_upgrade),
+                        ("neutral names for a tree from before", test_neutral_names), ("sweeping garbage", test_sweep),
                         ("sweeping a version an event removed", test_sweep_removed_versions),
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("the media check", test_media_check)):
