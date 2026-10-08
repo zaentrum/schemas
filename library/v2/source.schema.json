@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zaentrum.github.io/schemas/library/v2/source.schema.json",
   "title": "sources/<sourceId>/source.json — one original as it was found",
-  "description": "Written once by the analyzer, when an original is taken into the item, and never touched again. It is the account of a file that cannot change: its name and size as found, where it came from, its container, every stream it contained, whether it was itself already a re-encode, and the essence a package may fail to carry — the input to the deletion gate.\n\nEach source is a folder of its own, written once and complete in itself:\n  sources/<sourceId>/source.json       this record\n  sources/<sourceId>/ffprobe.json      the verbatim probe\n  sources/<sourceId>/<sidecar>         each sidecar copied from beside the original\n  sources/<sourceId>/checksums.sha256  every file above, sha256sum -c format\nThe checksums file is written with the rest and lists exactly those files, so `sha256sum -c checksums.sha256` in the folder proves the record is the one that was written, which the record cannot prove about itself.\n\nBecause it is written once, it says nothing about what happened to the file later. Whether the original is still on storage is the version's business (versions/<id>/version.json names it), and its deletion is an event (events/…-original-deleted.json). A source record is never rewritten to say 'deleted'.\n\nPaths: probe.file and sidecars[].file are relative to the ITEM folder, and both live in sources/<sourceId>/ so they survive the original's deletion. origin.libraryPath is relative to the root of the library the file came from.",
+  "description": "Written once by the analyzer, when an original is taken into the item, and never touched again. It is the account of a file that cannot change: its size as found and the name the library gives it, its container, every stream it contained, whether it was itself already a re-encode, and the essence a package may fail to carry — the input to the deletion gate.\n\nIt keeps no name the file arrived under, and does not say where it came from: a file name, a folder or a container title can tell where a file came from, so what they claim is kept as the values parsed from them (labels, naming) and never as the name. A record written before 2026-10-08 may still name them — origin, sidecars[].originalName, the container's title, the probe's filename — and stays valid.\n\nEach source is a folder of its own, written once and complete in itself:\n  sources/<sourceId>/source.json       this record\n  sources/<sourceId>/ffprobe.json      the probe: the tool's output, but for the two edits probe names\n  sources/<sourceId>/subtitle-1.de.srt a copy of each subtitle file that came with the original\n  sources/<sourceId>/checksums.sha256  every file above, sha256sum -c format\nThe checksums file is written with the rest and lists exactly those files, so `sha256sum -c checksums.sha256` in the folder proves the record is the one that was written, which the record cannot prove about itself.\n\nBecause it is written once, it says nothing about what happened to the file later. Whether the original is still on storage is the version's business (versions/<id>/version.json names it), and its deletion is an event (events/…-original-deleted.json). A source record is never rewritten to say 'deleted'.\n\nPaths: probe.file and sidecars[].file are relative to the ITEM folder, and both live in sources/<sourceId>/ so they survive the original's deletion. origin.libraryPath, where a record written before names it, is relative to the root of the library the file came from.",
   "type": "object",
   "required": ["schema", "sourceId", "takenAt", "file", "container", "streams", "fidelity", "essence", "probe"],
   "additionalProperties": false,
@@ -21,15 +21,15 @@
 
     "file": {
       "type": "object",
-      "description": "The file as found. There is no path here: where the bytes live is the version's business, and after a deletion they live nowhere.",
+      "description": "The file as found, under the name the library gives it. There is no path here: where the bytes live is the version's business, and after a deletion they live nowhere.",
       "required": ["name", "sizeBytes"],
       "additionalProperties": false,
       "properties": {
-        "name": { "$ref": "defs.schema.json#/$defs/fileName", "description": "Original filename, unchanged. The version that keeps the original names the same file." },
+        "name": { "$ref": "defs.schema.json#/$defs/fileName", "description": "The name the library gives the file: original.<ext>, or original-<n>.<ext> for the nth part of a version split into several, <ext> the extension it arrived with, lower-cased, or bin when that is not one to eight letters and digits. The version that keeps the original names the same file. A record written before 2026-10-08 holds the name the file arrived under." },
         "kind": { "enum": ["stream-container", "disc-image", "transport-stream", "audio-file"] },
         "sizeBytes": { "type": "integer", "minimum": 0 },
         "mtime": { "$ref": "defs.schema.json#/$defs/timestamp" },
-        "fixity": { "$ref": "defs.schema.json#/$defs/fixity", "description": "Always there, but for an original that was gone before the library recorded it — a package the catalog held of a file nobody can read any more — whose record keeps its name and the size the catalog knew, and says so in probe.note. A version never keeps such an original in its folder." },
+        "fixity": { "$ref": "defs.schema.json#/$defs/fixity", "description": "Always there, but for an original that was gone before the library recorded it — a package the catalog held of a file nobody can read any more — whose record keeps the name the library gives it and the size the catalog knew, and says so in probe.note. A version never keeps such an original in its folder." },
         "ownership": { "$ref": "defs.schema.json#/$defs/ownership" },
         "part": {
           "type": ["object", "null"],
@@ -41,7 +41,7 @@
     },
     "origin": {
       "type": "object",
-      "description": "Where the original lived before it entered this folder. The folder name is often the ONLY record of an edition ('Example Film - Unrated (2015)') or of a series qualifier ('Example Show (US)'), so it is kept verbatim.",
+      "description": "Where the original lived before it entered the library, verbatim, as a writer that kept the names wrote it. A writer that keeps no names — the platform — does not write it: a path can tell where a file came from, and what its folder claims, an edition ('Example Film - Unrated (2015)') above all, is kept in labels as the value parsed from it.",
       "required": ["libraryPath"],
       "additionalProperties": false,
       "properties": {
@@ -64,7 +64,7 @@
     },
     "labels": {
       "type": "object",
-      "description": "What the filename and folder CLAIM. Unreliable — a name can claim a disc copy that is a re-encode — but the only claim on record, and it disappears with the file.",
+      "description": "What the filename and folder CLAIM. Unreliable — a name can claim a disc copy that is a re-encode — but the only claim on record, and it disappears with the file. Read from the name the file arrived under and the folder it sat in, and kept as the values parsed from them, never as the name.",
       "additionalProperties": false,
       "properties": {
         "quality": { "type": ["string", "null"], "description": "The quality token exactly as it appears in the filename, e.g. '1080p'." },
@@ -82,11 +82,11 @@
         "format": { "type": "string" },
         "durationMs": { "type": ["integer", "null"] },
         "bitrate": { "type": ["integer", "null"] },
-        "title": { "type": ["string", "null"], "description": "Container title tag: often the richest record of what the file was before any re-encode." },
+        "title": { "type": ["string", "null"], "description": "The container's title tag. A writer that keeps no names writes null: a title tag routinely names where a file came from. A record written before 2026-10-08 may hold it." },
         "muxingApp": { "type": ["string", "null"] },
         "writingApp": { "type": ["string", "null"] },
         "creationTime": { "type": ["string", "null"] },
-        "tags": { "type": "object", "additionalProperties": { "type": "string" } }
+        "tags": { "type": "object", "additionalProperties": { "type": "string" }, "description": "The container's tags as the probe found them, but its title tag, which a writer that keeps no names leaves out in any case." }
       }
     },
     "fidelity": {
@@ -110,14 +110,14 @@
     },
     "sidecars": {
       "type": "array",
-      "description": "Small files that sat next to the original (external subtitles, NFO text). Copied into sources/<sourceId>/ so they survive the original's deletion.",
+      "description": "The subtitle files that came with the original, each copied into sources/<sourceId>/ so it survives the original's deletion, under the name the library gives it: subtitle-<n>.<lang>[.forced][.sdh].<ext> — n from 1 in the order the catalog lists them, lang the primary subtag of the language, lower-cased, or und, .forced and .sdh as forced and hearingImpaired say, ext the file's own, lower-cased. Nothing else that sat beside the original is kept: NFO text routinely names where a file came from. A record written before 2026-10-08 may list other small files (kind nfo, image, other), copied under the names they had.",
       "items": {
         "type": "object",
         "required": ["file", "kind"],
         "additionalProperties": false,
         "properties": {
           "file": { "$ref": "defs.schema.json#/$defs/relPath", "description": "sources/<sourceId>/<name>, relative to the item folder." },
-          "originalName": { "type": "string" },
+          "originalName": { "type": "string", "description": "The name the file had beside the original. A writer that keeps no names does not write it." },
           "kind": { "enum": ["subtitle", "nfo", "image", "other"] },
           "format": { "type": ["string", "null"] },
           "language": { "oneOf": [{ "$ref": "defs.schema.json#/$defs/language" }, { "type": "null" }] },
@@ -137,7 +137,7 @@
     "essence": { "$ref": "defs.schema.json#/$defs/essence", "description": "What this original carries that a package can fail to carry. The deletion gate compares it with the package's." },
     "probe": {
       "type": "object",
-      "description": "The verbatim tool output, kept in a file so any attribute the normalised fields do not model is still recoverable after the original is gone.",
+      "description": "The tool's output, kept in a file so any attribute the normalised fields do not model is still recoverable after the original is gone. It is verbatim but for two edits, which keep it from naming where the file came from: format.filename is the name the library gives the original (file.name), not the path the tool read, and format.tags holds no title tag, in any case. A probe written before 2026-10-08 is verbatim.",
       "required": ["tool", "at", "file"],
       "additionalProperties": false,
       "properties": {
