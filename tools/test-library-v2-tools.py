@@ -2049,32 +2049,38 @@ def legacy_package(folder, duration_ms, subtitles=(), extra=False):
     jwrite(os.path.join(folder, "manifest.json"), manifest)
 
 
+def store_asset(aid, path, kind, **fields):
+    """A playback row of the catalog's export, as the store before the library held it."""
+    return {"id": aid, "path": path, "kind": kind, "codec": None, "resolution": None, "bitrateKbps": 4400,
+            "sizeBytes": fields.pop("sizeBytes", None), "hash": None, "isPrimary": kind == "primary",
+            "audioCodec": "mp4a.40.2", "audioLanguage": "eng", "audioChannels": 2, "audioBitrateKbps": 192,
+            "audioTrackCount": 1, "subtitleTrackCount": fields.pop("subtitleTrackCount", 0),
+            "durationMs": 20000, **fields}
+
+
+def store_row(iid, kind, title, **fields):
+    """An item row of the catalog's export."""
+    return {"id": iid, "type": kind, "title": title, "sortTitle": title.lower(), "year": 2024,
+            "description": f"{title}, an example.", "tagline": None, "rating": None, "durationMs": 20000,
+            "parentId": None, "seasonNumber": None, "episodeNumber": None, "metadataLocked": False,
+            "createdAt": "2026-07-01T09:00:00Z", "createdBy": "scanner", "modifiedAt": "2026-09-30T09:00:00Z",
+            "externalIds": [], "genres": [], "tags": [], "people": [], "chapters": [], "segments": [],
+            "playbackAssets": [], "subtitleAssets": [], "trailers": [], "artwork": [], **fields}
+
+
+def store_original(aid, path, size):
+    """A primary row as the catalog fills it from the probe of its file: codec, resolution, bitrate and
+    duration, and no audio fields."""
+    return store_asset(aid, path, "primary", sizeBytes=size, codec="h264", resolution="1920x1080", bitrateKbps=4000,
+                       durationMs=90000, audioCodec=None, audioLanguage=None, audioChannels=None, audioBitrateKbps=None,
+                       audioTrackCount=None, subtitleTrackCount=None)
+
+
 def legacy_store(root):
     """A share as the platform holds it before the library: its originals under media/, its packages
     under packages/, an extra taken in under extras/ — and the catalog's export of it, with paths as
     the services see the share. Returns the export's path."""
-    def asset(aid, path, kind, **fields):
-        return {"id": aid, "path": path, "kind": kind, "codec": None, "resolution": None, "bitrateKbps": 4400,
-                "sizeBytes": fields.pop("sizeBytes", None), "hash": None, "isPrimary": kind == "primary",
-                "audioCodec": "mp4a.40.2", "audioLanguage": "eng", "audioChannels": 2, "audioBitrateKbps": 192,
-                "audioTrackCount": 1, "subtitleTrackCount": fields.pop("subtitleTrackCount", 0),
-                "durationMs": 20000, **fields}
-
-    def row(iid, kind, title, **fields):
-        return {"id": iid, "type": kind, "title": title, "sortTitle": title.lower(), "year": 2024,
-                "description": f"{title}, an example.", "tagline": None, "rating": None, "durationMs": 20000,
-                "parentId": None, "seasonNumber": None, "episodeNumber": None, "metadataLocked": False,
-                "createdAt": "2026-07-01T09:00:00Z", "createdBy": "scanner", "modifiedAt": "2026-09-30T09:00:00Z",
-                "externalIds": [], "genres": [], "tags": [], "people": [], "chapters": [], "segments": [],
-                "playbackAssets": [], "subtitleAssets": [], "trailers": [], "artwork": [], **fields}
-
-    def original(aid, path, size):
-        """A primary row as the catalog fills it from the probe of its file: codec, resolution, bitrate and
-        duration, and no audio fields."""
-        return asset(aid, path, "primary", sizeBytes=size, codec="h264", resolution="1920x1080", bitrateKbps=4000,
-                     durationMs=90000, audioCodec=None, audioLanguage=None, audioChannels=None, audioBitrateKbps=None,
-                     audioTrackCount=None, subtitleTrackCount=None)
-
+    asset, row, original = store_asset, store_row, store_original
     media, packages, extras = (os.path.join(root, n) for n in ("media", "packages", "extras"))
     svc = "/var/lib/katalog"
     film, other = "Example Film (2024)/Example Film (2024).mkv", "Other Film (2025)/Other Film (2025).mkv"
@@ -2180,8 +2186,9 @@ def adopt(root, run, export, fresh):
     guards checked, then every move in its order, then the database changes the db block names, written
     into fresh as an export taken afterwards shows them: the packaged row as packaging-complete writes it
     from package.json, the subtitle rows' paths — each keeps its default, a person's choice the database
-    keeps and no record holds — and an original gone before the library was recorded a retired one, with
-    its original-deleted event. The staged people last."""
+    keeps and no record holds — an original gone before the library was recorded a retired one, with
+    its original-deleted event, and every episode a source covers after its holder linked to the holder
+    (coveredBy). The staged people last."""
     rundir = os.path.join(root, ".work", "migration", run)
     units = sorted((jload(p) for p in glob.glob(os.path.join(rundir, "units", "*.json"))),
                    key=lambda u: ({"series": 0, "movie": 1, "episode": 2}[u["type"]], u["itemId"]))
@@ -2226,6 +2233,8 @@ def adopt(root, run, export, fresh):
         for x in db["subtitles"]:
             subs[x["id"]]["path"] = x["path"]
         for src in db["sources"]:
+            for covered in src["covers"][1:]:
+                rows[covered]["coveredBy"] = u["itemId"]
             if src["arrivalPath"] is None and src["recordDir"]:
                 write_event(u["itemDir"], {"schema": "zaentrum.library.event/2",
                                            "eventId": str(uuid.uuid5(uuid.NAMESPACE_URL, src["sourceId"])),
@@ -2464,6 +2473,153 @@ def test_platform_problems(t):
              sorted([PF_SERIES, PF_EPISODE, "d4220000-0000-4000-8000-000000000042"]))
         code, text = run(FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", "x", "--out", tmp)
         t.ok("and --platform writes only into the run's folder: --out is refused", code == 2 and "--out" in text, text)
+
+
+# ---------------------------------------------------------------- one file, several episodes; a disc image
+CV_SERIES = "c5000000-0000-4000-8000-000000000050"
+CV_DISC = "a8000000-0000-4000-8000-000000000008"
+
+
+def cv_episode(n):
+    """The id of the example serial's episode n."""
+    return f"d5000000-0000-4000-8000-0000000000{n:02d}"
+
+
+def covering_store(root):
+    """A share before the library whose series has files of several episodes, beside a movie whose original
+    is a disc image — and the catalog's export of it, every row saying whom it is covered by. Episode 1's
+    file is S01E01-E02, packaged, and nothing else holds episode 2; episode 3's is S01E03, nothing packaged
+    it, and the catalog links episode 4 to it, whatever the name says; episode 5's is S01E05-06, and the
+    export holds no episode 6; episode 7's is S01E07-E08, and episode 8 has a file of its own; episode 9's
+    is S01E09-720p, a resolution and no range; episode 10's is S01E10E11E12, three episodes. Returns the
+    export's path."""
+    media, svc, show = os.path.join(root, "media"), "/var/lib/katalog", "tv/Example Serial/Season 01"
+    names = {1: "Example Serial - S01E01-E02.mkv", 3: "Example Serial - S01E03.mkv", 5: "Example Serial - S01E05-06.mkv",
+             7: "Example Serial - S01E07-E08.mkv", 8: "Example Serial - S01E08.mkv", 9: "Example Serial - S01E09-720p.mkv",
+             10: "Example Serial - S01E10E11E12.mkv"}
+    os.makedirs(os.path.join(media, show))
+    for n, name in names.items():
+        with open(os.path.join(media, show, name), "wb") as f:
+            f.write(f"episode {n} of an example serial\n".encode() * 200)
+    with open(os.path.join(media, "Disc Film (2020).iso"), "wb") as f:
+        f.write(b"a disc image\n" * 100)
+    legacy_package(os.path.join(root, "packages", "shows", cv_episode(1)[:2], cv_episode(1)), 20000)
+    package = f"{svc}/packages/shows/{cv_episode(1)[:2]}/{cv_episode(1)}/manifest.json"
+    file_of = lambda n: [store_original(f"p{n}", f"{svc}/media/{show}/{names[n]}",
+                                        os.path.getsize(os.path.join(media, show, names[n])))]
+    episode = lambda n, title, **fields: store_row(cv_episode(n), "episode", title, parentId=CV_SERIES, seasonNumber=1,
+                                                   episodeNumber=n, **{"coveredBy": None, **fields})
+    items = [store_row(CV_SERIES, "series", "Example Serial", durationMs=None, coveredBy=None),
+             episode(1, "Front", playbackAssets=file_of(1) + [store_asset("q1", package, "packaged")]),
+             episode(2, "Back"), episode(3, "Ebb", playbackAssets=file_of(3)), episode(4, "Flow", coveredBy=cv_episode(3)),
+             episode(5, "Rise", playbackAssets=file_of(5)), episode(7, "Dusk", playbackAssets=file_of(7)),
+             episode(8, "Dark", playbackAssets=file_of(8)), episode(9, "Dawn", playbackAssets=file_of(9)),
+             episode(10, "Calm", playbackAssets=file_of(10)), episode(11, "Gust"), episode(12, "Squall"),
+             store_row(CV_DISC, "movie", "Disc Film", coveredBy=None,
+                       playbackAssets=[store_original("pz", f"{svc}/media/Disc Film (2020).iso", 1300)])]
+    export = os.path.join(os.path.dirname(root), "catalog.json")
+    jwrite(export, {"exportedAt": "2026-10-08T12:00:00Z", "shard": None, "items": items, "deletedItems": [],
+                    "people": [], "extras": [], "versions": None, "sources": None})
+    return export
+
+
+def test_platform_covers(t):
+    """A file that holds several episodes is staged in its holder's folder, its source covering them, the
+    holder first, and every episode it covers as its record and its projection alone, which name the holder
+    and the version the holder is staged with; the name's numbering is used only where the catalog says
+    nothing, and never for an episode the export does not hold — a problem — or one with a file of its own;
+    a disc image is left out of the plan, a problem until it is accepted; and the adopt the plans describe
+    leaves a library that validates and rebuilds to the database it left, every covered episode linked."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "katalog")
+        export = covering_store(root)
+        services_to(root, export)
+        env = fake_ffprobe(os.path.join(tmp, "bin"))
+        rundir = os.path.join(root, ".work", "migration", PF_RUN)
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                              "--dry-run")
+        report = jload(os.path.join(rundir, "report.json"))
+        t.eq("a dry run counts the files of several episodes it stages and the episodes they cover, and says the "
+             "problems by class", (code, report["counts"]["covering"], report["counts"]["covered"], report["problems"]),
+             (0, 3, 4, {"covered episode missing": 1, "disc image": 1}))
+        entry = {e["itemId"]: e for e in report["items"]}
+        t.ok("a disc image is listed with its problem, and nothing of it is staged",
+             not entry[CV_DISC]["staged"] and [p["class"] for p in entry[CV_DISC]["problems"]] == ["disc image"]
+             and "Disc Film (2020).iso is a disc image" in entry[CV_DISC]["problems"][0]["detail"], entry[CV_DISC])
+        t.ok("an episode the name numbers and the export does not hold is a problem of its holder's, and no id is made "
+             "up for it", [p["class"] for p in entry[cv_episode(5)]["problems"]] == ["covered episode missing"]
+             and "no episode S01E06" in entry[cv_episode(5)]["problems"][0]["detail"], entry[cv_episode(5)])
+
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN)
+        units = {u["itemId"]: u for u in (jload(p) for p in glob.glob(os.path.join(rundir, "units", "*.json")))}
+        t.ok("the disc image is left out of the plan, its original where it was",
+             code == 0 and CV_DISC not in units and os.path.isfile(os.path.join(root, "media", "Disc Film (2020).iso")),
+             text)
+        e1, e2, e3, e4 = (units[cv_episode(n)] for n in (1, 2, 3, 4))
+        source = lambda u: jload(glob.glob(os.path.join(u["stagedDir"], "sources", "*", "source.json"))[0])
+        decided = lambda u: jload(os.path.join(u["stagedDir"], "metadata.json"))["library"]
+        t.eq("a packaged file of two episodes, as its name says: its source and its row in the plan cover both, the "
+             "holder first, and the holder's place ends where the other's is",
+             (source(e1)["covers"], e1["db"]["sources"][0]["covers"], decided(e1)["numbering"]["aired"]["episodeEnd"]),
+             ([cv_episode(1), cv_episode(2)], [cv_episode(1), cv_episode(2)], 2))
+        t.eq("the episode it covers is staged as its record and its projection alone — published, nothing else moved, "
+             "none of the database's rows changed — which names the holder and the version the holder is staged with, "
+             "where katalog-manager's projector puts them",
+             ([m["kind"] for m in e2["moves"]], [e2["db"][k] for k in ("sources", "versions", "assets", "subtitles", "extras")],
+              sorted(os.listdir(e2["stagedDir"])), decided(e2).get("coveredBy"), decided(e2).get("primaryVersionId"),
+              decided(e2)["numbering"]["aired"], list(decided(e2))),
+             (["publish"], [[]] * 5, ["checksums.sha256", "item.json", "metadata.json"], cv_episode(1),
+              e1["db"]["versions"][0]["versionId"], {"season": 1, "episode": 2, "episodeEnd": None},
+              ["match", "primaryVersionId", "coveredBy", "reference", "numbering"]))
+        e10 = units[cv_episode(10)]
+        t.eq("a file of three episodes, as its name chains them, covers all three, and its holder's place ends at the third",
+             (source(e10)["covers"], decided(e10)["numbering"]["aired"]["episodeEnd"],
+              [decided(units[cv_episode(n)]).get("coveredBy") for n in (11, 12)]),
+             ([cv_episode(10), cv_episode(11), cv_episode(12)], 12, [cv_episode(10)] * 2))
+        t.eq("a file the catalog says covers an episode covers it, whatever its name: taken in, its source covers both",
+             (source(e3)["covers"], e3["db"]["versions"][0]["takenIn"], decided(e3)["numbering"]["aired"]["episodeEnd"],
+              decided(e4).get("coveredBy"), decided(e4).get("primaryVersionId"), e4["db"]["sources"]),
+             ([cv_episode(3), cv_episode(4)], True, 4, cv_episode(3), e3["db"]["versions"][0]["versionId"], []))
+        t.eq("a name that numbers an episode the export does not hold, or one with a file of its own, or a resolution, "
+             "covers nothing, as a file of one episode does",
+             [units[cv_episode(n)]["db"]["sources"][0]["covers"] for n in (5, 7, 8, 9)]
+             + [decided(units[cv_episode(n)])["numbering"]["aired"]["episodeEnd"] for n in (5, 7, 9)],
+             [[], [], [], [], None, None, None])
+        t.ok("and the episode with a file of its own keeps it: its own file wins, and the run says so",
+             f"episode {cv_episode(8)} (S01E08) has a file of its own, which wins: it is not covered" in text
+             and units[cv_episode(8)]["db"]["versions"], text)
+        staged = tree_files(os.path.join(rundir, "staged"))
+        code, again = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN)
+        t.ok("a second run stages the same records", code == 0 and tree_files(os.path.join(rundir, "staged")) == staged,
+             again)
+
+        fresh = os.path.join(tmp, "after.json")
+        _, stale = adopt(root, PF_RUN, export, fresh)
+        t.eq("the adopt links every episode a source covers after its holder to the holder",
+             (stale, {r["id"]: r["coveredBy"] for r in jload(fresh)["items"] if r.get("coveredBy")}),
+             ([], {cv_episode(2): cv_episode(1), cv_episode(4): cv_episode(3), cv_episode(11): cv_episode(10),
+                   cv_episode(12): cv_episode(10)}))
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", root)
+            t.ok("validate-library-v2.py finds the adopted library valid: each covered episode names its holder, plays "
+                 "its version and keeps nothing of its own", code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("validate-library-v2.py finds the adopted library valid", "jsonschema is not importable here")
+        code, mtext = run(MEDIA_CHECK, "--checksums", root)
+        t.ok("and the media check", code == 0 and mtext.strip().endswith("OK"), mtext)
+        rebuilt, _ = rows_of(root, "--text-language", "und")
+        t.eq("the rebuild gives each covered episode its holder, from the source that covers it, and nothing of its own "
+             "to play", {iid: (r["coveredBy"], r["playbackAssets"]) for iid, r in rebuilt.items() if r["coveredBy"]},
+             {cv_episode(2): (cv_episode(1), []), cv_episode(4): (cv_episode(3), []), cv_episode(11): (cv_episode(10), []),
+              cv_episode(12): (cv_episode(10), [])})
+        compare = lambda *extra: run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
+                                     "--ignore-fields", "id,path,hash", "--text-language", "und", *extra)
+        code, ctext = compare()
+        t.ok("the compare finds the disc image the plan left out the database's alone: a record storage does not hold",
+             code == 1 and report_section(ctext, "missing record") == [CV_DISC], ctext)
+        code, ctext = compare("--subset")
+        t.ok("and otherwise agrees with the database the adopt left, the covered episodes linked",
+             code == 0 and "the tree and the database agree" in ctext, ctext)
 
 
 # ---------------------------------------------------------------- credits
@@ -4815,6 +4971,7 @@ def main():
                         ("the arrivals are not the record", test_arrivals),
                         ("the platform's library, staged and adopted", test_platform),
                         ("what the platform's library cannot hold", test_platform_problems),
+                        ("one file, several episodes, staged; a disc image left out", test_platform_covers),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras),
                         ("credits: a role, the source's own words, one order", test_credits), ("people", test_people),
                         ("the people list in full", test_people_in_full),

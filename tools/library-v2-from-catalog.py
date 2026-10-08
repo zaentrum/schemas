@@ -151,6 +151,26 @@ UUIDv5 of the item and a stable name — a source's is the database's own when i
 staging again writes the same records; an item the library holds already, or whose package the
 database holds as complete, is not staged again.
 
+One file, several episodes: a file that holds two episodes or more is never split. It is its
+holder's — the first episode it covers — and covers the episodes after it in its season that have no
+file of their own: an episode with a file of its own is never covered, its own file wins. Which ones,
+the catalog says where its rows link a covered episode to its holder (an episode row's coveredBy);
+for a holder no row names, the name its original arrived under says it, read as the catalog's scanner
+reads a name — S05E15-E16, S05E15E16, S05E15-16, each episode after the one before and at most ten,
+never a resolution such as -720p — when the name numbers the holder's own season and episode. The
+holder is staged as any episode, its source's covers [holderId, coveredId …] in episode order and its
+numbering's episodeEnd the number of the last episode it covers; each covered episode is staged with
+its item and its projection and nothing else — no source, no version, no move but its publish — its
+projection naming the holder (library.coveredBy) and the version the holder is staged with
+(library.primaryVersionId). An episode the name numbers and the export does not hold is the
+problem covered episode missing, and no id is made up for it: the file covers the episodes the export
+holds. A covered episode the catalog linked keeps the link when its holder's file is not recorded,
+and one only the name covered is then staged as an episode whose file is not recorded yet.
+
+A disc image (.iso, .img) is no original the library holds: an item whose original is one is the
+problem disc image, staged nothing of — it is left out of the plan, with every episode its file covers,
+and the report lists it — until its owner converts it to a single file.
+
 A unit plan says, for katalog-manager's adopt (POST /api/library/migrations/<run>/adopt), what to
 move and what to change, all paths absolute as the run saw them — run it with --root at the services'
 own path of the share:
@@ -177,11 +197,13 @@ own path of the share:
                                                           modifiedAt of the row, to the second, which
                                                           its staged metadata.json reflects
           "sources": [{"sourceId", "filename", "arrivalPath", "libraryPath", "sizeBytes", "qh1",
-                       "recordDir", "sidecars": [{"subtitleAssetId", "rendition", "path"}]}],
+                       "recordDir", "sidecars": [{"subtitleAssetId", "rendition", "path"}], "covers"}],
                        filename the name the library gives the original, arrivalPath where it lies once
                        adopted, its version folder, and libraryPath null: the catalog keeps library paths
                        only once a version is established; arrivalPath and qh1 null for an original gone
-                       before the library was recorded
+                       before the library was recorded; covers the source record's: [] for a file of one
+                       episode, and for one that holds several the item ids of its episodes in episode
+                       order, this unit's item first — the adopt links every other one to it (coveredby)
           "versions": [{"versionId", "packageId", "dir", "completedAt", "sourceIds", "verifiedAt",
                         "verifiedLevel", "takenIn"}]   verifiedLevel full, every byte was hashed by the
                        stage, and takenIn false; a version taken in — recorded with no package — has
@@ -195,10 +217,13 @@ own path of the share:
                        that is not packaged; sourcePath its original among the arrivals, or null},
    "problems": [{"class", "detail"}]}
 
-The problem classes: missing original, missing .complete, several packages, episode without series,
+A covered episode's unit is its publish alone, its db block naming no source, version or row. The
+problem classes: missing original, missing .complete, several packages, episode without series,
 episode without numbers, season parent, music, not a library item, no title, unmappable sidecar,
 subtitle row without its file, original outside the media root, dropped external-id source, artwork
-not an image, extra not packaged, extra of an episode, extra without an id, extra original gone.
+not an image, extra not packaged, extra of an episode, extra without an id, extra original gone,
+covered episode missing, disc image. The report's counts say how many files of several episodes are
+staged (covering) and how many episodes they cover (covered).
 --dry-run writes report.json and nothing else, and hashes no package file. --shard narrows the run to
 the items whose folder is in that shard — left(coalesce(seriesId, id), 2), as the export narrows by
 it: run each shard of one run with the same --as-of, so the people two shards credit are staged alike.
@@ -209,7 +234,7 @@ try:  # the record logic the packager writes the same records with: beside this 
     from libv2_records import (
         EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, chapter_marks, checksums, complete, deletion_gate, did,
         external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
-        library_original_name, listdir, num, package_files, package_record, peak_bandwidth, primary_language,
+        library_original_name, listdir, naming, num, package_files, package_record, peak_bandwidth, primary_language,
         probe_chapters, qh1, record_entry, segments, sha_file, sidecar_entry, source_record, text, ts, ts_of_mtime,
         version_record)
 except ImportError:
@@ -374,6 +399,11 @@ class Build:
     def note(self, item_id, msg):
         self.notes.append(f"{item_id}: {msg}")
 
+    def staging_order(self, row):
+        """The order the rows are written in: series, movies, episodes, each by id — a series' folder
+        before its episodes'."""
+        return {"series": 0, "movie": 1, "episode": 2}.get(row["type"], 3), False, row["id"]
+
     # -------------------------------------------------- paths
     def under(self, base, path, marker):
         """The catalog holds the path as the services see it; the share may be mounted elsewhere."""
@@ -414,7 +444,10 @@ class Build:
         return doc
 
     # -------------------------------------------------- metadata.json and the images
-    def metadata_json(self, row, d, version_ids, episodes, extras=None):
+    def metadata_json(self, row, d, version_ids, episodes, extras=None, covered_by=None, episode_end=None):
+        """The projection of a row. covered_by is the holder whose file covers an episode that has none of
+        its own, whose version version_ids names; episode_end, on a holder, the number of the last episode
+        its file covers."""
         lg = self.a.text_language
         localized = {}
         body = {}
@@ -467,13 +500,15 @@ class Build:
                              "decidedBy": "legacy-catalog", "decidedAt": self.as_of}}
         if version_ids:
             library["primaryVersionId"] = version_ids[0]
+        if covered_by and row["type"] == "episode":
+            library["coveredBy"] = covered_by  # the holder whose file covers it: it plays the holder's version
         if row.get("durationMs"):
             library["reference"] = {"runtimeMs": int(row["durationMs"]), "runtimeSource": "legacy-catalog"}
         if row["type"] == "series":
             library["defaultOrdering"] = "aired"
         if row["type"] == "episode":
             library["numbering"] = {"aired": {"season": int(row["seasonNumber"]),
-                                              "episode": int(row["episodeNumber"]), "episodeEnd": None}}
+                                              "episode": int(row["episodeNumber"]), "episodeEnd": episode_end}}
         if extras and row["type"] in ("movie", "series"):
             library["extras"] = extras  # how a viewer is shown the extras: decisions of the database
         doc["library"] = library
@@ -1025,6 +1060,9 @@ PROBLEM_NOTES = (("has no v2 field, dropped", "dropped external-id source"),
                  ("is not a JPEG, PNG or WebP, dropped", "artwork not an image"))
 GONE = ("the original was gone before the library was recorded: nothing could probe it or take its fixity, and "
         "it is deleted outside the record")
+# The originals the library does not hold: a disc image is a disc's file system, not one stream container. Its
+# owner converts it to a single file, which is then staged, or leaves it out.
+DISC_IMAGES = (".iso", ".img")
 
 
 def listing_sha256(folders):
@@ -1083,7 +1121,14 @@ class Platform(Build):
                          if isinstance(v, dict) and v.get("state") == "complete"}
         self.entries, self.staged_rows, self.current = [], [], None
         self.gate, self.measured, self.unmeasured = {}, 0, 0
-        self.counts.update(units=0, recorded=0, takenIn=0)
+        self.counts.update(units=0, recorded=0, takenIn=0, covering=0, covered=0)
+        # one file, several episodes (plan_covers): the holder of each covered episode, the episodes each
+        # holder's file covers after it, those the catalog linked itself, the holders whose original is a
+        # disc image, and what the plan found to say of each holder; once a holder is staged, the episodes
+        # its staged records cover and the version they play (held)
+        self.covered_by, self.covering, self.told, self.disc_holders = {}, {}, set(), set()
+        self.cover_problems, self.cover_notes, self.held = {}, {}, {}
+        self.plan_covers()
 
     # -------------------------------------------------- where everything is
     def series_of(self, row):
@@ -1136,6 +1181,120 @@ class Platform(Build):
             if os.path.isfile(p):
                 return p
         return None
+
+    def primary_asset(self, row):
+        """The catalog's row of an item's original: the one marked primary, else the first."""
+        assets = row.get("playbackAssets") or []
+        return next((a for a in assets if a.get("kind") == "primary" and a.get("isPrimary")), None) \
+            or next((a for a in assets if a.get("kind") == "primary"), None)
+
+    def disc_image(self, row):
+        """The name of an item's original when it is a disc image (.iso, .img), which the library does not
+        hold; None otherwise."""
+        name = os.path.basename(str((self.primary_asset(row) or {}).get("path") or "").replace("\\", "/"))
+        return name if os.path.splitext(name)[1].lower() in DISC_IMAGES else None
+
+    def staging_order(self, row):
+        """As every build orders its rows, but a covered episode after every other one: its projection names
+        the version its holder is staged with."""
+        kind, _, iid = super().staging_order(row)
+        return kind, iid in self.covered_by, iid
+
+    # -------------------------------------------------- one file, several episodes
+    def plan_covers(self):
+        """Which file covers which episodes, decided before anything is staged. A file that holds several
+        episodes is its holder's, the first of them, and covers the ones after it in its season, which
+        have no file of their own. The catalog says so where its rows link a covered episode to its holder
+        (coveredBy); for a holder no row names, the name its original arrived under says it, read as the
+        catalog's scanner reads a name (naming) — S05E15-E16, S05E15E16, S05E15-16, each episode after the
+        one before and at most ten, never a resolution such as -720p — when it numbers the holder's own
+        season and episode and a range after it. An episode that has a file of its own — any playback row
+        but a trailer's — is never covered: its own file wins. An episode the name numbers and the export
+        does not hold is a problem of the holder's, covered episode missing, and no id is made up for it."""
+        episodes = sorted((r for r in self.by_id.values() if r.get("type") == "episode"), key=lambda r: r["id"])
+        place = lambda r: (self.series_of(r)[0], num(r.get("seasonNumber")), num(r.get("episodeNumber")))
+        code = lambda season, n: f"S{season:02d}E{n:02d}"
+        # a file of its own: any playback row of the episode but a trailer's, as the catalog counts one
+        own = lambda r: any((a.get("kind") or "primary") != "trailer" for a in r.get("playbackAssets") or [])
+        by_place, told = {}, {}
+        for r in episodes:
+            if None not in place(r):
+                by_place.setdefault(place(r), r)
+            if text(r.get("coveredBy")):
+                told.setdefault(text(r["coveredBy"]), []).append(r)
+        say = lambda iid, msg: self.cover_notes.setdefault(iid, []).append(msg)
+        holders = [r for r in episodes if own(r) or r["id"] in told]
+        for h in sorted(holders, key=lambda r: (str(place(r)[0]), place(r)[1] or 0, place(r)[2] or 0, r["id"])):
+            hid, (series, season, n) = h["id"], place(h)
+            if text(h.get("coveredBy")) or hid in self.covered_by:
+                for c in told.get(hid, []):
+                    say(hid, f"the catalog links episode {c['id']} to this one's file, but this one is covered itself: "
+                             f"a file has one holder, so {c['id']} is not covered")
+                continue
+            if self.disc_image(h):
+                self.disc_holders.add(hid)
+                continue
+            found = []
+            if hid in told:
+                for c in sorted(told[hid], key=lambda r: (place(r)[1] or 0, place(r)[2] or 0, r["id"])):
+                    _, c_season, c_n = place(c)
+                    why = ("it has a file of its own, which wins" if own(c) else
+                           "this one has no file" if not own(h) else
+                           "it is of another series or season, or does not follow this one"
+                           if None in place(h) or (place(c)[0], c_season) != (series, season) or c_n is None or c_n <= n
+                           else None)
+                    if why:
+                        say(hid, f"the catalog links episode {c['id']} to this one's file, but {why}: it is not "
+                                 f"covered")
+                        continue
+                    found.append(c)
+                    self.told.add(c["id"])
+            elif own(h) and None not in (series, season, n):
+                arrived = str((self.primary_asset(h) or {}).get("path") or "").replace("\\", "/")
+                named = naming(os.path.basename(arrived))
+                end = (named or {}).get("episodeEnd")
+                if not end or end <= (named or {}).get("episodeNumber", end):
+                    continue
+                if (named["seasonNumber"], named["episodeNumber"]) != (season, n):
+                    say(hid, f"its original's name numbers {named['raw']} and the catalog {code(season, n)}, so the "
+                             f"range the name claims is not used")
+                    continue
+                for k in range(n + 1, end + 1):
+                    c = by_place.get((series, season, k))
+                    if c is None:
+                        self.cover_problems.setdefault(hid, []).append((
+                            "covered episode missing",
+                            f"its original's name numbers {named['raw']}, and the export holds no episode "
+                            f"{code(season, k)} of the series: no id is made up for it, and the file covers the "
+                            f"episodes the export holds"))
+                    elif own(c):
+                        say(hid, f"its original's name numbers {named['raw']}, and episode {c['id']} "
+                                 f"({code(season, k)}) has a file of its own, which wins: it is not covered")
+                    elif text(c.get("coveredBy")) or c["id"] in self.covered_by:
+                        say(hid, f"its original's name numbers {named['raw']}, and episode {c['id']} "
+                                 f"({code(season, k)}) is covered by "
+                                 f"{text(c.get('coveredBy')) or self.covered_by[c['id']]}'s file: it is not covered "
+                                 f"by this one's too")
+                    else:
+                        found.append(c)
+            for c in found:
+                self.covered_by[c["id"]] = hid
+            if found:
+                self.covering[hid] = [c["id"] for c in found]
+
+    def cover_of(self, row):
+        """The holder a covered episode's staged projection names, and the version it plays: the holder this
+        run staged, whose records cover it, with the version it was staged with. A holder this run does not
+        stage — one the library holds already — is named where the catalog linked the episode itself, and
+        then no version is, a reader picking among the holder's. (None, None) when nothing staged covers the
+        episode: it is staged as an episode whose file is not recorded yet."""
+        iid, hid = row["id"], self.covered_by[row["id"]]
+        if hid in self.held and iid in self.held[hid][0] or hid not in self.held and iid in self.told:
+            self.counts["covered"] += 1
+            return hid, self.held.get(hid, (None, None))[1]
+        self.note(iid, f"the file of its holder {hid} is not recorded in this run, so nothing records that it covers "
+                       f"this episode, which is staged as one whose file is not recorded yet")
+        return None, None
 
     # -------------------------------------------------- what the report says of an item
     def note(self, item_id, msg):
@@ -1191,6 +1350,19 @@ class Platform(Build):
             self.current["recorded"] = True
             self.counts["recorded"] += 1
             return  # adopted by an earlier run, or recorded by the platform since
+        disc = self.disc_image(row)
+        if disc or (kind == "episode" and text(row.get("coveredBy")) in self.disc_holders):
+            # the library holds no disc image: the item stays the catalog's as it is, out of the plan, until its
+            # owner converts the image to a single file
+            return self.problem("disc image", f"its original {disc} is a disc image, which the library does not hold: "
+                                              f"convert it to a single file; until then it is left out of the plan"
+                                if disc else
+                                f"its holder {text(row['coveredBy'])}'s original is a disc image, which the library "
+                                f"does not hold: it is left out of the plan with its holder")
+        for msg in self.cover_notes.get(row["id"], []):
+            self.note(row["id"], msg)
+        for cls, detail in self.cover_problems.get(row["id"], []):
+            self.problem(cls, detail)
         d = self.item_dir(row)
         if not self.a.dry_run:
             shutil.rmtree(os.path.dirname(d), ignore_errors=True)
@@ -1199,17 +1371,31 @@ class Platform(Build):
                                                                                 row.get("modifiedAt")),
               "sources": [], "versions": [], "assets": [], "subtitles": [], "extras": []}
         guards = {"manifestSha256": None, "completeMtime": None, "listingSha256": None}
-        version_ids = []
-        if kind != "series":
-            vid = self.media(row, d, target, moves, db, guards)
+        version_ids, covered_by, episode_end = [], None, None
+        if row["id"] in self.covered_by:
+            # no file of its own: its holder's covers it, and its records are its item and its projection, which
+            # names the holder and plays the version its holder is staged with
+            covered_by, vid = self.cover_of(row)
+            version_ids = [vid] if vid else []
+        elif kind != "series":
+            covers = [row["id"], *self.covering[row["id"]]] if row["id"] in self.covering else []
+            vid = self.media(row, d, target, moves, db, guards, covers)
             if vid:
                 version_ids.append(vid)
+            if covers:
+                # the episodes the staged records say the file covers: all of them once its source is written, and
+                # without one those the catalog linked itself, whose link the projection reflects
+                held = covers[1:] if db["sources"] else [c for c in covers[1:] if c in self.told]
+                self.held[row["id"]] = (held, vid if db["sources"] else None)
+                episode_end = max(int(self.by_id[c]["episodeNumber"]) for c in held) if held else None
+                self.counts["covering"] += bool(db["sources"])
         series_episodes = [r for r in self.by_id.values() if r.get("type") == "episode" and
                            self.series_of(r)[0] == row["id"]] if kind == "series" else []
         decisions = self.stage_extras(row, d, target, moves, db, series_episodes)
         self.w.covered(d, {"item.json": json_bytes(self.item_json(row))})
         self.w.write_json(os.path.join(d, "metadata.json"),
-                          self.metadata_json(row, d, version_ids, series_episodes, decisions))
+                          self.metadata_json(row, d, version_ids, series_episodes, decisions, covered_by=covered_by,
+                                             episode_end=episode_end))
         if moves["package"]:
             guards["listingSha256"] = None if self.a.dry_run else listing_sha256([m["from"] for m in moves["package"]])
         unit = {"schema": "zaentrum.migration.unit/1", "run": self.a.run, "itemId": row["id"], "type": kind,
@@ -1224,15 +1410,16 @@ class Platform(Build):
         self.staged_rows.append(row)
 
     # -------------------------------------------------- an item's original and its package
-    def media(self, row, d, target, moves, db, guards):
+    def media(self, row, d, target, moves, db, guards, covers=()):
         """The source record of the item's original and the version made of it, staged — with the records
         of its package, when it has one; the moves that put the package and the original where the record
         says, and the subtitle files that came with the original among the arrivals; and the rows that
-        change with them. Returns the versionId, or None when there is nothing the library can record."""
+        change with them. covers, for a file that holds several episodes, the item ids of the episodes it
+        holds, this one first, which its source record and its row in the plan list. Returns the versionId,
+        or None when there is nothing the library can record."""
         iid = row["id"]
         assets = row.get("playbackAssets") or []
-        primary = next((a for a in assets if a.get("kind") == "primary" and a.get("isPrimary")), None) \
-            or next((a for a in assets if a.get("kind") == "primary"), None)
+        primary = self.primary_asset(row)
         packaged = sorted((a for a in assets if a.get("kind") == "packaged"), key=lambda a: str(a.get("path")))
         original = self.located((primary or {}).get("path"))
         if not primary:
@@ -1333,7 +1520,7 @@ class Platform(Build):
                                  library_path=library_path, qh1=qh1(original) if original else None,
                                  mtime=ts_of_mtime(original) if original else None,
                                  probe=probe, probe_version=self.probe_version, sidecars=entries,
-                                 note=None if original else GONE)
+                                 note=None if original else GONE, covers=covers)
         files["source.json"] = json_bytes(rec)
         if raw is not None:
             files["ffprobe.json"] = raw
@@ -1412,7 +1599,8 @@ class Platform(Build):
                               "sizeBytes": size, "qh1": rec["file"].get("fixity", {}).get("qh1"),
                               "recordDir": source_dir,
                               "sidecars": [{"subtitleAssetId": row_id, "rendition": e.get("id"), "path": e.get("path")}
-                                           for row_id, e in sorted(mapped.items())]})
+                                           for row_id, e in sorted(mapped.items())],
+                              "covers": list(rec["covers"])})
         if not pkg:
             db["versions"].append({"versionId": vid, "packageId": None, "dir": vdir, "completedAt": None,
                                    "sourceIds": [sid], "verifiedAt": None, "verifiedLevel": None, "takenIn": True})
@@ -1565,7 +1753,8 @@ class Platform(Build):
                   "counts": {"items": len(self.entries), "staged": self.counts["units"],
                              "ready": sum(1 for e in self.entries if e["ready"]), "recorded": self.counts["recorded"],
                              "versions": self.counts["versions"], "takenIn": self.counts["takenIn"],
-                             "extras": self.counts["extras"], "people": self.counts["people"]},
+                             "extras": self.counts["extras"], "people": self.counts["people"],
+                             "covering": self.counts["covering"], "covered": self.counts["covered"]},
                   "problems": dict(sorted(problems.items())),
                   "loss": {"measured": self.measured, "unmeasured": self.unmeasured,
                            "gate": dict(sorted(self.gate.items(), key=lambda kv: (-kv[1], kv[0])))},
@@ -1666,8 +1855,7 @@ def main():
         rows = [r for r in rows if b.shard_of(r) == args.shard]
     if not b.probe_version and not (args.people_only or args.projections_only):
         print("note: ffprobe is not on PATH; source records will carry size, mtime and qh1 only")
-    order = {"series": 0, "movie": 1, "episode": 2}
-    for row in ([] if args.people_only else sorted(rows, key=lambda r: (order.get(r["type"], 3), r["id"]))):
+    for row in ([] if args.people_only else sorted(rows, key=b.staging_order)):
         episodes = [r for r in (export.get("items") or []) if r.get("parentId") == row["id"]] \
             if row["type"] == "series" else []
         try:
