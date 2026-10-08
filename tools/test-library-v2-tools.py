@@ -80,7 +80,8 @@ rule and checks the tool notices:
                  holds, byte for byte; each chain holds, and the check of one bites; it names an
                  original, its parts and the copy of a subtitle file as the library does, its probe
                  is the tool's output with two edits, and nothing it writes names a file as it
-                 arrived; piped behind a tool, the module has none of its names redefined by it
+                 arrived; a source of a file of several episodes covers them as given, the holder
+                 first; piped behind a tool, the module has none of its names redefined by it
 """
 import base64, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
 
@@ -596,6 +597,29 @@ def test_records(t):
     t.ok("and with one it is a record of the file's name — the library's — and size alone",
          raw is None and "fixity" not in gone["file"] and gone["file"]["name"] == "original.mkv"
          and "origin" not in gone and gone["probe"]["note"].startswith("the original was gone"), gone)
+
+    # a file of several episodes: the record says which, the holder first, as the database linked them
+    holder, covered = "c0000000-0000-4000-8000-0000000000e2", "c0000000-0000-4000-8000-0000000000e3"
+    double = lambda **kw: rec.source_record(GOLDEN_ITEM, "Example Show - S01E02-E03.mkv", 1, taken_at=GOLDEN_AT,
+                                            taken_by="x", library_path="Example Show/Example Show - S01E02-E03.mkv",
+                                            qh1="sha256:" + "0" * 64, **kw)[0]
+    probed_double = rec.source_record(GOLDEN_ITEM, "Example Show - S01E02-E03.mkv", 1, taken_at=GOLDEN_AT, taken_by="x",
+                                      library_path="x/Example Show - S01E02-E03.mkv", qh1="sha256:" + "0" * 64,
+                                      probe=jload(os.path.join(GOLDEN, "probe.json")), covers=(holder, covered))[0]
+    t.eq("a source of a file that holds several episodes covers them as given, the holder first, probed or not, and "
+         "its name's numbering stays what the release claimed",
+         (double(covers=[holder, covered])["covers"], probed_double["covers"], double(covers=[holder, covered])["naming"]),
+         ([holder, covered], [holder, covered],
+          {"scheme": "unknown", "seasonNumber": 1, "episodeNumber": 2, "episodeEnd": 3, "raw": "S01E02-E03"}))
+    t.eq("and a file of one episode covers nothing, whatever its name claims",
+         (double()["covers"], double(covers=None)["covers"]), ([], []))
+    for bad in ([holder, holder], [holder, "S01E03"]):
+        try:
+            double(covers=bad)
+            refused = False
+        except ValueError:
+            refused = True
+        t.ok(f"a file covering {bad!r} is refused: it covers episodes by their item ids, each once", refused)
     t.eq("a version made from a source says what its name claimed of its edition, and never the name",
          [rec.version_record("v", rec.source_record(GOLDEN_ITEM, arrived, 1, taken_at=GOLDEN_AT, taken_by="x",
                                                     library_path=f"{folder}/{arrived}", note="no fixity")[0],

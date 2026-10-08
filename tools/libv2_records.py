@@ -857,7 +857,7 @@ def sidecar_entry(source_id, n, path, arrival_name, language=None, forced=False)
 
 
 def source_record(source_id, name, size_bytes, *, taken_at, taken_by, library_path, qh1=None, mtime=None,
-                  probe=None, probe_version=None, sidecars=(), note=None):
+                  probe=None, probe_version=None, sidecars=(), note=None, covers=()):
     """sources/<sourceId>/source.json for one original, and the bytes of the ffprobe.json written
     beside it (None without a probe). Returns (record, probe bytes).
 
@@ -868,9 +868,17 @@ def source_record(source_id, name, size_bytes, *, taken_at, taken_by, library_pa
     streams, fidelity, essence — the record carries, and which is kept beside it with the two edits
     scrub_probe() makes. Without one the record carries the file's size and fixity alone, and
     probe.note says why. Without qh1 — an original already gone, so nothing could fingerprint it —
-    the record has no fixity, which only a note that says why may excuse."""
+    the record has no fixity, which only a note that says why may excuse.
+
+    covers, for a file that holds several episodes, is the item ids of the episodes it holds in
+    episode order, the holder first — the episode whose folder keeps this source — as the database
+    linked them; empty, as it is by default, for a file of one episode. It is written as given: the
+    record logic does not read it from the name, whose numbering is only what the release claimed."""
     if qh1 is None and not text(note):
         raise ValueError("a source record without the original's fixity needs a note that says why it has none")
+    covers = [str(c) for c in covers or ()]
+    if covers and (len(set(covers)) != len(covers) or not all(UUID_RE.match(c) for c in covers)):
+        raise ValueError(f"a file covers episodes by their item ids, each once: {covers!r}")
     folder = os.path.dirname(library_path.replace("\\", "/"))
     file = {"name": library_original_name(name), "kind": "stream-container", "sizeBytes": size_bytes}
     if mtime:
@@ -888,14 +896,14 @@ def source_record(source_id, name, size_bytes, *, taken_at, taken_by, library_pa
         facts = probed(probe)
         raw = json_bytes(scrub_probe(probe, file["name"]))
         rec.update(container=facts["container"], fidelity=facts["fidelity"], streams=facts["streams"],
-                   sidecars=list(sidecars), covers=[], essence=facts["essence"],
+                   sidecars=list(sidecars), covers=covers, essence=facts["essence"],
                    probe={"tool": "ffprobe", "version": probe_version, "at": taken_at,
                           "file": f"sources/{source_id}/ffprobe.json", "sha256": sha_bytes(raw), "note": text(note)})
     else:
         rec.update(container={"format": "", "durationMs": None, "bitrate": None, "title": None, "muxingApp": None,
                               "writingApp": None, "creationTime": None, "tags": {}},
                    fidelity={"class": "unknown", "fingerprint": None, "evidence": []}, streams=[],
-                   sidecars=list(sidecars), covers=[], essence={},
+                   sidecars=list(sidecars), covers=covers, essence={},
                    probe={"tool": "ffprobe", "version": None, "at": None, "file": None, "sha256": None,
                           "note": text(note) or "ffprobe was not available where this record was written; the "
                                                 "original's streams, fidelity and essence are unknown"})
