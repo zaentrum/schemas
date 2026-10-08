@@ -26,8 +26,9 @@ missed. It finds seven kinds of garbage, each proved by the records and the data
                      item's folder as a deleted item. An untyped entry never names a person.
   unfinished version a version folder without .complete. The whole folder when it has no version.json
                      — nothing can have known a version that never wrote its record — or when it keeps
-                     no original and nothing names it: not the item's metadata.json, not an event other
-                     than version-removed, not the export (this needs --export). When it keeps an
+                     no original and nothing names it: not the item's metadata.json, nor the projection
+                     of an episode its file covers, not an event other than version-removed, not the
+                     export (this needs --export). When it keeps an
                      original, only the unfinished package beside it: hls/ subs/ trickplay/ trailers/,
                      package.json, checksums.sha256 and their temporary files. A version that holds
                      its record and its original and no package — one taken in before anything
@@ -40,8 +41,9 @@ missed. It finds seven kinds of garbage, each proved by the records and the data
                      no package is never garbage: finished by its checksums, or its writer's to finish.
   removed version    the folder of a version a version-removed event retired, still on storage — the
                      whole folder, whatever it holds but an original — once the removal is older than
-                     the grace and nothing names the version: not the item's metadata.json, not the
-                     export. The catalog deletes such a folder itself, after the grace a superseded
+                     the grace and nothing names the version: not the item's metadata.json, nor the
+                     projection of an episode its file covers, which plays its holder's versions, not
+                     the export. The catalog deletes such a folder itself, after the grace a superseded
                      version keeps; this collects one that delete missed. The events that name it —
                      the supersession and the deletion of its original — are its history, and keep
                      nothing. A folder that still holds an original — one its version.json names, or
@@ -306,16 +308,32 @@ class References:
                             credits.setdefault(pid, []).append(os.path.relpath(f, self.root))
         return credits, unreadable
 
-    def version_named(self, item_dir, vid):
-        """What names a version and so keeps its folder: the item's projection, an event other than the
-        one that removed it, the database."""
-        try:
-            lib = load(os.path.join(item_dir, "metadata.json")).get("library") or {}
+    def projection_names(self, item_dir, vid):
+        """Which projection names a version of the item, or None: the item's own metadata.json, and for an
+        episode the projection of any other episode of its series — an episode its file covers plays its
+        versions, and names them (library.coveredBy, primaryVersionId). One that cannot be read may name it."""
+        projections = [("metadata.json", os.path.join(item_dir, "metadata.json"))]
+        episodes = os.path.dirname(item_dir)
+        if os.path.basename(episodes) == "episodes":
+            projections += [(f"the projection of episode {n}", os.path.join(episodes, n, "metadata.json"))
+                            for n in listdir(episodes) if n != os.path.basename(item_dir)]
+        for what, p in projections:
+            try:
+                lib = load(p).get("library") or {}
+            except (OSError, ValueError, AttributeError):
+                if os.path.exists(p):
+                    return f"{what} cannot be read, so it may name it"
+                continue
             if lib.get("primaryVersionId") == vid or vid in (lib.get("versionLabels") or {}):
-                return "metadata.json names it"
-        except (OSError, ValueError, AttributeError):
-            if os.path.exists(os.path.join(item_dir, "metadata.json")):
-                return "metadata.json cannot be read, so it may name it"
+                return f"{what} names it"
+        return None
+
+    def version_named(self, item_dir, vid):
+        """What names a version and so keeps its folder: a projection — the item's, or an episode's its
+        file covers — an event other than the one that removed it, the database."""
+        named = self.projection_names(item_dir, vid)
+        if named:
+            return named
         base = os.path.join(item_dir, "events")
         for name in (listdir(base) if os.path.isdir(base) else []):
             p = os.path.join(base, name, "event.json") if os.path.isdir(os.path.join(base, name)) else os.path.join(base, name)
@@ -366,16 +384,12 @@ class References:
         return out
 
     def removed_version_named(self, item_dir, vid):
-        """What still names a removed version and so keeps its folder: the item's projection, the
-        database. The events that name it are its history — its supersession, the deletion of its
-        original — and keep nothing."""
-        try:
-            lib = load(os.path.join(item_dir, "metadata.json")).get("library") or {}
-            if lib.get("primaryVersionId") == vid or vid in (lib.get("versionLabels") or {}):
-                return "metadata.json names it"
-        except (OSError, ValueError, AttributeError):
-            if os.path.exists(os.path.join(item_dir, "metadata.json")):
-                return "metadata.json cannot be read, so it may name it"
+        """What still names a removed version and so keeps its folder: a projection — the item's, or an
+        episode's its file covers — the database. The events that name it are its history — its
+        supersession, the deletion of its original — and keep nothing."""
+        named = self.projection_names(item_dir, vid)
+        if named:
+            return named
         if vid in self.mentioned:
             return "the export names it"
         return None

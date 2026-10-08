@@ -4388,6 +4388,34 @@ def test_sweep_removed_versions(t):
     kept("that still holds a file named as the library names an original", "still holds its original original-2.mkv",
          change=lambda root, export, vp: open(os.path.join(vp, "original-2.mkv"), "wb").write(b"an original"))
 
+    # an episode another's file covers plays its holder's versions: its projection keeps one it names
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        covered = next(os.path.dirname(p) for p in sorted(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*",
+                                                                                  "metadata.json")))
+                       if jload(p)["library"].get("coveredBy"))
+        played = jload(os.path.join(covered, "metadata.json"))
+        holder = os.path.join(os.path.dirname(covered), played["library"]["coveredBy"])
+        old = jload(glob.glob(os.path.join(holder, "events", "*-package-superseded", "event.json"))[0])["versionId"]
+        write_event(holder, {"schema": "zaentrum.library.event/2", "eventId": "5e000000-0000-4000-8000-000000000002",
+                             "at": "2026-09-21T10:00:00Z", "by": "test", "kind": "version-removed", "versionId": old})
+        rows, _ = rows_of(root)
+        export = os.path.join(tmp, "catalog.json")
+        jwrite(export, {"exportedAt": "2026-10-01T12:00:00Z", "items": list(rows.values()), "deletedItems": []})
+        jwrite(os.path.join(covered, "metadata.json"), dict(played, library=dict(played["library"], primaryVersionId=old)))
+        aged(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("the sweep leaves alone the folder of a holder's removed version that the projection of an episode its "
+             "file covers still names",
+             code == 0 and swept(text, root) == [] and f"the projection of episode {os.path.basename(covered)} names it"
+             in text and os.path.isdir(os.path.join(holder, "versions", old)), text)
+        jwrite(os.path.join(covered, "metadata.json"), played)
+        aged(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.eq("and finds it once that projection names the version the holder plays now",
+             swept(text, root), [os.path.join(holder, "versions", old)])
+
 
 # ---------------------------------------------------------------- sweeping an extra that never finished
 X_BESIDE = "44444444-0000-4000-8000-00000000000e"         # an extra's package that never finished beside its original
