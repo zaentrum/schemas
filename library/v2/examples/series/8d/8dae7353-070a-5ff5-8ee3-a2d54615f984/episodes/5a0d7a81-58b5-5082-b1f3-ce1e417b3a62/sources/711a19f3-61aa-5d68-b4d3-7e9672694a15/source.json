@@ -119,7 +119,10 @@
       "sha256": "sha256:37db83633a86bf79edc5a0ba4efdb07326386e95321030b87df7f37ab284d3b4"
     }
   ],
-  "covers": [],
+  "covers": [
+    "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
+    "c1b3ef5b-819d-57b4-a395-f8cec43ba6ca"
+  ],
   "essence": {
     "maxAudioChannels": 6,
     "surround": true,

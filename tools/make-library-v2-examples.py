@@ -14,16 +14,20 @@ every record the format has and the shapes a reader most needs to see:
            packaged later, as a new extra folder: an extra-removed event retired the old one. And a
            deleted scene the platform took in: only its package is kept, and packagedFrom says what
            it was made from.
-  series/  one series with a season and three episodes. The first episode keeps its original and
+  series/  one series with a season and four episodes. The first episode keeps its original and
            carries forced, full and SDH subtitles and a commentary track. The second is the
            platform's: established with its original beside its first package, re-packaged into a
            new folder that keeps none — the original stays where it was — as the packager writes a
            package now, with a 5.1 companion, its HLS layout and a subtitle made from the copy its
            source keeps of a subtitle file that came with the original; once the new package was
-           recorded the original was deleted from the first folder, and an event says so. The third
-           was taken in before anything packaged it: its version holds its original alone. Beside
-           the episodes, a behind-the-scenes extra of season 1, kept only as its original, which the
-           projection says nothing about.
+           recorded the original was deleted from the first folder, and an event says so. Its file
+           holds the third episode too, a double episode never split: the source covers both, the
+           second first, and the third has no file of its own — its folder is its record and its
+           projection, with its own title, overview and still, which names the second as the holder
+           of its file and plays the second's version, and the second's numbering ends where the
+           third sits, in each ordering. The fourth was taken in before anything packaged it: its
+           version holds its original alone. Beside the episodes, a behind-the-scenes extra of
+           season 1, kept only as its original, which the projection says nothing about.
   people/  the three people the items credit: the movie's director, with only what is known about
            him; the series' creator, a fictional person who wrote some of it too — two credits of
            one person, the writer's jobs joined in the source's own words; and the series' lead, a
@@ -658,16 +662,12 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
                    created=packaged_at, recipe=recipe, hls=hls)
 
 
-def episode_item(sdir, series_id, eid, number, title, overview, numbering, kind):
-    """One episode folder: identity, projection, one original and the versions made from it. kind says
-    how the original came and stayed: kept beside its package; the platform's, established with its
-    original and re-packaged, the original then deleted; or taken in before anything packaged it."""
-    edir = os.path.join(sdir, "episodes", eid)
-    item_record(edir, {
-        "schema": "zaentrum.library.item/2", "itemId": eid, "type": "episode", "title": title,
-        "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
-        "seriesId": series_id, "seasonNumber": 1, "episodeNumber": number, "episodeCode": f"S01E{number:02d}",
-    })
+def episode_media(edir, eid, number, kind, covers=()):
+    """One original of an episode and the versions made from it. kind says how the original came and
+    stayed: kept beside its package; the platform's, established with its original and re-packaged, the
+    original then deleted; or taken in before anything packaged it. covers are the episodes after this one
+    its file holds too, so that its source covers them, this episode first, and its name numbers the
+    range. Returns the version that plays when the viewer does not choose."""
     sid = uid(eid, "source")
     streams = [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")]
     tracks = {}
@@ -676,13 +676,16 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, kind)
                     subtitle(3, "Forced", forced=True), subtitle(4, None), subtitle(5, "SDH", sdh=True)]
         tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3,
                   "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
-    token = f"S01E{number:02d}{'-03' if number == 2 else ''}"
+    last = number + len(covers) if covers else None
+    token = f"S01E{number:02d}" + (f"-{last:02d}" if last else "")
     src = source(edir, sid, "original.mkv",
                  streams, [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10,
                                       hdr10Metadata=True, **tracks),
                  2700000, "2160p", "web", "hevc/main10/10bit/hdr10/3840x2160",
                  naming={"scheme": "unknown", "seasonNumber": 1, "episodeNumber": number,
-                         "episodeEnd": 3 if number == 2 else None, "raw": token})
+                         "episodeEnd": last, "raw": token})
+    # one file, several episodes: the holder's source lists them all, the holder first
+    src["covers"] = [eid, *covers] if covers else []
 
     def sidecar(language, forced=False, sdh=False):
         """The copy the source folder keeps of the subtitle file that came with the original, under the
@@ -736,7 +739,22 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, kind)
                        {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": TAKEN_IN, "evidence": []},
                        {"colour": "colour", "dynamicRange": "hdr10", "stereo3d": "none", "aspectRatio": "16:9"},
                        2700000, [sid], [original], created=TAKEN_IN)
+    return primary
 
+
+def episode_item(sdir, series_id, eid, number, title, overview, numbering, kind, covers=(), holder=None):
+    """One episode folder: identity, projection, one original and the versions made from it, as kind says
+    (episode_media) — or, when kind is covered, none of them. A covered episode has no file of its own:
+    the holder's holds it, and holder is (the holder's id, the version it plays), the decisions the
+    projection names. Its folder is its record and its projection alone, with a title, an overview and
+    a still of its own. Returns the version that plays when the viewer does not choose."""
+    edir = os.path.join(sdir, "episodes", eid)
+    item_record(edir, {
+        "schema": "zaentrum.library.item/2", "itemId": eid, "type": "episode", "title": title,
+        "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
+        "seriesId": series_id, "seasonNumber": 1, "episodeNumber": number, "episodeCode": f"S01E{number:02d}",
+    })
+    primary = holder[1] if kind == "covered" else episode_media(edir, eid, number, kind, covers)
     aired = datetime.date(2024, 1, 9) + datetime.timedelta(days=7 * number)
     write(os.path.join(edir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": eid, "type": "episode",
@@ -748,6 +766,7 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, kind)
         "episode": {"airDate": aired.isoformat()},
         "library": {
             "primaryVersionId": primary,
+            **({"coveredBy": holder[0]} if kind == "covered" else {}),
             "match": {"status": "unmatched", "decidedBy": "inferred", "decidedAt": PROJECTED,
                       "confidence": 0.2, "evidence": [{"signal": "filename", "value": f"S01E{number:02d}"}]},
             "reference": {"runtimeMs": 2700000, "runtimeSource": "manual"},
@@ -757,15 +776,16 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, kind)
         "curation": {"metadataLocked": False, "lockedFields": [], "notes": None},
         "fieldOrigins": {"titles.primary": "manual", "episode.airDate": "manual", "images": "manual"},
     })
+    return primary
 
 
 def series():
-    """Example Show: one season, three episodes, in two orderings — aired, and a disc ordering that
-    runs the first two the other way round. Nothing lists the episodes: the folders are the list, and
-    each episode records its own place in each ordering."""
+    """Example Show: one season, four episodes, in two orderings — aired, and a disc ordering that
+    runs the double episode first, the second and the third, then the first. Nothing lists the
+    episodes: the folders are the list, and each episode records its own place in each ordering."""
     sid = uid("series", "example-show-us")
     sdir = os.path.join(ROOT, "series", sid[:2], sid)
-    ep1, ep2, ep4 = uid(sid, "S01E01"), uid(sid, "S01E02"), uid(sid, "S01E04")
+    ep1, ep2, ep3, ep4 = uid(sid, "S01E01"), uid(sid, "S01E02"), uid(sid, "S01E03"), uid(sid, "S01E04")
     item_record(sdir, {
         "schema": "zaentrum.library.item/2", "itemId": sid, "type": "series", "title": "Example Show",
         "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
@@ -813,13 +833,19 @@ def series():
           "h264/high/8bit/sdr/1920x1080", season=1)
     episode_item(sdir, sid, ep1, 1, "Pilot", "The first episode.",
                  {"aired": {"season": 1, "episode": 1, "episodeEnd": None},
-                  "dvd": {"season": 1, "episode": 2, "episodeEnd": None}}, kind="kept")
-    episode_item(sdir, sid, ep2, 2, "Crosswind", "The second episode, and the third on one file.",
-                 {"aired": {"season": 1, "episode": 2, "episodeEnd": 3},
-                  "dvd": {"season": 1, "episode": 1, "episodeEnd": None}}, kind="platform")
+                  "dvd": {"season": 1, "episode": 3, "episodeEnd": None}}, kind="kept")
+    # A double episode, one file never split: the second episode holds it and its place ends where the
+    # third's is, in each ordering; the third has a folder of its own and nothing in it but its record
+    # and its projection, which names the second as the holder of its file and plays the second's version.
+    crosswind = episode_item(sdir, sid, ep2, 2, "Crosswind", "The second episode, and the third on one file.",
+                             {"aired": {"season": 1, "episode": 2, "episodeEnd": 3},
+                              "dvd": {"season": 1, "episode": 1, "episodeEnd": 2}}, kind="platform", covers=(ep3,))
+    episode_item(sdir, sid, ep3, 3, "Headwind", "The third episode, the second half of the second's file.",
+                 {"aired": {"season": 1, "episode": 3, "episodeEnd": None},
+                  "dvd": {"season": 1, "episode": 2, "episodeEnd": None}}, kind="covered", holder=(ep2, crosswind))
     episode_item(sdir, sid, ep4, 4, "Tailwind", "The fourth episode.",
                  {"aired": {"season": 1, "episode": 4, "episodeEnd": None},
-                  "dvd": {"season": 1, "episode": 3, "episodeEnd": None}}, kind="taken in")
+                  "dvd": {"season": 1, "episode": 4, "episodeEnd": None}}, kind="taken in")
 
 
 def person(pid, portraits=(), **fields):

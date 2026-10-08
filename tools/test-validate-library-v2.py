@@ -669,14 +669,12 @@ def new_episode(root, number, title, season=1, covered_by=None, primary=None, en
 
 
 def third_on_one_file(root, **library):
-    """Episode 2 as a file that holds episode 3 too — the second episode, and the third on one file: its
-    source covers both, the holder first, and episode 3 is a folder of its own, its record and its
-    projection, which names the holder and plays the holder's version. library changes episode 3's
-    projection. Returns episode 3's folder."""
-    holder = episode(root, 2)
-    third = new_episode(root, 3, "Headwind", covered_by=os.path.basename(holder),
-                        primary=os.path.basename(primary(holder)))
-    edit(episode_source(root, 2), lambda d: d.update(covers=[os.path.basename(holder), os.path.basename(third)]))
+    """Episode 3, which the examples keep as a file of several episodes keeps the ones after its holder:
+    episode 2's file holds it — the second episode, and the third on one file — so episode 2's source
+    covers both, the holder first, and episode 3 is a folder of its record and its projection alone,
+    which names the holder and plays the holder's version. library changes episode 3's projection.
+    Returns episode 3's folder."""
+    third = episode(root, 3)
     if library:
         edit(meta(third), lambda d: d["library"].update(library))
     return third
@@ -1224,6 +1222,9 @@ CASES = [
      lambda r: (third_on_one_file(r), numbering_of(r, 2, episodeEnd=2)), "but the last episode its file covers", []),
     ("the holder's numbering ending nowhere", False, lambda r: (third_on_one_file(r), numbering_of(r, 2, episodeEnd=None)),
      "episodeEnd is null, but the last episode its file covers", []),
+    ("the holder's place in another ordering ending short of the last episode its file covers", False,
+     lambda r: edit(meta(episode(r, 2)), lambda d: d["library"]["numbering"]["dvd"].update(episodeEnd=1)),
+     "library.numbering.dvd.episodeEnd is 1, but the last episode its file covers", []),
     ("an episode's numbering ending where no covered episode explains it is a note", True,
      lambda r: numbering_of(r, 4, episodeEnd=5), "and no episode names this one as the holder of its file", []),
 

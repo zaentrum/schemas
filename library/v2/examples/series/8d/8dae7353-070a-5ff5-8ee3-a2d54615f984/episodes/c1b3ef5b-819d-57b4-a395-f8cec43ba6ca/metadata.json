@@ -1,22 +1,22 @@
 {
   "schema": "zaentrum.library.metadata/2",
-  "itemId": "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
+  "itemId": "c1b3ef5b-819d-57b4-a395-f8cec43ba6ca",
   "type": "episode",
   "asOf": "2026-09-20T12:00:00Z",
   "projectedBy": "catalog example",
   "databaseUpdatedAt": "2026-09-20T11:55:00Z",
   "externalIds": {},
   "titles": {
-    "primary": "Crosswind",
+    "primary": "Headwind",
     "original": null,
-    "sort": "crosswind",
+    "sort": "headwind",
     "qualifier": null,
     "localized": {
       "en": {
-        "title": "Crosswind",
-        "sortTitle": "crosswind",
+        "title": "Headwind",
+        "sortTitle": "headwind",
         "tagline": null,
-        "overview": "The second episode, and the third on one file."
+        "overview": "The third episode, the second half of the second's file."
       }
     }
   },
@@ -25,10 +25,11 @@
   "rating": null,
   "credits": [],
   "episode": {
-    "airDate": "2024-01-23"
+    "airDate": "2024-01-30"
   },
   "library": {
     "primaryVersionId": "aac8ebcf-d846-5c1e-9880-a7d021c6bfc0",
+    "coveredBy": "5a0d7a81-58b5-5082-b1f3-ce1e417b3a62",
     "match": {
       "status": "unmatched",
       "decidedBy": "inferred",
@@ -37,7 +38,7 @@
       "evidence": [
         {
           "signal": "filename",
-          "value": "S01E02"
+          "value": "S01E03"
         }
       ]
     },
@@ -48,21 +49,21 @@
     "numbering": {
       "aired": {
         "season": 1,
-        "episode": 2,
-        "episodeEnd": 3
+        "episode": 3,
+        "episodeEnd": null
       },
       "dvd": {
         "season": 1,
-        "episode": 1,
-        "episodeEnd": 2
+        "episode": 2,
+        "episodeEnd": null
       }
     }
   },
   "images": [
     {
       "kind": "still",
-      "file": "6ebaba11efc8175ab34a98827873e81462e9c9865006d6ee6acbd16699181330.jpg",
-      "sha256": "sha256:6ebaba11efc8175ab34a98827873e81462e9c9865006d6ee6acbd16699181330",
+      "file": "bc5f6dbbb6ef205fddb6b60fb1ec14585c6d1fb931184630a5cb1cdf18950757.jpg",
+      "sha256": "sha256:bc5f6dbbb6ef205fddb6b60fb1ec14585c6d1fb931184630a5cb1cdf18950757",
       "contentType": "image/jpeg",
       "sizeBytes": 150,
       "width": 1,
