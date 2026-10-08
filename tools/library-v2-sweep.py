@@ -29,7 +29,9 @@ missed. It finds seven kinds of garbage, each proved by the records and the data
                      no original and nothing names it: not the item's metadata.json, not an event other
                      than version-removed, not the export (this needs --export). When it keeps an
                      original, only the unfinished package beside it: hls/ subs/ trickplay/ trailers/,
-                     package.json, checksums.sha256 and their temporary files.
+                     package.json, checksums.sha256 and their temporary files. A version that holds
+                     its record and its original and no package — one taken in before anything
+                     packaged it — is finished as it is, and never garbage.
   unfinished extra   an extras/<extraId>/ folder without .complete that holds a package — hls/ subs/
                      trickplay/ or package.json — the same way: the whole folder when it has no
                      extra.json, or keeps no original and nothing names it (not the item's
@@ -37,11 +39,14 @@ missed. It finds seven kinds of garbage, each proved by the records and the data
                      only the unfinished package beside it, its checksums with it. An extra that holds
                      no package is never garbage: finished by its checksums, or its writer's to finish.
   removed version    the folder of a version a version-removed event retired, still on storage — the
-                     whole folder, whatever it holds — once the removal is older than the grace and
-                     nothing names the version: not the item's metadata.json, not the export. The
-                     catalog deletes such a folder itself, after the grace a superseded version keeps;
-                     this collects one that delete missed. The events that name it — the supersession
-                     and the deletion of its original — are its history, and keep nothing.
+                     whole folder, whatever it holds but an original — once the removal is older than
+                     the grace and nothing names the version: not the item's metadata.json, not the
+                     export. The catalog deletes such a folder itself, after the grace a superseded
+                     version keeps; this collects one that delete missed. The events that name it —
+                     the supersession and the deletion of its original — are its history, and keep
+                     nothing. A folder that still holds an original — one its version.json names, or
+                     one named as the library names an original — is never removed: an original is
+                     retired before its version is, so one still there may be the only copy.
   removed extra      the folder of an extra an extra-removed event retired, still on storage — the
                      whole folder, whatever it holds — once the removal is older than the grace and
                      nothing names the extra: not the item's library.extras, not another event, not the
@@ -80,6 +85,8 @@ OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 ANY_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 IMAGE_NAME = re.compile(r"^([0-9a-f]{64})\.(jpg|png|webp)$")
+# The name the library gives an original in its version folder.
+ORIGINAL_NAME = re.compile(r"^original(-[0-9]+)?\.[a-z0-9]{1,8}$")
 PACKAGE_PARTS = ("hls", "subs", "trickplay", "trailers", "package.json", "checksums.sha256")
 RECORDS_TMP = ("version.json.tmp", "package.json.tmp", "checksums.sha256.tmp", ".complete.tmp")
 # What makes an extra a packaged one; beside them an unfinished package also leaves its checksums,
@@ -592,11 +599,13 @@ class Sweep:
         if unknown:
             self.leave(vp, f"an unfinished version holding {unknown[0]}, which the sweep cannot classify")
             return
+        kept = [n for n in originals if os.path.isfile(os.path.join(vp, n))]
+        if kept and not any(n in PACKAGE_PARTS or n in RECORDS_TMP for n in entries):
+            return  # taken in before anything packaged it: its record and its original, finished as they are
         young = self.young(vp)
         if young:
             self.leave(vp, f"an unfinished version written to within the grace period ({young})")
             return
-        kept = [n for n in originals if os.path.isfile(os.path.join(vp, n))]
         named = self.refs.version_named(item_dir, vid)
         if named:
             self.leave(vp, f"an unfinished version, but {named}")
@@ -618,8 +627,15 @@ class Sweep:
     # -------------------------------------------------- (b+) a version an event retired
     def removed_version(self, item_dir, vp, vid, ev):
         """A version-removed event says the version is no longer part of the item, so its folder, still
-        on storage, is garbage — whatever it holds, finished or not — once the removal and everything
-        in the folder are older than the grace, and nothing names the version any more."""
+        on storage, is garbage — whatever it holds, finished or not, but an original — once the removal
+        and everything in the folder are older than the grace, and nothing names the version any more. A
+        version folder that still holds an original is never removed: the original is retired first,
+        and its deletion is an event, so one still there is the only copy the folder may hold."""
+        held = self.originals_in(vp)
+        if held:
+            self.leave(vp, f"a removed version, but its folder still holds its original {held[0]}: a version "
+                           f"folder that holds an original is never removed")
+            return
         at = instant(ev.get("at"))
         if at is None:
             self.leave(vp, "a version-removed event names it, but states no moment to prove it by")
@@ -636,6 +652,17 @@ class Sweep:
             self.leave(vp, f"a removed version, but {named}")
             return
         self.target(vp, "removed version", f"a version-removed event of {ev['at']} says it is no longer part of the item")
+
+    def originals_in(self, vp):
+        """The originals a version folder holds: the files its version.json names among originalFiles,
+        and any named as the library names an original, whatever its record says."""
+        names = set()
+        try:
+            names = {n for n in load(os.path.join(vp, "version.json")).get("originalFiles") or [] if isinstance(n, str)}
+        except (OSError, ValueError, AttributeError):
+            pass
+        found = listdir(vp) if os.path.isdir(vp) else []
+        return [n for n in found if (n in names or ORIGINAL_NAME.match(n)) and os.path.isfile(os.path.join(vp, n))]
 
     # -------------------------------------------------- (b'') an extra an event retired
     def removed_extra(self, item_dir, xp, xid, ev):

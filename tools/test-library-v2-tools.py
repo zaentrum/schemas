@@ -3369,6 +3369,7 @@ GONE_PERSON = "0d0d0d0d-0000-4000-8000-0000000000aa"    # a person it deleted, b
 NOTHING_WROTE = "11111111-0000-4000-8000-00000000000b"  # a version folder with part of a package, no record
 RECORDED = "22222222-0000-4000-8000-00000000000b"       # a version that wrote its record, kept no original
 BESIDE = "33333333-0000-4000-8000-00000000000b"         # an unfinished package beside a kept original
+TAKEN_IN = "88888888-0000-4000-8000-00000000000b"       # a version holding its original and no package: no garbage
 
 
 def aged(root, days=3):
@@ -3405,6 +3406,13 @@ def garbage(tmp, age=True):
         os.unlink(os.path.join(where["beside"], name))
     jwrite(os.path.join(where["beside"], "version.json"),
            dict(jload(os.path.join(where["beside"], "version.json")), versionId=BESIDE))
+    # no garbage: a version taken in before anything packaged it, its record and its originals alone
+    where["taken in"] = os.path.join(movie, "versions", TAKEN_IN)
+    os.makedirs(where["taken in"])
+    for name in jload(os.path.join(kept, "version.json"))["originalFiles"]:
+        shutil.copyfile(os.path.join(kept, name), os.path.join(where["taken in"], name))
+    jwrite(os.path.join(where["taken in"], "version.json"),
+           dict(jload(os.path.join(kept, "version.json")), versionId=TAKEN_IN))
     image = b"\xff\xd8\xff\xfe\x00\x0bdropped\xff\xd9"
     where["dropped image"] = os.path.join(movie, "metadata", hashlib.sha256(image).hexdigest() + ".jpg")
     open(where["dropped image"], "wb").write(image)
@@ -3460,12 +3468,16 @@ def left_alone(text):
 def test_sweep(t):
     with tempfile.TemporaryDirectory() as tmp:
         root, export, where = garbage(tmp)
+        for name in os.listdir(where["taken in"]):  # written just now: were it garbage, it would be within the grace
+            os.utime(os.path.join(where["taken in"], name), None)
         expected = sorted([where["gone"], where["nothing wrote"], where["recorded"],
                            os.path.join(where["beside"], "hls"), os.path.join(where["beside"], "trickplay"),
                            where["dropped image"], where["dropped portrait"], where["gone person"]])
         before = stamps(root)
         code, text = run(SWEEP, root, "--export", export)
         t.eq("a dry run finds every kind of garbage, and nothing else", swept(text, root), expected)
+        t.ok("and says nothing of a version taken in before anything packaged it, which is finished as it is",
+             TAKEN_IN not in text and os.path.isdir(where["taken in"]), text)
         t.ok("and says why each one is garbage",
              "deleted item: deleted 2026-09-30T10:00:00Z by librarian, and nothing in it is newer" in text
              and "deleted person: deleted 2026-09-30T10:00:00Z by catalog: nothing in the folder is newer, and no item "
@@ -3833,9 +3845,12 @@ def removed_version(tmp, at=None, change=None):
     if at:
         shutil.rmtree(os.path.dirname(removal))
         write_event(movie, dict(jload(os.path.join(EXAMPLES, os.path.relpath(removal, root))), at=at))
-    # what the folder holds does not matter: a removed version's folder is ignored, whatever is in it
+    # what the folder holds does not matter — a removed version's folder is ignored, whatever is in it — but an
+    # original: the version whose original was deleted, as a version is removed once its original is retired
     vp = os.path.join(movie, "versions", vid)
-    shutil.copytree(sorted(glob.glob(os.path.join(movie, "versions", "*")))[0], vp)
+    shutil.copytree(next(p for p in sorted(glob.glob(os.path.join(movie, "versions", "*")))
+                         if not any(os.path.isfile(os.path.join(p, n))
+                                    for n in jload(os.path.join(p, "version.json"))["originalFiles"])), vp)
     jwrite(os.path.join(vp, "version.json"), dict(jload(os.path.join(vp, "version.json")), versionId=vid))
     rows, _ = rows_of(EXAMPLES)
     export = os.path.join(tmp, "catalog.json")
@@ -3894,6 +3909,11 @@ def test_sweep_removed_versions(t):
          change=lambda root, export, vp: jwrite(export, dict(jload(export), versions=[
              {"id": os.path.basename(vp), "itemId": os.path.basename(os.path.dirname(os.path.dirname(vp))),
               "state": "superseded"}])))
+    kept("that still holds the original its version names", "but its folder still holds its original",
+         change=lambda root, export, vp: open(os.path.join(vp, jload(os.path.join(vp, "version.json"))["originalFiles"][0]),
+                                              "wb").write(b"the only copy left"))
+    kept("that still holds a file named as the library names an original", "still holds its original original-2.mkv",
+         change=lambda root, export, vp: open(os.path.join(vp, "original-2.mkv"), "wb").write(b"an original"))
 
 
 # ---------------------------------------------------------------- sweeping an extra that never finished
