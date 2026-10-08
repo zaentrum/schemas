@@ -13,7 +13,9 @@ rule and checks the tool notices:
   round trip     rebuilding library/v2/examples gives the rows the example set states: four items,
                  the movie's two versions, the episode whose package was superseded, and the series
                  with nothing to play — and the bonus material beside them as rows of its own, in the
-                 order a viewer sees it, with what never finished left out
+                 order a viewer sees it, with what never finished left out; an episode another's file
+                 covers is linked to the holder whose source covers it, whatever its projection says,
+                 and plays nothing of its own
   events         each kind changes the rebuilt rows as the README says, and removing the event
                  changes them back: a superseded package reappears, a removed version reappears, a
                  deleted original becomes a playback asset again, a removed extra is a row again, and
@@ -25,7 +27,8 @@ rule and checks the tool notices:
                  their folder is newer — an untyped entry names an item — and otherwise takes the
                  class of the items that credit them; a projection whose row was modified since is
                  stale and one that reflects a later state is ahead, and both fail, while one that
-                 does not say which state it reflects fails nothing
+                 does not say which state it reflects fails nothing; a covered episode's link is
+                 compared where the export carries one
   people         a credited person gets a record that holds what the credit knows; a people list in
                  the export fills every field it carries; --people-only touches no item record; a
                  projection that drops a portrait removes it
@@ -774,6 +777,14 @@ def test_round_trip(t):
                    and r["episodeNumber"] == 2)
     t.ok("an episode carries its series and its numbers",
          episode["parentId"] and episode["episodeNumber"] == 2)
+    covers = {c: jload(p)["covers"][0] for p in glob.glob(os.path.join(EXAMPLES, "series", "*", "*", "episodes", "*",
+                                                                       "sources", "*", "source.json"))
+              for c in jload(p)["covers"][1:]}
+    t.eq("an episode another's source covers is covered by that holder, as the catalog links it, and no other row is",
+         {iid: r["coveredBy"] for iid, r in rows.items() if r["coveredBy"]}, covers)
+    t.ok("and a covered episode has nothing of its own to play: it plays its holder's",
+         covers and all(not rows[c]["playbackAssets"] and not rows[c]["subtitleAssets"] for c in covers)
+         and all(rows[h]["playbackAssets"] for h in covers.values()), covers)
     t.ok("the rebuild says which version lost its original for good",
          any(v["permanentLoss"] for s in doc["storage"] for v in s["versions"]))
     t.ok("running it twice gives the same rows", rows_of(EXAMPLES)[0] == rows)
@@ -863,6 +874,29 @@ def test_round_trip(t):
         t.ok("an episode's extras/ folder is ignored, and the rebuild says so",
              os.path.basename(bts) not in {r["id"] for r in built["extras"]}
              and any("an episode has no extras" in n for n in built["notes"]), built["notes"])
+
+    # a covered episode's link is the record's: its projection decides only where nothing records the holder's file
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, tree)
+        (covered, holder), = covers.items()
+        folder = {jload(p)["itemId"]: os.path.dirname(p)
+                  for p in glob.glob(os.path.join(tree, "series", "*", "*", "episodes", "*", "item.json"))}
+        meta = os.path.join(folder[covered], "metadata.json")
+        decided = jload(meta)["library"]
+        jwrite(meta, dict(jload(meta), library={k: v for k, v in decided.items() if k != "coveredBy"}))
+        t.eq("a covered episode whose projection does not name its holder is covered by it all the same: the record "
+             "restores the link", rows_of(tree)[0][covered]["coveredBy"], holder)
+        source = glob.glob(os.path.join(folder[holder], "sources", "*", "source.json"))[0]
+        jwrite(source, dict(jload(source), covers=[]))
+        jwrite(meta, dict(jload(meta), library=decided))
+        rebuilt, built = rows_of(tree)
+        t.ok("one whose projection names a holder no source of which covers it is covered by nothing, and the rebuild "
+             "says the record won", rebuilt[covered]["coveredBy"] is None
+             and any("the record wins, and the row is covered by nothing" in n for n in built["notes"]), built["notes"])
+        shutil.rmtree(os.path.dirname(source))
+        t.eq("and one whose holder has no source recorded yet is covered as its projection says: nothing contradicts it",
+             rows_of(tree)[0][covered]["coveredBy"], holder)
 
 
 def test_work_tree(t):
@@ -1156,6 +1190,15 @@ def test_compare(t):
     code, text = compare(subtitle(lambda x: x.update(label="Chosen")), "--ignore-fields", "id,path,hash")
     t.ok("while the rest of a subtitle row is compared",
          code == 1 and "subtitleAssets.label: 1 difference(s)" in text, text)
+
+    covered = next(r for r in rows.values() if r["coveredBy"])
+    code, text = compare(lambda e: next(r for r in e["items"] if r["id"] == covered["id"]).update(coveredBy=None))
+    t.ok("a covered episode the database does not link to its holder is a difference",
+         code == 1 and "coveredBy: 1 difference(s)" in text and f"storage {covered['coveredBy']!r} != database None" in text,
+         text)
+    code, text = compare(lambda e: [r.pop("coveredBy") for r in e["items"]])
+    t.ok("and an export from before the catalog linked covered episodes, which carries no coveredBy, makes no tree "
+         "differ", code == 0 and "the tree and the database agree" in text, text)
 
     code, text = compare(both(drop(movie["id"]), deleted(movie["id"])))
     t.ok("an item the database deleted is an orphan, and an orphan alone does not fail",

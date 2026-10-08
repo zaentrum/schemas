@@ -26,6 +26,13 @@ whose origin names a link that metadata.json's videos[] lists gives that link it
 the original it keeps. The catalog has no table for extras yet, so they are in the rows JSON only,
 and --compare counts them without comparing them.
 
+A file that holds several episodes is its holder's, and the rows say so the way the catalog does: an
+episode another episode's source covers (source.json covers, the holder first) is covered by that
+holder, its row's coveredBy the holder's id, and every other row's is null. The record restores the
+link — the source is written once, and says what the file holds — and the covered episode's own
+projection (library.coveredBy) only where the holder's file has no source recorded yet, so that no
+record contradicts it. A covered episode has no playback rows of its own: it plays its holder's.
+
 Applying events, earliest first:
   original-deleted    the originals it names are gone, so they are not playback assets any more,
                       and the version's package is the only copy of it — canonical whatever its
@@ -93,8 +100,9 @@ Field by field it then reports where the rows both sides hold disagree, and mark
 projection is stale. It exits non-zero for a lost item or person, a missing record, a projection that
 is stale or ahead and a field that disagrees — never for an orphan, an unreferenced person or an
 unknown freshness alone — so it can gate a migration. An item row's tmdbFetchedAt and tmdbChangedAt,
-and an image row's dimensions, primary flag and TMDB path, are compared where the export carries
-them: an export from before them makes no tree that has them differ. So are a credit's job,
+and its coveredBy, and an image row's dimensions, primary flag and TMDB path, are compared where the
+export carries them: an export from before them — from before the catalog linked covered episodes,
+for coveredBy — makes no tree that has them differ. So are a credit's job,
 character, billing order and episode count; a credit is matched by its person and role, so one whose
 name or job changed is that credit changed, and namesakes in one role stay apart. An image row is
 matched by its bytes and its kind, because one file can be several kinds — a backdrop that is the
@@ -315,6 +323,9 @@ class Rebuild:
         self.notes = []
         self.newest = {}
         self.people_newest = {}
+        # what each episode says of a file that covers several: its series, its sources and those a
+        # source-removed event retired, and the holder its projection names
+        self.covering = {}
 
     def note(self, msg):
         self.notes.append(msg)
@@ -337,6 +348,7 @@ class Rebuild:
                     for eid in (listdir(ed) if os.path.isdir(ed) else []):
                         if os.path.isdir(os.path.join(ed, eid)):
                             self.item(os.path.join(ed, eid))
+        self.covered()
         base = os.path.join(self.root, "people")
         for shard in (listdir(base) if os.path.isdir(base) else []):
             sd = os.path.join(base, shard)
@@ -388,6 +400,11 @@ class Rebuild:
             self.note(f"{item['itemId']}: no metadata.json, so the row keeps only what item.json records")
         events = self.events(d, item["itemId"])
         sources = self.sources(d)
+        if item.get("type") == "episode":
+            self.covering[item["itemId"]] = {
+                "series": item.get("seriesId"), "sources": sources,
+                "dropped": {ev.get("sourceId") for ev in events if ev.get("kind") == "source-removed"},
+                "projected": (meta.get("library") or {}).get("coveredBy")}
         versions, storage = self.versions(d, item, sources, events)
         extras = []
         if item.get("type") in ("movie", "series"):
@@ -399,6 +416,39 @@ class Rebuild:
         self.newest[item["itemId"]] = newest_record(d)
         self.storage.append({"itemId": item["itemId"], "newestRecordAt": self.newest[item["itemId"]],
                              "versions": storage})
+
+    def covered(self):
+        """The episodes another episode's file covers, as the catalog links them (coveredBy): an episode a
+        source of an episode of its series lists after the holder (source.json covers) is covered by that
+        holder. The record restores the link. The covered episode's projection decides only where nothing
+        records the holder's file yet — a holder with no source that counts — and a projection that names
+        a holder whose source does not cover it is outdone by the record."""
+        rows = {r["id"]: r for r in self.items}
+        counted = lambda hid: [s for s in self.covering[hid]["sources"] if s not in self.covering[hid]["dropped"]]
+        claims = {}
+        for hid, c in sorted(self.covering.items()):
+            for sid in counted(hid):
+                for iid in (c["sources"][sid].get("covers") or [])[1:]:
+                    if iid != hid and iid in self.covering and self.covering[iid]["series"] == c["series"]:
+                        claims.setdefault(iid, set()).add(hid)
+        for iid, c in sorted(self.covering.items()):
+            holders, projected = sorted(claims.get(iid, ())), c["projected"]
+            if holders:
+                holder = projected if projected in holders else holders[0]
+                if len(holders) > 1:
+                    self.note(f"{iid}: the sources of {', '.join(holders)} each cover it; the row is covered by {holder}")
+                elif projected and projected != holder:
+                    self.note(f"{iid}: its projection names {projected} as the holder of its file, and a source of "
+                              f"{holder} covers it: the record wins")
+            elif projected in self.covering and self.covering[projected]["series"] == c["series"] and not counted(projected):
+                holder = projected  # nothing records the holder's file yet, so nothing contradicts the projection
+            else:
+                holder = None
+                if projected:
+                    self.note(f"{iid}: its projection names {projected} as the holder of its file, and no source of it "
+                              f"covers this episode: the record wins, and the row is covered by nothing")
+            if iid in rows:
+                rows[iid]["coveredBy"] = holder
 
     def events(self, d, iid):
         """events/<…>/event.json — and the events/<…>.json files of a tree from before each event was
@@ -536,6 +586,8 @@ class Rebuild:
             "durationMs": (library.get("reference") or {}).get("runtimeMs"),
             "parentId": item.get("seriesId"), "seasonNumber": item.get("seasonNumber"),
             "episodeNumber": item.get("episodeNumber"),
+            # an episode whose file is another's: covered() gives it the holder, once every episode is read
+            "coveredBy": None,
             "metadataLocked": bool((meta.get("curation") or {}).get("metadataLocked")),
             "modifiedAt": meta.get("databaseUpdatedAt"),
             "tmdbFetchedAt": tmdb.get("fetchedAt"), "tmdbChangedAt": tmdb.get("changedAt"),
@@ -728,8 +780,8 @@ SET_FIELDS = ("genres", "tags")
 CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath"),
                         "people": ("job", "character", "order", "episodeCount")}
 # The fields of an item row compared only when the export's row carries them, for the same reason:
-# items do not carry them yet.
-CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt")
+# items do not carry the first two yet, and coveredBy only once the catalog links covered episodes.
+CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt", "coveredBy")
 # Behaviour, not data: which subtitle a viewer gets is the player's rule, or a default a person chose,
 # which the database keeps and no record holds. The rebuild writes isDefault false, and --compare never
 # compares it, whatever --ignore-fields says.
