@@ -227,11 +227,12 @@ movies/<aa>/<itemId>/
   metadata/<sha256>.jpg            images named by their own content hash
   sources/<sourceId>/
     source.json                    one original as it was found, written once
-    ffprobe.json                   the verbatim probe, and each copied sidecar beside it
+    ffprobe.json                   its probe, and beside it a copy of each subtitle file that came with
+                                   it: subtitle-1.de.srt, subtitle-2.en.forced.srt
     checksums.sha256               covers the files above, written with them
   versions/<versionId>/
     version.json                   edition, presentation, marks, sources — written once
-    <original file>                the original, when this version keeps it
+    original.mkv                   the original, from the moment it is taken in until it is deleted
     hls/  subs/  trickplay/        the package
     checksums.sha256               version.json and every package file, sha256sum -c format
     package.json                   renditions, losses, and the hash of checksums.sha256
@@ -241,7 +242,7 @@ movies/<aa>/<itemId>/
     checksums.sha256               covers event.json, written with it
   extras/<extraId>/
     extra.json                     a piece of bonus material, written once
-    <original file>                the extra itself, when it is kept
+    original.mkv                   the extra itself, when it is kept
     hls/  subs/  trickplay/        its package, when it has one
     checksums.sha256               extra.json and every file above, the original included
     package.json  .complete        as a version's, when it is packaged
@@ -253,16 +254,35 @@ people/<aa>/<personId>/
 .work/                             beside the record, not part of it: what the platform keeps meanwhile
 ```
 
-**On the platform, an original never enters the library.** It waits outside the record — among the
-arrivals, `.work/incoming/` beside `movies/`, `series/` and `people/` at the share's root — until a
-version made from it is packaged, verified and recorded, and is deleted then. So a version the
-platform writes keeps no original (`originalFiles: []`) and its package is canonical from the start;
-the source folder keeps what describes the original — its record, the verbatim probe, copies of the
-sidecars that sat beside it — and an `original-deleted` event records the deletion, naming the source
-(an original deleted outside the record) and what the package does not carry of it. An extra the
-platform takes in keeps only its package, and `packagedFrom` says what it was made from. Every tool
-reads past `.work/` and any other entry at the root whose name begins with a dot: the arrivals, the
-workers' handoffs, the trash and a sweep's quarantine are not the record.
+**A version folder is the one place its media lives**: its original, the package made from it, or
+both. On the platform an original arrives among the arrivals, `.work/incoming/` beside `movies/`,
+`series/` and `people/` at the share's root, and waits there only until the first record of its title
+is made: then it is renamed into its version folder, with the package when one was made, or alone — a
+version taken in before anything packaged it holds `version.json` and its original, and its package is
+added to it later. It stays there until its package is recorded and verified, and is deleted from there
+then: an `original-deleted` event records the deletion and what the package does not carry of it, and
+`version.json` keeps naming the file. A re-package is a new version folder that keeps no original
+(`originalFiles: []`), its package canonical; the original stays in the version that holds it, and a
+version folder that still holds an original is never removed. The source folder keeps what describes
+the original after it is gone — its record, its probe, copies of the subtitle files that came with it.
+An extra the platform takes in keeps only its package, and `packagedFrom` says what it was made from.
+Every tool reads past `.work/` and any other entry at the root whose name begins with a dot: the
+arrivals, the workers' handoffs, the trash and a sweep's quarantine are not the record.
+
+**No file is named as it arrived, and no record names one so**: a file name, a folder or a container
+title can tell where a file came from, and a name the library gives holds no character but
+`[a-z0-9.-]`. An original is `original.<ext>` — `original-1.<ext>`, `original-2.<ext>` … for the parts
+of a version split into several — in its version folder, in its source record's `file.name`, in
+`originalFiles` and in an extra's `packagedFrom`, `<ext>` the extension it arrived with, lower-cased,
+or `bin`. The copy a source keeps of a subtitle file that came with the original is
+`subtitle-<n>.<lang>[.forced][.sdh].<ext>`, `n` from 1 in the order the catalog lists them and
+`lang` the language's primary subtag, or `und`; nothing else that sat beside an original is kept, as
+NFO text routinely names where a file came from. A source record says nothing of where its original
+came from — no `origin` — and keeps what the name it arrived under and its folder claimed only as the
+values parsed from them, `labels` and `naming`; no record keeps a container's title tag, and the probe
+a source keeps is the tool's output with two edits, `format.filename` the library's name and no title
+tag. `libv2_records.py` makes every one of these names, so the packager and the migration agree on them,
+and `library-v2-neutral-names.py` gives them to a tree written before 2026-10-08.
 
 **People are a category of their own.** A credit names a person by `personId`, and people are
 shared by every item that credits them, so a person's biography, dates, the department they are
@@ -395,7 +415,7 @@ first. Five kinds, and what each one changes:
 
 | Kind | Effect |
 |---|---|
-| `original-deleted` | The originals it names are gone from the version folder: the source it names, or all of them when it names none. Once none is left, that version's package is the only copy of it — canonical, whatever `role` its record was written with — and everything the package failed to carry is permanent. For a version that never kept the original in its folder — every version the platform writes — the original was deleted outside the record, and the event always names its source. |
+| `original-deleted` | The originals it names are gone from the version folder: the source it names, or all of them when it names none. Once none is left, that version's package is the only copy of it — canonical, whatever `role` its record was written with — and everything the package failed to carry is permanent. A source's original is gone whichever version folder kept it, so a re-package's subtitles made from the source's copies stand for the catalog's rows from then on. For a version that never kept the original in its folder — as a platform wrote every version before 2026-10-08 — the original was deleted outside the record, and the event always names its source. |
 | `version-removed` | The version is no longer part of the item. Ignore its folder even when it is still on storage: its package is not playable, and nothing but the item's events may point at it. The events that name it — the deletion of its original, the supersession of its package — are its history and stay as they were once its folder is gone, naming it by its `versionId`, or its package by the `packageId` an event of the item names beside it: this event is the record of where it went. One among another item's events removes nothing. |
 | `package-superseded` | The package it names is no longer the one to use; the package under `supersededBy` is authoritative for its version from that moment. The superseded folder stays exactly as it was. |
 | `extra-removed` | The extra its `extraId` names is no longer part of the item. Ignore its folder even when it is still on storage: it is not listed, not played, and nothing may point at it. The sweep collects a folder still there. |
@@ -411,23 +431,28 @@ may accept less.
 
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
 outside a version or extra folder, every write-once folder's checksums cover exactly its records and
-each version's chain holds, `package.json` exists exactly when `.complete` does, images are named by
-their own hash, events reference records that exist — or a version a `version-removed` event of the
-same item removed, and its package — and a deletion accepts no more than the gate its records
-compute, episodes do not contradict their own numbering, a person folder holds its record and the
-images it lists, at most one image of a kind is primary — in a series one per kind and season —
-extras sit under a movie or a series and never an episode, an extra's checksums
-list `extra.json` and every file beside it and its `originals` describe exactly its `originalFiles`
-— with `--check-media` at the size and `qh1` they record — its package carries no trailers, only a
-series' extra names a season and only one the series lists, `library.extras` names extras that are
-there, and the folder of an extra an `extra-removed` event retired is ignored, gone or not; a 5.1
-companion says what its track is for, an audio rendition is in a group the HLS layout names and a
-subtitle made from a sidecar names one its version's source keeps; `packagedFrom` is only on a
-packaged extra that keeps no original; a deletion of an original a version never kept names its
-source; a source record without its file's fixity says why, and no version keeps such an original;
-the projection's reference ids are of its type; `.work/` and every dot-entry at the root are not
-looked at, and the folders of the store before the library — `media/`, `packages/`, `extras/`,
-`incoming/` — are a note until the migration's cleanup moves them aside):
+each version's chain holds, `package.json` exists exactly when `.complete` does — a version taken in
+holds its original alone — images are named by their own hash, events reference records that exist —
+or a version a `version-removed` event of the same item removed, and its package — and a deletion
+accepts no more than the gate its records compute, episodes do not contradict their own numbering, a
+person folder holds its record and the images it lists, at most one image of a kind is primary — in
+a series one per kind and season — extras sit under a movie or a series and never an episode, an
+extra's checksums list `extra.json` and every file beside it and its `originals` describe exactly
+its `originalFiles` — with `--check-media` at the size and `qh1` they record — its package carries
+no trailers, only a series' extra names a season and only one the series lists, `library.extras`
+names extras that are there, and the folder of an extra an `extra-removed` event retired is ignored,
+gone or not; a 5.1 companion says what its track is for, an audio rendition is in a group the HLS
+layout names and a subtitle made from a sidecar names one its version's source keeps; `packagedFrom`
+is only on a packaged extra that keeps no original; a deletion of an original a version never kept
+names its source; a source record without its file's fixity says why, and no version keeps such an
+original; no record names a file as it arrived — a source's `file.name`, every `originalFiles` and
+every `packagedFrom` name is `original.<ext>` or `original-<n>.<ext>`, a source's sidecars are
+subtitle copies named `subtitle-<n>.<lang>[.forced][.sdh].<ext>` without `originalName`, no source
+has an `origin`, no record keeps a container title tag, and a probe names its file as its record
+does and keeps no title tag either; the projection's reference ids are of its type; `.work/` and
+every dot-entry at the root are not looked at, and the folders of the store before the library —
+`media/`, `packages/`, `extras/`, `incoming/` — are a note until the migration's cleanup moves them
+aside):
 
 ```sh
 pip install "jsonschema[format-nongpl]>=4.23" referencing
@@ -446,7 +471,8 @@ is the only place it is reachable (`oc exec -i deploy/packager -- python3 - <arg
 database export they read is produced on the client side, so nothing needs a driver or a credential.
 `library-v2-from-catalog.py` writes its source, version, package and extra records with
 `libv2_records.py`, the module the packager vendors byte for byte so that both write the same
-records; it finds the module beside it, and is piped behind it:
+records and give files the same names, and `library-v2-neutral-names.py` takes the names from it;
+each finds the module beside it, and is piped behind it:
 `cat tools/libv2_records.py tools/library-v2-from-catalog.py | oc exec -i deploy/packager -- python3 - <args>`.
 
 ```sh
@@ -476,6 +502,9 @@ python tools/library-v2-media-check.py /…/library [--checksums]
 # a tree written before 2026-10-02 (b), brought to the layout in which every record proves itself
 python tools/library-v2-upgrade.py /…/library [--dry-run] [--verbose]
 
+# a tree written before 2026-10-08, given the names the library gives its files: listed, and with --apply made
+python tools/library-v2-neutral-names.py /…/library [--apply] [--run neutral-names] [--verbose]
+
 # what a writer left behind that the records prove is garbage: listed, and with --apply removed
 python tools/library-v2-sweep.py /…/library [--export catalog.json] [--grace 24h] [--apply] [--quarantine DIR] [--verbose]
 
@@ -490,6 +519,23 @@ records exactly as it was, as a conflict it reports. A run stopped anywhere is f
 and a second run changes nothing. It writes no `people/`: `library-v2-from-catalog.py --people-only`
 adds those to an upgraded tree. It leaves every `extras/` folder as it is: there is nothing to
 migrate, because an extra was only ever written in the layout in which it proves itself.
+
+`library-v2-neutral-names.py` gives a tree written before 2026-10-08 the names the library gives its
+files, and changes nothing else. It renames each original a version or an extra keeps to
+`original.<ext>` and each subtitle copy a source keeps to `subtitle-<n>.<lang>[.forced][.sdh].<ext>`,
+and takes every other copy — NFO text, an image — out of the record into the run's folder; it rewrites
+the records that name them: a source's `file.name`, without `origin`, `originalName` or a container
+title tag, its probe without the path it read and without the title tag, `originalFiles`, `originals`
+and `packagedFrom`, edition evidence that held a file or folder name, and the `fromSidecar` of a
+subtitle made from a renamed copy; and it closes every chain again over the records that changed — a
+package file's digest is carried forward, never computed again, and an original is renamed, never
+read. A folder whose records contradict it is a conflict it reports and leaves, its whole item with
+it. A dry run, the default, lists every change; `--apply` journals them under
+`.work/migration/<run>/` — the item's plan before anything moves, each step as it is done, the bytes
+of every file it rewrote as they were and as they are — so a run stopped anywhere is finished by the
+next, and a second run changes nothing. It does not take an original that waits in `.work/incoming/`
+into its version folder, nor change the database: a row that names a renamed file by its old path is
+pointed at the new one by its owner, from the journal.
 
 The catalog export carries, beside its items, a top-level `people` list, and
 `library-v2-from-catalog.py` maps every field of it into `person.json`, `--people-only` included:
@@ -560,12 +606,13 @@ catalog keeps extras since katalog-manager's migration 039 (`com_nalet_katalog_i
 `--compare` doesn't read that table yet, so these rows exist in the JSON only and `--compare` counts
 them without comparing them. `library-v2-from-catalog.py` writes a trailer the catalog downloaded — a link
 whose `localPath` is a file on the share — as an extra of kind `trailer` beside its movie or series,
-copied or moved in as `--media-mode` says, keeps the link in `videos[]` and names it in the extra's
-`origin`; an episode's stays a link, and so does every trailer with `--media-mode none`. The rebuild
-gives a link of `videos[]` the original an extra with that origin keeps as its `localPath`, and
-`--compare` compares a trailer's `localPath` by its file name — the file moved into its extra's
-folder and kept its name, the reason `path` is not compared at all — so a migrated tree agrees with
-the export it came from, downloaded trailers included. A removed extra has no row.
+copied or moved in as `--media-mode` says under the name the library gives an original, titled by
+its link, keeps the link in `videos[]` and names it in the extra's `origin`; an episode's stays a
+link, and so does every trailer with `--media-mode none`. The rebuild gives a link of `videos[]` the
+original an extra with that origin keeps as its `localPath`, and `--compare` compares only whether a
+trailer has its local copy — the file moved into its extra's folder under the library's name for it,
+the reason `path` is not compared at all — so a migrated tree agrees with the export it came from,
+downloaded trailers included. A removed extra has no row.
 
 ### Staging the platform's library
 
@@ -574,31 +621,37 @@ before — originals under `media/`, packages under `packages/`, extras under `e
 share's root — for katalog-manager to adopt. It reads that store and writes nothing outside
 `.work/migration/<run>/`: the package files are hashed where they are and the originals probed where
 they are, and the only files written are records, the images the database holds and copies of the
-sidecars. Every item gets `staged/<itemId>/item/`, the folder as the library will hold it — its
-version folders carry `version.json`, `checksums.sha256`, `package.json` and `.complete`, the
-checksums listing the package files where the adopt puts them — and `units/<itemId>.json`, the plan of
-what the adopt moves where and what it changes in the database; the people the items credit are
-staged under `staged-people/`, and `report.json` says what is ready, every problem by its class, and
-what deleting every original would cost. A plan's moves are renames, in order — the package folders
-into the staged records, the item folder into place, the original and its sidecars to the arrivals,
-what is left of an old package folder aside — and its guards are the old package's `manifest.json`
-hash, its `.complete` time and a listing of the package folders, checked again before the first move.
-The tool's docstring is the plan's reference.
+subtitle files that came with the originals. Every item gets `staged/<itemId>/item/`, the folder as
+the library will hold it — its version folders carry `version.json`, `checksums.sha256`, `package.json`
+and `.complete`, the checksums listing the package files where the adopt puts them — and
+`units/<itemId>.json`, the plan of what the adopt moves where and what it changes in the database;
+the people the items credit are staged under `staged-people/`, and `report.json` says what is ready,
+every problem by its class, how many titles are taken in, and what deleting every original would
+cost. A plan's moves are renames, in order — the package folders into the staged records, the item
+folder into place, the original into its version folder as `original.<ext>`, the subtitle files that
+came with it and the extras' originals to the arrivals, what is left of an old package folder aside —
+and its guards are the old package's `manifest.json` hash, its `.complete` time and a listing of the
+package folders, checked again before the first move. The tool's docstring is the plan's reference.
 
-The records are the platform's: a version keeps no original, and an original that was gone before the
-library recorded it has a source record without fixity whose `probe.note` says so. Extras are the
-catalog's own rows, named by their ids; ids are UUIDv5 of the item and a stable name, so staging
-again writes the same records, and an item the library already holds is not staged again. `--dry-run`
-writes only `report.json` and hashes nothing; `--shard aa` stages the items whose folder is in one
-shard, from an export of that shard.
+The records are the platform's, and name no file as it arrived. Every original goes into its version
+folder at once, packaged or not: a packaged title's version keeps it beside its package, which is
+derived, and a title nothing packaged yet is taken in — its version holds `version.json` and the
+original alone, and the plan records it with no package (`takenIn`). The database is told the
+library's name and place of each original, and no path it arrived under. An original that was gone
+before the library recorded it has a source record without fixity whose `probe.note` says so, and no
+version keeps it. Extras are the catalog's own rows, named by their ids; ids are UUIDv5 of the item and
+a stable name, so staging again writes the same records, and an item the library already holds is not
+staged again. `--dry-run` writes only `report.json` and hashes nothing; `--shard aa` stages the items
+whose folder is in one shard, from an export of that shard.
 
 Once adopted, the library is verified where it is: `validate-library-v2.py --check-media` and the
 media check on the share's root — `.work/` beside the record is not looked at — and
-`library-v2-rebuild.py --compare` of a fresh export with `--arrivals-root <root>/.work`: the rows of
-files waiting at the arrivals, and of an original retired since, are no part of the record, and a
-subtitle the package made from a sidecar has no row of its own until its original is deleted — the
-catalog's row of the sidecar stands for it. A subtitle row's `isDefault` is never compared: the adopt
-keeps a default a person chose, and no record holds one.
+`library-v2-rebuild.py --compare` of a fresh export with `--arrivals-root <root>/.work`: an original
+in its version folder is compared like every other row, the rows of files waiting at the arrivals —
+the subtitle files that came with the originals, the extras' originals — and of an original retired
+since are no part of the record, and a subtitle the package made from a sidecar has no row of its
+own until its original is deleted — the catalog's row of the sidecar stands for it. A subtitle row's
+`isDefault` is never compared: the adopt keeps a default a person chose, and no record holds one.
 
 ### Telling an orphan from a loss
 
@@ -693,9 +746,9 @@ reason, and with `--apply` removes it:
 |---|---|
 | a deleted item's folder | the export's deletion log names the id as an item's, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
 | a deleted person's folder | the export's deletion log names the id as a person's (`type: person`), the database does not hold them again — not in its people list, not credited by any of its items — nothing in the folder is newer than the deletion, the deletion is older than the grace, and no item record on storage still credits them: one that does keeps the folder until it is projected again (`--projections-only`), unless the same sweep removes that item's folder as a deleted item. It is checked last in the quarantine, against the credits on storage once every other target is settled |
-| an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it |
+| an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it, and one that holds its original and no package — taken in — is no garbage at all |
 | an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not another event, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
-| a removed version's folder | a `version-removed` event names it and is older than the grace, and nothing names the version but its history — not `metadata.json`, not the export: the whole folder, whatever it holds. The catalog deletes it itself after the grace a superseded version keeps; this collects one that delete missed |
+| a removed version's folder | a `version-removed` event names it and is older than the grace, and nothing names the version but its history — not `metadata.json`, not the export: the whole folder, whatever it holds but an original. The catalog deletes it itself after the grace a superseded version keeps, once its original is retired; this collects one that delete missed, and leaves a folder that still holds an original, which may be the only copy |
 | a removed extra's folder | an `extra-removed` event names it and is older than the grace, and nothing else names the extra — not `library.extras`, not another event, not the export: the whole folder, whatever it holds |
 | a dropped image | named by the hash of its own bytes, in an item's `metadata/` or beside a `person.json`, and not listed by a projection that is itself older than the grace |
 
@@ -721,6 +774,33 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-08 (a)** — an original lives in its version folder, and nothing is named as it arrived.
+  This takes back the rule of 2026-10-06 (a) that an original never enters the library: the
+  published model holds, and a version folder is the one place its media lives — its original, the
+  package made from it, or both. The platform renames an original into its version folder when the
+  first record of its title is made, with its package or alone — a version taken in before anything
+  packaged it holds `version.json` and its original, its package added to it later — and deletes it
+  from there once its package is recorded; a re-package is a new folder that keeps none, and a
+  version folder that still holds an original is never removed. No file is named as it arrived and
+  no record names one so: an original is `original.<ext>`, `original-<n>.<ext>` for a part, in its
+  folder, in its source's `file.name`, in `originalFiles` and in `packagedFrom`; a source keeps a
+  copy of each subtitle file that came with its original as
+  `subtitle-<n>.<lang>[.forced][.sdh].<ext>`, without `originalName`, and of nothing else beside it;
+  it writes no `origin`, no record keeps a container's title tag, and a source's probe is the tool's
+  output with `format.filename` the library's name and no title tag. The schema texts say so — every
+  change is text, the `$id`s are the published ones, and every record written before validates
+  against the schemas as it is. `libv2_records.py` (2) makes the names — `library_original_name`,
+  `subtitle_copy_name`, `scrub_probe` — and its builders use them; `library-v2-from-catalog.py
+  --platform` moves each original into its version folder, packaged or not, and plans a title
+  nothing packaged yet as a version taken in; the validator holds every record to the names and
+  accepts a version holding its original alone; the sweep never removes a version folder that still
+  holds an original, nor reads a version taken in as unfinished; the rebuild reads an original's
+  deletion as its source's, whichever folder kept it, and `--compare` compares only whether a
+  trailer has its local copy. `library-v2-neutral-names.py` is new: it gives a tree written before
+  2026-10-08 the names, journaled, and the validator names it wherever a tree fails the rule. The
+  examples show it: the second episode established with its original beside its package and
+  re-packaged into a folder that keeps none, the original then deleted from the first, and a third
+  episode taken in.
 - **2026-10-06 (d)** — an image is listed as every kind it is. `library-v2-from-catalog.py` listed
   byte-identical images once, as the kind the export named first, so a title whose backdrop is its
   poster's bytes — as the catalog makes an episode's — lost that it has a backdrop, and `--compare`
