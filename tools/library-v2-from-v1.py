@@ -31,7 +31,9 @@ not carried across, because the marker now holds the hash of package.json and ca
 
 Media moves into the version folder: the package and the original of the version v1 kept in the
 item folder itself, renamed when the target is on the same filesystem and copied when it is not.
---in-place rewrites the tree it reads; --out writes a new one and moves the bytes into it.
+--in-place rewrites the tree it reads; --out writes a new one and moves the bytes into it. Every
+file keeps the name v1 gave it, and the records name them so: library-v2-neutral-names.py then gives
+the tree the names the library gives its files, without which validate-library-v2.py refuses it.
 
 Safe to re-run: an item folder that already holds item.json and no manifest.json is left alone, and
 a half-finished conversion is finished rather than repeated.

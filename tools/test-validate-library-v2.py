@@ -533,17 +533,19 @@ def subtitle_hls(root, made=True):
     rechecksum(vp)
 
 
-def from_sidecar(root, listed=True, path=None):
+def from_sidecar(root, listed=True, path=None, name="subtitle-1.de.srt", original_name=None):
     """Episode 1 as the packager leaves one that came with a German subtitle file: its copy in the source
-    folder, under the name the library gives it, listed in source.json when listed, and a subtitle of the
-    package made from it — or from path."""
+    folder, under the name the library gives it — or name — listed in source.json when listed, and a
+    subtitle of the package made from it — or from path. original_name, the name the file came with, the
+    entry names as a record written before 2026-10-08 did."""
     sp = os.path.dirname(episode_source(root, 1))
-    sid, name = os.path.basename(sp), "subtitle-1.de.srt"
+    sid = os.path.basename(sp)
     with open(os.path.join(sp, name), "w") as f:
         f.write("1\n00:00:01,000 --> 00:00:02,000\nHallo\n")
     if listed:
         edit_raw(os.path.join(sp, "source.json"), lambda d: d["sidecars"].append({
-            "file": f"sources/{sid}/{name}", "kind": "subtitle", "format": "srt", "language": "de",
+            "file": f"sources/{sid}/{name}", **({"originalName": original_name} if original_name else {}),
+            "kind": "subtitle", "format": "srt", "language": "de",
             "forced": False, "hearingImpaired": False, "purpose": "dialogue",
             "sizeBytes": os.path.getsize(os.path.join(sp, name)), "sha256": "sha256:" + digest(os.path.join(sp, name))}))
         write_sums(sp, ["source.json", "ffprobe.json", name])
@@ -589,6 +591,62 @@ def silent(root):
     edit(pkg(vp), lambda d: d["renditions"].update(audio=[]))
     shutil.rmtree(os.path.join(vp, "hls", "a0"))
     rechecksum(vp)
+
+
+def kept_nfo(root):
+    """Episode 1's source keeping a copy of the .nfo that came with its original, as a source recorded
+    before 2026-10-08 could."""
+    sp = os.path.dirname(episode_source(root, 1))
+    sid = os.path.basename(sp)
+    with open(os.path.join(sp, "notes.nfo"), "w") as f:
+        f.write("<episodedetails/>\n")
+    edit_raw(os.path.join(sp, "source.json"), lambda d: d["sidecars"].append({
+        "file": f"sources/{sid}/notes.nfo", "kind": "nfo", "format": "nfo",
+        "sizeBytes": os.path.getsize(os.path.join(sp, "notes.nfo")), "sha256": "sha256:" + digest(os.path.join(sp, "notes.nfo"))}))
+    write_sums(sp, ["source.json", "ffprobe.json", "notes.nfo"])
+
+
+def probe_says(root, change):
+    """The movie's first source with its probe changed, and its record and checksums following it, so only
+    what the probe says can be wrong."""
+    pp = probe(root)
+    edit_raw(pp, change)
+    edit_raw(os.path.join(os.path.dirname(pp), "source.json"), lambda d: d["probe"].update(sha256="sha256:" + digest(pp)))
+    recover(os.path.join(os.path.dirname(pp), "source.json"))
+
+
+def parts_as_they_arrived(root):
+    """The director's cut keeping its two originals under the names they arrived with, its sources naming
+    them so, as a version written before 2026-10-08 did."""
+    vp = kept(root)
+    names = originals(vp)
+    for i, name in enumerate(names, 1):
+        arrived = f"Example Film - Part {i}.mkv"
+        shutil.move(os.path.join(vp, name), os.path.join(vp, arrived))
+        for sp in glob.glob(os.path.join(movie(root), "sources", "*", "source.json")):
+            if json.load(open(sp))["file"]["name"] == name and os.path.basename(os.path.dirname(sp)) in \
+                    json.load(open(ver(vp)))["sourceIds"]:
+                edit(sp, lambda d: d["file"].update(name=arrived))
+    edit(ver(vp), lambda d: d.update(originalFiles=[f"Example Film - Part {i}.mkv" for i in range(1, len(names) + 1)]))
+
+
+def extra_as_it_arrived(root):
+    """The series' extra keeping its original under the name it arrived with."""
+    xp = bts(root)
+    arrived = "Example Show - Behind the Scenes.mkv"
+    shutil.move(x_original(xp), os.path.join(xp, arrived))
+    edit_raw(xjson(xp), lambda d: (d.update(originalFiles=[arrived]), d["originals"][0].update(name=arrived)))
+    write_sums(xp, ["extra.json", arrived])
+
+
+def taken_in(root):
+    """Episode 1's version as the platform takes one in before anything packaged it: its record and its
+    original alone."""
+    vp = version_of(episode(root, 1), True)
+    for name in ("hls", "subs", "trickplay"):
+        shutil.rmtree(os.path.join(vp, name))
+    for name in ("package.json", "checksums.sha256", ".complete"):
+        os.remove(os.path.join(vp, name))
 
 
 CASES = [
@@ -1008,6 +1066,38 @@ CASES = [
     ("a subtitle made from a sidecar of a source the version was not made from", False, lambda r: from_sidecar(r, path=f"sources/{NOWHERE}/x.srt"), "which is no sidecar of a source this version was made from", []),
     ("a subtitle made from a sidecar outside the item", False, lambda r: from_sidecar(r, path="../x.srt"), "$.subtitles[3].fromSidecar: '../x.srt' does not match", []),
     ("an extra's subtitle made from a sidecar", False, lambda r: edit(pkg(featurette(r)), lambda d: d["subtitles"][0].update(fromSidecar="sources/x/y.srt")), "but an extra has no source record", []),
+
+    # ---- no record names a file as it arrived, and no file in the record is named so
+    ("a version taken in before anything packaged it, its record and its original alone", True, taken_in, "OK", ["--check-checksums"]),
+    ("a source naming its original as it arrived", False, lambda r: edit(movie_source(r), lambda d: d["file"].update(name="Example Film (2012).mkv")),
+     "file.name 'Example Film (2012).mkv' is a name the original arrived under", []),
+    ("a version and its sources naming their originals as they arrived", False, parts_as_they_arrived,
+     "originalFiles names 'Example Film - Part 1.mkv', which is not a name the library gives an original", ["--check-media"]),
+    ("and its sources naming them so", False, parts_as_they_arrived,
+     "file.name 'Example Film - Part 2.mkv' is a name the original arrived under", []),
+    ("a source saying where its original came from", False,
+     lambda r: edit(movie_source(r), lambda d: d.update(origin={"libraryPath": "Example Film (2012)/Example Film (2012).mkv"})),
+     "origin names where the original came from", []),
+    ("a source keeping the container's title", False, lambda r: edit(movie_source(r), lambda d: d["container"].update(title="Example.Film.2012")),
+     "keeps the container's title tag", []),
+    ("a source keeping the container's title among its tags, in any case", False,
+     lambda r: edit(movie_source(r), lambda d: d["container"]["tags"].update(TITLE="Example.Film.2012")), "keeps the container's title tag", []),
+    ("a copy of a subtitle file under the name it came with", False, lambda r: from_sidecar(r, name="Example Show - S01E01.de.srt"),
+     "is not the copy of a subtitle file under the name the library gives it", []),
+    ("a copy of a subtitle file naming the file it was copied from", False, lambda r: from_sidecar(r, original_name="Example Show - S01E01.de.srt"),
+     "names the file it was copied from (originalName)", []),
+    ("a copy of the .nfo that came with an original", False, kept_nfo, "sidecar sources/", []),
+    ("a probe naming the path it read", False, lambda r: probe_says(r, lambda d: d["format"].update(filename="/media/Example Film (2012).mkv")),
+     "format.filename '/media/Example Film (2012).mkv' is not the name the library gives the original", []),
+    ("a probe keeping the title tag", False, lambda r: probe_says(r, lambda d: d["format"].setdefault("tags", {}).update(Title="Example.Film.2012")),
+     "keeps the container's title tag (format.tags.title)", []),
+    ("an extra keeping its original under the name it arrived with", False, extra_as_it_arrived,
+     "originalFiles names 'Example Show - Behind the Scenes.mkv'", ["--check-checksums"]),
+    ("what a package was made from, named as it arrived", False,
+     lambda r: (packaged_from(r), edit(xjson(featurette(r)), lambda d: d["packagedFrom"][0].update(name="On Location.mkv"))),
+     "packagedFrom names 'On Location.mkv'", []),
+    ("an extra keeping the container's title", False, lambda r: edit(xjson(featurette(r)), lambda d: d["container"].update(title="On.Location")),
+     "keeps the container's title tag", []),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in

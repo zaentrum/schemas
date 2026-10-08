@@ -32,12 +32,20 @@ with the bytes beside them, never about a document being up to date.
   versions     every version is a folder under versions/ whose name is its versionId; its sourceIds
                name source records that exist and its originalFiles are those sources' file names,
                each with its fixity while it is kept (a source without one says why in probe.note);
-               package.json exists exactly when .complete does; a package is canonical exactly when
+               package.json exists exactly when .complete does, and a version taken in before anything
+               packaged it holds its originals alone; a package is canonical exactly when
                the version keeps no original; lossless means no losses; chapters are ordered and
                kept when the original carried them; every track — a 5.1 companion's too — says what
                it is for and the playlist flags do not contradict it; a rendition is in an audio group
                the HLS layout names; a subtitle made from a sidecar names one a source of the version
                keeps, and an extra's never does
+  names        no record names a file as it arrived, and no file in the record is named so: a source's
+               file.name, a version's and an extra's originalFiles and what an extra was packaged from
+               are original.<ext>, or original-<n>.<ext> for a part, a source's sidecars are copies of
+               subtitle files named subtitle-<n>.<lang>[.forced][.sdh].<ext>, without originalName, a
+               source says nothing of where its original came from (origin), no record keeps a
+               container title tag, and a probe names its file as its record does and keeps no title
+               tag either — library-v2-neutral-names.py gives a tree written before 2026-10-08 the names
   metadata     same item and type as item.json, and reference ids of its type; every image exists
                with the recorded hash, size, content type and dimensions, is named by its own content
                hash, is listed once as each kind it is — bytes of several kinds share one file — and
@@ -123,6 +131,12 @@ OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.
 EXT_TYPE = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 IMAGE_NAME = re.compile(r"^([0-9a-f]{64})\.(jpg|png|webp)$")
 SWEEP = "library-v2-sweep.py collects it once it is older than the grace period"
+# The names the library gives an original — in a version's or an extra's folder, in its source's record,
+# among what an extra was packaged from — and the copy a source keeps of a subtitle file that came with it:
+# nothing of the name either arrived under, and only [a-z0-9.-]. libv2_records.py makes them.
+ORIGINAL_NAME = re.compile(r"^original(-[0-9]+)?\.[a-z0-9]{1,8}$")
+SUBTITLE_COPY = re.compile(r"^subtitle-[0-9]+\.[a-z]{2,8}(\.forced)?(\.sdh)?\.[a-z0-9]{1,8}$")
+NEUTRAL = "library-v2-neutral-names.py gives a tree written before 2026-10-08 the names the library gives its files"
 ID_KEYS = {"schema", "itemId", "seriesId", "sourceId", "versionId", "packageId", "eventId", "personId", "file",
            "path", "dir", "vttPath", "manifestPath", "originalFile", "name", "language", "type", "kind",
            "tmdbMovie", "tmdbTv", "tmdbSeason", "tmdbEpisode", "tmdbCollection", "imdb", "tvdb", "tmdbPerson",
@@ -668,6 +682,7 @@ class Checker:
                 continue
             records[name] = src
             self.source_files(d, sp, src)
+            self.neutral_source(d, sp, src)
             named = {"source.json"} | {os.path.basename(x["file"]) for x in src.get("sidecars") or []} | \
                 ({os.path.basename(src["probe"]["file"])} if src["probe"].get("file") else set())
             for entry in listdir(p):
@@ -699,6 +714,46 @@ class Checker:
                 self.err(f, "sidecar size does not match the source record")
             if "sha256" in sc and sha_file(f) != sc["sha256"]:
                 self.err(f, "sidecar sha256 does not match the source record")
+
+    def neutral_source(self, d, where, src):
+        """A source record names no file as it arrived and says nothing of where it came from: its file is
+        named as the library names an original, it has no origin, it keeps no container title tag, its
+        sidecars are copies of subtitle files named as the library names them, without the names they
+        came with, and its probe names the file as the record does and keeps no title tag either."""
+        name = src["file"]["name"]
+        if not ORIGINAL_NAME.match(name):
+            self.err(where, f"file.name {name!r} is a name the original arrived under, not the one the library gives "
+                            f"it (original.<ext>, original-<n>.<ext>): no record names a file as it arrived ({NEUTRAL})")
+        if "origin" in src:
+            self.err(where, f"origin names where the original came from, which no record says ({NEUTRAL})")
+        tags = src["container"].get("tags") or {}
+        if src["container"].get("title") is not None or any(str(k).lower() == "title" for k in tags):
+            self.err(where, f"keeps the container's title tag, which routinely names where a file came from ({NEUTRAL})")
+        for sc in src.get("sidecars") or []:
+            copy = os.path.basename(sc["file"])
+            if sc["kind"] != "subtitle" or not SUBTITLE_COPY.match(copy):
+                self.err(where, f"sidecar {sc['file']} is not the copy of a subtitle file under the name the library "
+                                f"gives it (subtitle-<n>.<lang>[.forced][.sdh].<ext>), and nothing else that came with "
+                                f"the original is kept ({NEUTRAL})")
+            if "originalName" in sc:
+                self.err(where, f"sidecar {sc['file']} names the file it was copied from (originalName) ({NEUTRAL})")
+        pf = src["probe"].get("file")
+        f = os.path.join(d, pf) if pf else None
+        if not f or not os.path.isfile(f):
+            return  # source_files says so
+        try:
+            fmt = (json.load(open(f, encoding="utf-8")) or {}).get("format")
+        except (OSError, ValueError, AttributeError) as e:
+            self.err(f, f"the probe cannot be read: {e}")
+            return
+        if not isinstance(fmt, dict):
+            return
+        if "filename" in fmt and fmt["filename"] != name:
+            self.err(f, f"format.filename {str(fmt['filename'])[:80]!r} is not the name the library gives the original, "
+                        f"{name}: a probe names the file as its record does ({NEUTRAL})")
+        if any(str(k).lower() == "title" for k in fmt.get("tags") or {}):
+            self.err(f, f"keeps the container's title tag (format.tags.title), which a probe the library keeps leaves "
+                        f"out ({NEUTRAL})")
 
     # ------------------------------------------------------------ versions/
     def versions(self, d, sources, events, removed):
@@ -740,6 +795,9 @@ class Checker:
         for name in v["originalFiles"]:
             if named and name not in named:
                 self.err(where, f"originalFiles names {name}, which is not the file name of any source this version names")
+            if not ORIGINAL_NAME.match(name):
+                self.err(where, f"originalFiles names {name!r}, which is not a name the library gives an original "
+                                f"(original.<ext>, original-<n>.<ext>) ({NEUTRAL})")
         for kind in ("chapters", "segments"):
             marks = v.get(kind) or []
             if any(m["endMs"] < m["startMs"] for m in marks):
@@ -1042,6 +1100,16 @@ class Checker:
         if [o["name"] for o in x["originals"]] != x["originalFiles"]:
             self.err(os.path.join(xp, "extra.json"), "originals describes other files than originalFiles names: "
                                                      "each original has one entry, in the same order")
+        for what, names in (("originalFiles", x["originalFiles"]), ("packagedFrom", [o["name"] for o in x.get("packagedFrom") or []])):
+            for name in names:
+                if not ORIGINAL_NAME.match(name):
+                    self.err(os.path.join(xp, "extra.json"), f"{what} names {name!r}, which is not a name the library "
+                                                             f"gives an original (original.<ext>, original-<n>.<ext>) "
+                                                             f"({NEUTRAL})")
+        tags = (x.get("container") or {}).get("tags") or {}
+        if (x.get("container") or {}).get("title") is not None or any(str(k).lower() == "title" for k in tags):
+            self.err(os.path.join(xp, "extra.json"), f"keeps the container's title tag, which routinely names where a "
+                                                     f"file came from ({NEUTRAL})")
         marker = os.path.isfile(os.path.join(xp, ".complete"))
         has_package = os.path.isfile(os.path.join(xp, "package.json"))
         if x.get("packagedFrom") and x["originalFiles"]:

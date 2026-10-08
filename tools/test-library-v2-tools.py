@@ -57,8 +57,9 @@ rule and checks the tool notices:
                  the reason; a deleted person goes once no item record on storage credits them, in
                  the same sweep as a deleted item that does; of an extra, only a package that never
                  finished is ever garbage
-  v1 -> v2       the v1 example tree converts, the result passes validate-library-v2.py and the
-                 media check, the texts and the packages survive, and a second run does nothing
+  v1 -> v2       the v1 example tree converts, and given the names the library gives its files by
+                 library-v2-neutral-names.py the result passes validate-library-v2.py and the media
+                 check, the texts and the packages survive, and a second run does nothing
   catalog -> v2  an export, a package store and source files become a tree that validates; the
                  rebuild of that tree agrees with the export it came from; two runs write the same
                  bytes; an item whose original is missing keeps its texts and loses its versions; a
@@ -1437,6 +1438,13 @@ def test_from_v1(t):
              len(glob.glob(os.path.join(src, "**", "item.json"), recursive=True)) == len(v1_manifests))
 
         if have_jsonschema():
+            code, text = run(VALIDATOR, src)
+            t.ok("the records keep the names v1 gave the files, which the validator names the tool for",
+                 code == 1 and "is a name the original arrived under" in text and "library-v2-neutral-names.py" in text,
+                 text)
+        code, text = run(NEUTRAL, src, "--apply")
+        t.ok("library-v2-neutral-names.py gives the tree the names the library gives its files", code == 0, text)
+        if have_jsonschema():
             code, text = run(VALIDATOR, "--check-checksums", src)
             t.ok("the result passes validate-library-v2.py", code == 0 and text.strip().endswith("OK"), text)
         else:
@@ -1474,6 +1482,9 @@ def test_from_v1(t):
         before = tree_files(src)
         code, text = run(FROM_V1, "--in", src, "--in-place")
         t.ok("a second run changes nothing", code == 0 and tree_files(src) == before, text)
+        code, text = run(NEUTRAL, src, "--apply")
+        t.ok("and neither does the tool a second time", code == 0 and "nothing to do" in text and tree_files(src) == before,
+             text)
 
     # a deleted original becomes an event
     with tempfile.TemporaryDirectory() as tmp:
@@ -1488,6 +1499,7 @@ def test_from_v1(t):
         jwrite(mp, man)
         os.unlink(os.path.join(os.path.dirname(mp), source["file"]["name"]))
         code, text = run(FROM_V1, "--in", src, "--in-place")
+        run(NEUTRAL, src, "--apply")
         events = glob.glob(os.path.join(src, "movies", "*", "*", "events", "*-original-deleted", "event.json"))
         t.ok("a v1 source that said it was deleted becomes an original-deleted event",
              code == 0 and len(events) == 1, text)
