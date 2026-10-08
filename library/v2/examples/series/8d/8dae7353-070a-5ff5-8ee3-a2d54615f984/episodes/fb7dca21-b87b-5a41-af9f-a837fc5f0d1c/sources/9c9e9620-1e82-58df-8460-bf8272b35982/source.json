@@ -4,19 +4,14 @@
   "takenAt": "2026-09-18T09:05:00Z",
   "takenBy": "analyzer example",
   "file": {
-    "name": "Example Show (US) - S01E01 - Pilot.mkv",
+    "name": "original.mkv",
     "kind": "stream-container",
-    "sizeBytes": 76,
+    "sizeBytes": 53,
     "mtime": "2026-09-18T09:00:00Z",
     "fixity": {
-      "qh1": "sha256:216d9ba44f8a3db682a766d9a8cdbf1a3f40748a408bd2f438b0f9a214417490"
+      "qh1": "sha256:bdc10956d9669e546d3db51ebb88df172504037b7ad565764f344b2e10afdcb9"
     },
     "part": null
-  },
-  "origin": {
-    "libraryPath": "tv/Example Show (US)/Season 01/Example Show (US) - S01E01 - Pilot.mkv",
-    "folder": "tv/Example Show (US)/Season 01",
-    "takenBy": "move"
   },
   "naming": {
     "scheme": "unknown",
@@ -233,7 +228,7 @@
     "version": null,
     "at": "2026-09-18T09:05:00Z",
     "file": "sources/9c9e9620-1e82-58df-8460-bf8272b35982/ffprobe.json",
-    "sha256": "sha256:e2ec5c45731fcb8b42722021812021203fde2049aaa824b674a8b91f3d6c674f",
+    "sha256": "sha256:8c24c343d6300f885a77abc86b0504dfaa0e11e15d52c923b792c5a377d8aa5a",
     "note": null
   }
 }

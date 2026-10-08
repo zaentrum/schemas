@@ -4,19 +4,14 @@
   "takenAt": "2026-09-18T09:05:00Z",
   "takenBy": "analyzer example",
   "file": {
-    "name": "Tears of Steel (2012).mkv",
+    "name": "original.mkv",
     "kind": "stream-container",
     "sizeBytes": 6300000000,
     "mtime": "2026-09-18T09:00:00Z",
     "fixity": {
-      "qh1": "sha256:1c801e380315cb4fdeb04260138edcbfb3f1db77739b59a1ee9254b86ff814a9"
+      "qh1": "sha256:f413f59d19fd01cc12f217d9aacad815be506f43dd298e761a06b50d5ac066cd"
     },
     "part": null
-  },
-  "origin": {
-    "libraryPath": "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
-    "folder": "movies/Tears of Steel (2012)",
-    "takenBy": "move"
   },
   "labels": {
     "quality": "1080p",
@@ -159,7 +154,7 @@
     "version": null,
     "at": "2026-09-18T09:05:00Z",
     "file": "sources/6b58492a-ea00-5e51-ae33-0b310919b757/ffprobe.json",
-    "sha256": "sha256:9b374dda724ce90a8a80a6e941f7f3fed9bfcb465ead26635607b48211c75ae7",
+    "sha256": "sha256:32677122f6a1ae7f9f25a725781901cc7fde8474722332603aef74912c4996ef",
     "note": null
   }
 }

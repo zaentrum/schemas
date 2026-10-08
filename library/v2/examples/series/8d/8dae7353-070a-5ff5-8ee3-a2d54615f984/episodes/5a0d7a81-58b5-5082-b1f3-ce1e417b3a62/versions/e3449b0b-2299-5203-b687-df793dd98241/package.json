@@ -4,7 +4,7 @@
   "createdAt": "2026-09-18T11:30:00Z",
   "packagedBy": "packager example",
   "state": "complete",
-  "role": "canonical",
+  "role": "derived",
   "durationMs": 2700000,
   "recipe": {
     "video": "hevc re-encode",
@@ -108,8 +108,8 @@
   "checksums": {
     "file": "checksums.sha256",
     "algorithm": "sha256",
-    "sha256": "sha256:66215ee6dbede45409435fa4976417a7445211a4e08a2e54861c5baa59bf1139",
+    "sha256": "sha256:81c657b6ec7f8d44c417230dcd6693bf7b523186e3c455da82e725e5d66f87dd",
     "files": 7,
-    "bytes": 19766
+    "bytes": 19788
   }
 }

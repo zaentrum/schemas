@@ -11,7 +11,7 @@
     "evidence": [
       {
         "signal": "folder-name",
-        "value": "Tears of Steel (2012) - Director's Cut"
+        "value": "Director's Cut"
       }
     ]
   },
@@ -34,7 +34,7 @@
     "b01e5486-1e84-5253-adfa-7c530752390b"
   ],
   "originalFiles": [
-    "Tears of Steel (2012) - Director's Cut - part1.mkv",
-    "Tears of Steel (2012) - Director's Cut - part2.mkv"
+    "original-1.mkv",
+    "original-2.mkv"
   ]
 }

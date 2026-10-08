@@ -12,10 +12,10 @@
   "originals": [],
   "packagedFrom": [
     {
-      "name": "Tears of Steel (2012) - Deleted Scene - The Kiss.mkv",
-      "sizeBytes": 90,
+      "name": "original.mkv",
+      "sizeBytes": 59,
       "fixity": {
-        "qh1": "sha256:1307b3ebf641783f98a51792cc9f25c17107afa7fc39dbc15a1df7a524866048"
+        "qh1": "sha256:a84bcdb68bbe884f3506e4f7d1b80cfe3741d3a47314b8fe07272a0d8c73f4d4"
       }
     }
   ],

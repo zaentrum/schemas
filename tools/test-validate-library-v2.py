@@ -534,15 +534,16 @@ def subtitle_hls(root, made=True):
 
 
 def from_sidecar(root, listed=True, path=None):
-    """Episode 1 as the packager leaves one that came with a German sidecar: its copy in the source folder,
-    listed in source.json when listed, and a subtitle of the package made from it — or from path."""
+    """Episode 1 as the packager leaves one that came with a German subtitle file: its copy in the source
+    folder, under the name the library gives it, listed in source.json when listed, and a subtitle of the
+    package made from it — or from path."""
     sp = os.path.dirname(episode_source(root, 1))
-    sid, name = os.path.basename(sp), "Example Show (US) - S01E01 - Pilot.de.srt"
+    sid, name = os.path.basename(sp), "subtitle-1.de.srt"
     with open(os.path.join(sp, name), "w") as f:
         f.write("1\n00:00:01,000 --> 00:00:02,000\nHallo\n")
     if listed:
         edit_raw(os.path.join(sp, "source.json"), lambda d: d["sidecars"].append({
-            "file": f"sources/{sid}/{name}", "originalName": name, "kind": "subtitle", "format": "srt", "language": "de",
+            "file": f"sources/{sid}/{name}", "kind": "subtitle", "format": "srt", "language": "de",
             "forced": False, "hearingImpaired": False, "purpose": "dialogue",
             "sizeBytes": os.path.getsize(os.path.join(sp, name)), "sha256": "sha256:" + digest(os.path.join(sp, name))}))
         write_sums(sp, ["source.json", "ffprobe.json", name])
@@ -620,7 +621,7 @@ CASES = [
     ("a movie carrying an episode reference id", False, lambda r: edit(item(movie(r)), lambda d: d["externalIds"].update(tmdbEpisode="1")), "carries series or episode reference ids", []),
 
     # ---- the item folder holds no media
-    ("media in the item folder", False, lambda r: open(os.path.join(movie(r), "Tears of Steel (2012).mkv"), "w").write("x"), "media belongs in versions/", []),
+    ("media in the item folder", False, lambda r: open(os.path.join(movie(r), "original.mkv"), "w").write("x"), "media belongs in versions/", []),
     ("a stray document in the item folder", False, lambda r: open(os.path.join(movie(r), "notes.txt"), "w").write("x"), "unexpected entry in a movie folder", []),
     ("versions in a series folder", False, lambda r: os.makedirs(os.path.join(series(r), "versions")), "unexpected entry in a series folder", []),
 
@@ -674,7 +675,7 @@ CASES = [
     ("one part of a split original missing", False, lambda r: os.remove(os.path.join(kept(r), originals(kept(r))[1])), "no original-deleted event says it was removed", ["--check-media"]),
     ("an original changed", False, lambda r: open(os.path.join(kept(r), originals(kept(r))[0]), "ab").write(b"x"), "its source record says", ["--check-media"]),
     ("an original still there after its deletion", False, lambda r: open(os.path.join(gone(r), originals(gone(r))[0]), "w").write("x"), "but it is still here", ["--check-media"]),
-    ("an original that belongs to no source of this version", False, lambda r: edit(ver(kept(r)), lambda d: d.update(originalFiles=["something else.mkv"])), "is not the file name of any source", []),
+    ("an original that belongs to no source of this version", False, lambda r: edit(ver(kept(r)), lambda d: d.update(originalFiles=["original-9.mkv"])), "is not the file name of any source", []),
 
     # ---- events
     ("a deletion without what it cost", False, lambda r: edit(deletion(r), lambda d: d.pop("accepted")), "'accepted' is a required property", []),
@@ -916,7 +917,7 @@ CASES = [
     # ---- an extra describes each original as a source record describes its file: size and fixity
     ("an extra without its originals' fixity", False, lambda r: edit(xjson(bts(r)), lambda d: d.pop("originals")), "'originals' is a required property", []),
     ("an original described without its fixity", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0].pop("fixity")), "'fixity' is a required property", []),
-    ("originals describing another file than originalFiles names", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0].update(name="other.mkv")), "originals describes other files than originalFiles names", []),
+    ("originals describing another file than originalFiles names", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0].update(name="original-9.mkv")), "originals describes other files than originalFiles names", []),
     ("an extra's original of another size than recorded", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0].update(sizeBytes=d["originals"][0]["sizeBytes"] + 1)), "bytes, extra.json says", ["--check-media"]),
     ("an extra's original that does not match its recorded qh1", False, lambda r: edit(xjson(bts(r)), lambda d: d["originals"][0]["fixity"].update(qh1="sha256:" + "0" * 64)), "does not match the qh1 fixity extra.json records", ["--check-media"]),
     ("an extra's original that does not match its recorded sha256", False, lambda r: edit(xjson(featurette(r)), lambda d: d["originals"][0]["fixity"].update(sha256="sha256:" + "0" * 64)), "does not match the sha256 extra.json records", ["--check-checksums"]),
@@ -930,9 +931,9 @@ CASES = [
 
     # ---- an extra proves itself: its checksums list extra.json and every file beside it, the originals included
     ("an extra record changed after it was written", False, lambda r: edit_raw(xjson(bts(r)), lambda d: d.update(title="Another Title")), "extra.json: does not match the checksum checksums.sha256 recorded for it", []),
-    ("an extra's checksums leaving out its original", False, lambda r: write_sums(bts(r), ["extra.json"]), "does not list Example Show (US) - Season 1", []),
+    ("an extra's checksums leaving out its original", False, lambda r: write_sums(bts(r), ["extra.json"]), "does not list original.mkv", []),
     ("an extra's original missing", False, lambda r: os.remove(x_original(bts(r))), "an original extra.json names is not here", []),
-    ("an extra's original changed after it was written", False, lambda r: open(x_original(featurette(r)), "ab").write(b"x"), "On Location in Amsterdam.mkv: does not match its checksum", ["--check-checksums"]),
+    ("an extra's original changed after it was written", False, lambda r: open(x_original(featurette(r)), "ab").write(b"x"), "original.mkv: does not match its checksum", ["--check-checksums"]),
     ("a package file of an extra its checksums do not list", False, lambda r: open(os.path.join(featurette(r), "hls", "v0", "seg-0001.m4s"), "wb").write(b"x"), "does not list hls/v0/seg-0001.m4s", []),
     ("an extra's checksums listing a file that is not there", False, lambda r: os.remove(os.path.join(featurette(r), "subs", "0.vtt")), "lists subs/0.vtt, which is not a file of this extra", []),
     ("an extra's checksums listing its package record", False, lambda r: relist(featurette(r), listing(featurette(r)) + ["package.json"]), "lists package.json, which holds the hash of this file", []),
@@ -976,7 +977,7 @@ CASES = [
     ("an extra kept only as its package", True, package_only, "OK", ["--check-checksums"]),
     ("an extra kept only as its package, with the original it was made from", True, packaged_from, "OK", ["--check-checksums"]),
     ("what a package was made from, on an extra that keeps its original", False, lambda r: edit(xjson(featurette(r)), lambda d: d.update(packagedFrom=list(d["originals"]))), "and this one keeps its originals: originals describes them", []),
-    ("what a package was made from, on an extra with no package", False, lambda r: (nothing_kept(r), edit(xjson(bts(r)), lambda d: d.update(packagedFrom=[{"name": "bts.mkv", "sizeBytes": 1, "fixity": {"qh1": "sha256:" + "0" * 64}}]))), "packagedFrom says what the package was made from, but this extra has no package", []),
+    ("what a package was made from, on an extra with no package", False, lambda r: (nothing_kept(r), edit(xjson(bts(r)), lambda d: d.update(packagedFrom=[{"name": "original.mkv", "sizeBytes": 1, "fixity": {"qh1": "sha256:" + "0" * 64}}]))), "packagedFrom says what the package was made from, but this extra has no package", []),
     ("what a package was made from, without its fixity", False, lambda r: (packaged_from(r), edit(xjson(featurette(r)), lambda d: d["packagedFrom"][0].pop("fixity"))), "'fixity' is a required property", []),
     ("what a package was made from, named with a folder", False, lambda r: (packaged_from(r), edit(xjson(featurette(r)), lambda d: d["packagedFrom"][0].update(name="extras/a.mkv"))), "$.packagedFrom[0].name: 'extras/a.mkv' does not match", []),
     ("an empty list of what a package was made from", False, lambda r: (package_only(r), edit(xjson(featurette(r)), lambda d: d.update(packagedFrom=[]))), "$.packagedFrom: [] should be non-empty", []),

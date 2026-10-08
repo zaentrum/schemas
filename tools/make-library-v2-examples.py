@@ -7,26 +7,34 @@ every record the format has and the shapes a reader most needs to see:
   movies/  one movie in two versions. The first is package-only — its original was deleted, so
            version.json still names the file, the folder no longer holds it, and an
            events/<timestamp>-original-deleted.json record says what was accepted as lost. The
-           second keeps its original next to its package, and carries a quality ladder. Beside
-           them, in extras/, a featurette kept as its original and a package of its own, which the
-           projection puts first and labels, and the trailer videos[] links to, downloaded, whose
-           origin names that link. It was first kept as its original alone and packaged later, as a
-           new extra folder: an extra-removed event retired the old one. And a deleted scene the
-           platform took in: only its package is kept, and packagedFrom says what it was made from.
-  series/  one series with a season and two episodes. The first episode keeps its original and
-           carries forced, full and SDH subtitles and a commentary track; the second is the
-           platform's: packaged from an original that was never kept here, so its package is
-           canonical, the original deleted outside the record once the package was recorded — an
-           event names its source — and its second package as the packager writes one now, with a
-           5.1 companion, its HLS layout and a subtitle made from the sidecar its source keeps a copy
-           of. Beside the episodes, a behind-the-scenes extra of season 1, kept only as its original,
-           which the projection says nothing about.
+           second keeps its original, in two parts, next to its package, and carries a quality
+           ladder. Beside them, in extras/, a featurette kept as its original and a package of its
+           own, which the projection puts first and labels, and the trailer videos[] links to,
+           downloaded, whose origin names that link. It was first kept as its original alone and
+           packaged later, as a new extra folder: an extra-removed event retired the old one. And a
+           deleted scene the platform took in: only its package is kept, and packagedFrom says what
+           it was made from.
+  series/  one series with a season and three episodes. The first episode keeps its original and
+           carries forced, full and SDH subtitles and a commentary track. The second is the
+           platform's: established with its original beside its first package, re-packaged into a
+           new folder that keeps none — the original stays where it was — as the packager writes a
+           package now, with a 5.1 companion, its HLS layout and a subtitle made from the copy its
+           source keeps of a subtitle file that came with the original; once the new package was
+           recorded the original was deleted from the first folder, and an event says so. The third
+           was taken in before anything packaged it: its version holds its original alone. Beside
+           the episodes, a behind-the-scenes extra of season 1, kept only as its original, which the
+           projection says nothing about.
   people/  the three people the items credit: the movie's director, with only what is known about
            him; the series' creator, a fictional person who wrote some of it too — two credits of
            one person, the writer's jobs joined in the source's own words; and the series' lead, a
            fictional person with every field a person record has, credited with the character she
            plays and how many episodes she is in — her primary portrait one a person picked, beside
            the one the reference source has.
+
+No file is named as it arrived, and no record names one so: every original is original.<ext>, or
+original-<n>.<ext> for a part, wherever it is kept or described, the copy of a subtitle file
+subtitle-<n>.<lang>[.forced][.sdh].<ext>, and a probe names its file as the library does and keeps
+no title tag.
 
 Every projection says which state of its database row it reflects (databaseUpdatedAt) and the
 reference ids the item has now (externalIds), and the two
@@ -41,7 +49,7 @@ package.json with their hash, .complete with the hash of package.json.
 Originals and images are small placeholders and rendition folders are empty; hashes, sizes and
 checksums are computed, never typed. The tree passes validate-library-v2.py --check-checksums.
 """
-import base64, hashlib, json, os, shutil, uuid
+import base64, datetime, hashlib, json, os, shutil, uuid
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "library", "v2", "examples")
 NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://zaentrum.github.io/schemas/library/v2/examples")
@@ -63,7 +71,8 @@ EXTRA_PACKAGED = "2026-09-19T08:40:00Z"  # and the featurette's package complete
 TRAILER_FETCHED = "2026-09-19T07:30:00Z"  # the trailer link was downloaded
 TRAILER_PACKAGED = "2026-09-19T10:00:00Z"  # and the trailer taken in with a package of its own
 TRAILER_RETIRED = "2026-09-19T10:05:00Z"   # the extra that had kept it as its original alone, retired
-ORIGINAL_RETIRED = "2026-09-19T13:20:00Z"  # an original that waited outside the library, deleted once packaged
+ORIGINAL_RETIRED = "2026-09-19T13:20:00Z"  # an original deleted from its version folder once its package was recorded
+TAKEN_IN = "2026-09-20T07:00:00Z"          # an original taken into its version folder before anything packaged it
 SCENE_TAKEN = "2026-09-19T09:00:00Z"       # a deleted scene taken in by the platform: only its package is kept
 
 # A fixed 1x1 JPEG and a fixed 1x1 transparent PNG, as bytes rather than generated, so the fixture
@@ -206,12 +215,14 @@ def probe_stream(st):
 
 
 # ---------------------------------------------------------------- the records
-def source(item_dir, sid, name, library_path, streams, chapters, src_essence, duration_ms,
-           quality="1080p", medium="disc", fingerprint="h264/high/8bit/sdr/1920x800", size=6300000000,
-           part=None, naming=None):
-    """The record of sources/<sid>/source.json, with the verbatim probe written beside it; the record
-    itself is written by finish_source, once nothing about it changes any more. It never says where
-    the bytes are or whether they still exist — that is the version's record and the events."""
+def source(item_dir, sid, name, streams, chapters, src_essence, duration_ms, quality="1080p", medium="disc",
+           fingerprint="h264/high/8bit/sdr/1920x800", size=6300000000, part=None, naming=None, edition=None,
+           folder_edition=None):
+    """The record of sources/<sid>/source.json, with the probe written beside it; the record itself is
+    written by finish_source, once nothing about it changes any more. It never says where the bytes are
+    or whether they still exist — that is the version's record and the events — nor where they came
+    from: name is the one the library gives the file, and what the name it arrived under and its
+    folder claimed is in labels, an edition among them."""
     probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)},
              "streams": [probe_stream(x) for x in streams],
              "chapters": [{"start_time": str(c["startMs"] / 1000), "end_time": str(c["endMs"] / 1000),
@@ -220,10 +231,10 @@ def source(item_dir, sid, name, library_path, streams, chapters, src_essence, du
     record = {
         "schema": "zaentrum.library.source/2", "sourceId": sid, "takenAt": TAKEN, "takenBy": "analyzer example",
         "file": {"name": name, "kind": "stream-container", "sizeBytes": size, "mtime": CREATED,
-                 "fixity": {"qh1": sha(name.encode())}, "part": part},
-        "origin": {"libraryPath": library_path, "folder": os.path.dirname(library_path), "takenBy": "move"},
+                 "fixity": {"qh1": sha(sid.encode())}, "part": part},
         **({"naming": naming} if naming else {}),
-        "labels": {"quality": quality, "medium": medium, "resolution": quality, "edition": None, "folderEdition": None},
+        "labels": {"quality": quality, "medium": medium, "resolution": quality, "edition": edition,
+                   "folderEdition": folder_edition},
         "container": {"format": "matroska,webm", "durationMs": duration_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
         "fidelity": {"class": "original", "fingerprint": fingerprint, "evidence": []},
@@ -244,11 +255,12 @@ def finish_source(item_dir, record):
     return record
 
 
-def place_original(vdir, record):
-    """Put a placeholder for the original in the version folder and correct the source record's size
-    and fixity to the bytes that are actually there."""
+def place_original(vdir, record, what):
+    """Put a placeholder for the original in the version folder, under the name the library gives it,
+    and correct the source record's size and fixity to the bytes that are actually there. what says
+    which original it stands for, so no two placeholders are the same bytes."""
     name = record["file"]["name"]
-    data = write(os.path.join(vdir, name), b"placeholder for the original file of " + name.encode() + b"\n")
+    data = write(os.path.join(vdir, name), b"placeholder for the original of " + what.encode() + b"\n")
     record["file"]["sizeBytes"], record["file"]["fixity"] = len(data), {"qh1": qh1(data)}
     return name
 
@@ -350,16 +362,18 @@ def event(item_dir, at, kind, by="librarian example", **fields):
     return record
 
 
-def extra(item_dir, xid, kind, title, original, runtime_ms, streams, src_essence, fingerprint,
+def extra(item_dir, xid, kind, title, runtime_ms, streams, src_essence, fingerprint,
           localized=None, season=None, package=None, origin=None, created=EXTRA_TAKEN, kept=True):
-    """extras/<xid>/: extra.json and its original beside it, as the probe found it, and with package
-    a package of its own. An extra is written whole, in one step: the checksums over extra.json and
-    every file beside it come last — the completion signal of an extra that keeps only its original —
-    or, for a packaged one, the chain closes over them. package(xdir, record) writes the package files
-    and closes the chain. Not kept, the original waited outside the library, as the platform keeps it,
-    and the folder holds the package alone and says what it was made from."""
+    """extras/<xid>/: extra.json and its original beside it, under the name the library gives it, as
+    the probe found it, and with package a package of its own. An extra is written whole, in one
+    step: the checksums over extra.json and every file beside it come last — the completion signal of
+    an extra that keeps only its original — or, for a packaged one, the chain closes over them.
+    package(xdir, record) writes the package files and closes the chain. Not kept, the original
+    waited outside the library, as the platform keeps an extra's, and the folder holds the package
+    alone and says what it was made from."""
     xdir = os.path.join(item_dir, "extras", xid)
-    data = b"placeholder for the original file of " + original.encode() + b"\n"
+    original = "original.mkv"
+    data = b"placeholder for the original of the " + kind.encode() + b" " + title.encode() + b"\n"
     if kept:
         write(os.path.join(xdir, original), data)
     record = {
@@ -408,8 +422,7 @@ def movie():
     # --- version one: theatrical. Its original was deleted, so only the package is left on disk.
     v1, s1, p1 = uid(mid, "version", "theatrical"), uid(mid, "source", "theatrical"), uid(mid, "package", "theatrical")
     v1dir = os.path.join(mdir, "versions", v1)
-    src1 = source(mdir, s1, "Tears of Steel (2012).mkv",
-                  "movies/Tears of Steel (2012)/Tears of Steel (2012).mkv",
+    src1 = source(mdir, s1, "original.mkv",
                   [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)"), subtitle(2, None)],
                   chapters, essence(maxAudioChannels=6, surround=True, chapters=True, maxVideoHeight=800,
                                     subtitleLanguages=["en"], subtitleTracks=1), 734000)
@@ -439,22 +452,23 @@ def movie():
           reason="space on the archive volume",
           accepted=["surround", "maxAudioChannels", "subtitleLanguages:en", "subtitleTracks"])
 
-    # --- version two: the director's cut, in two files, both kept next to the package.
+    # --- version two: the director's cut, in two files, both kept next to the package, each under the
+    # name the library gives a part. What the names they arrived under and their folder claimed is in labels.
     v2, p2 = uid(mid, "version", "directors-cut"), uid(mid, "package", "directors-cut")
     v2dir = os.path.join(mdir, "versions", v2)
     parts = []
     for index in (1, 2):
         sid = uid(mid, "source", "directors-cut", str(index))
-        name = f"Tears of Steel (2012) - Director's Cut - part{index}.mkv"
-        src = source(mdir, sid, name, f"movies/Tears of Steel (2012) - Director's Cut/{name}",
+        src = source(mdir, sid, f"original-{index}.mkv",
                      [video(0, "h264", 1920, 800), audio(1, "ac3", 6, "5.1(side)")],
                      [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=800), 406000,
-                     medium="web", part={"index": index, "of": 2})
-        parts.append((sid, place_original(v2dir, src)))
+                     medium="web", part={"index": index, "of": 2}, edition="directors-cut",
+                     folder_edition="Director's Cut")
+        parts.append((sid, place_original(v2dir, src, f"Tears of Steel, director's cut, part {index}")))
         finish_source(mdir, src)
     version_record(v2dir, v2,
                    {"kind": "directors-cut", "label": "Director's Cut", "decidedBy": "human", "decidedAt": VERSIONED,
-                    "evidence": [{"signal": "folder-name", "value": "Tears of Steel (2012) - Director's Cut"}]},
+                    "evidence": [{"signal": "folder-name", "value": "Director's Cut"}]},
                    {"colour": "colour", "dynamicRange": "sdr", "stereo3d": "none", "aspectRatio": "12:5"},
                    812000, [s for s, _ in parts], [f for _, f in parts])
     ren2 = renditions(1920, 800, False, 6)
@@ -489,8 +503,7 @@ def movie():
                        created=EXTRA_PACKAGED, record="extra.json", originals=record["originalFiles"],
                        folders=EXTRA_DIRS)
 
-    extra(mdir, featurette, "featurette", "On Location in Amsterdam",
-          "Tears of Steel (2012) - On Location in Amsterdam.mkv", 300000,
+    extra(mdir, featurette, "featurette", "On Location in Amsterdam", 300000,
           [video(0, "h264", 1920, 800), audio(1, "aac", 2, "stereo"), subtitle(2, None, events=120)],
           essence(maxVideoHeight=800, subtitleLanguages=["en"], subtitleTracks=1), "h264/high/8bit/sdr/1920x800",
           localized={"de": "Drehort Amsterdam", "nl": "Op locatie in Amsterdam"}, package=featurette_package)
@@ -506,7 +519,7 @@ def movie():
                        essence(maxVideoHeight=800), [], 30000000, created=TRAILER_PACKAGED, record="extra.json",
                        originals=record["originalFiles"], folders=EXTRA_DIRS)
 
-    extra(mdir, uid(mid, "extra", "trailer"), "trailer", "Trailer", "Tears of Steel (2012) - Trailer.mkv", 60000,
+    extra(mdir, uid(mid, "extra", "trailer"), "trailer", "Trailer", 60000,
           [video(0, "h264", 1920, 800), audio(1, "aac", 2, "stereo")], essence(maxVideoHeight=800),
           "h264/high/8bit/sdr/1920x800", package=trailer_package, created=TRAILER_PACKAGED,
           origin={"kind": "link", "site": "example.org", "externalId": "tears-of-steel-trailer", "url": None,
@@ -523,8 +536,7 @@ def movie():
                        essence(maxVideoHeight=800), [], 40000000, created=SCENE_TAKEN, record="extra.json",
                        folders=EXTRA_DIRS)
 
-    extra(mdir, uid(mid, "extra", "deleted-scene"), "deleted-scene", "The Kiss",
-          "Tears of Steel (2012) - Deleted Scene - The Kiss.mkv", 90000,
+    extra(mdir, uid(mid, "extra", "deleted-scene"), "deleted-scene", "The Kiss", 90000,
           [video(0, "h264", 1920, 800), audio(1, "aac", 2, "stereo")], essence(maxVideoHeight=800),
           "h264/high/8bit/sdr/1920x800", package=scene_package, created=SCENE_TAKEN, kept=False)
 
@@ -575,10 +587,11 @@ def movie():
 
 
 def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, packaged_at, role, platform=None):
-    """One version folder of an episode, with its package. platform, the sidecar a German subtitle was
-    made from, makes the package the platform writes now: the original's own HDR stream copied as the
-    top rung, a 5.1 companion of the surround track in an audio group of its own, every rendition named
-    as the master playlist names it, the HLS layout, and the subtitle made from the sidecar."""
+    """One version folder of an episode, with its package. platform, the copy of the subtitle file a
+    German subtitle was made from, makes the package the platform writes now: the original's own HDR
+    stream copied as the top rung, a 5.1 companion of the surround track in an audio group of its own,
+    every rendition named as the master playlist names it, the HLS layout, and the subtitle made from
+    the copy its source keeps."""
     vdir = os.path.join(edir, "versions", vid)
     version_record(vdir, vid,
                    {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": created_at,
@@ -645,8 +658,10 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
                    created=packaged_at, recipe=recipe, hls=hls)
 
 
-def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps_original):
-    """One episode folder: identity, projection, one original and the versions made from it."""
+def episode_item(sdir, series_id, eid, number, title, overview, numbering, kind):
+    """One episode folder: identity, projection, one original and the versions made from it. kind says
+    how the original came and stayed: kept beside its package; the platform's, established with its
+    original and re-packaged, the original then deleted; or taken in before anything packaged it."""
     edir = os.path.join(sdir, "episodes", eid)
     item_record(edir, {
         "schema": "zaentrum.library.item/2", "itemId": eid, "type": "episode", "title": title,
@@ -656,51 +671,73 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
     sid = uid(eid, "source")
     streams = [video(0, "hevc", 3840, 2160, 10, "hdr10"), audio(1, "eac3", 6, "5.1")]
     tracks = {}
-    if keeps_original:
+    if kind == "kept":
         streams += [audio(2, "aac", 2, "stereo", title="Commentary", commentary=True),
                     subtitle(3, "Forced", forced=True), subtitle(4, None), subtitle(5, "SDH", sdh=True)]
         tracks = {"commentaryTracks": 1, "subtitleLanguages": ["en"], "subtitleTracks": 3,
                   "sdhSubtitleLanguages": ["en"], "forcedSubtitleLanguages": ["en"]}
-    name = f"Example Show (US) - S01E{number:02d}{'-03' if number == 2 else ''} - {title}.mkv"
-    src = source(edir, sid, name, f"tv/Example Show (US)/Season 01/{name}",
+    token = f"S01E{number:02d}{'-03' if number == 2 else ''}"
+    src = source(edir, sid, "original.mkv",
                  streams, [], essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10,
                                       hdr10Metadata=True, **tracks),
                  2700000, "2160p", "web", "hevc/main10/10bit/hdr10/3840x2160",
                  naming={"scheme": "unknown", "seasonNumber": 1, "episodeNumber": number,
-                         "episodeEnd": 3 if number == 2 else None,
-                         "raw": f"S01E{number:02d}{'-03' if number == 2 else ''}"})
+                         "episodeEnd": 3 if number == 2 else None, "raw": token})
 
-    if keeps_original:
+    def sidecar(language, forced=False, sdh=False):
+        """The copy the source folder keeps of the subtitle file that came with the original, under the
+        name the library gives it, as source.json lists it."""
+        name = f"subtitle-1.{language}{'.forced' if forced else ''}{'.sdh' if sdh else ''}.srt"
+        data = write(os.path.join(edir, "sources", sid, name), b"1\n00:00:01,000 --> 00:00:02,000\nHallo\n"
+                     if language == "de" else b"1\n00:00:01,000 --> 00:00:02,000\n[wind howling]\n")
+        src["sidecars"].append({"file": f"sources/{sid}/{name}", "kind": "subtitle", "format": "srt",
+                                "language": language, "forced": forced, "hearingImpaired": sdh,
+                                "purpose": "forced" if forced else "sdh" if sdh else "dialogue",
+                                "sizeBytes": len(data), "sha256": sha(data)})
+        return name
+
+    if kind == "kept":
         # one version, with the original beside its package
         primary = uid(eid, "version")
-        original = place_original(os.path.join(edir, "versions", primary), src)
+        original = place_original(os.path.join(edir, "versions", primary), src, f"Example Show, {token}")
         finish_source(edir, src)
         episode_version(edir, primary, uid(eid, "package"), sid, original, tracks, False,
                         VERSIONED, PACKAGED, "derived")
-    else:
-        # the original was never kept here, so each package is the only copy; the first was
-        # re-packaged into a new folder and an event says which one took over. A German subtitle came
-        # with the original as a file beside it: the source folder keeps a copy of it, and the second
-        # package made a subtitle of it. The original waited outside the library until that package was
-        # recorded, and was deleted then: an event names the source whose original it was.
-        sidecar = "Example Show (US) - S01E02-03 - Crosswind.de.srt"
-        data = write(os.path.join(edir, "sources", sid, sidecar), b"1\n00:00:01,000 --> 00:00:02,000\nHallo\n")
-        src["sidecars"].append({"file": f"sources/{sid}/{sidecar}", "originalName": sidecar, "kind": "subtitle",
-                                "format": "srt", "language": "de", "forced": False, "hearingImpaired": False,
-                                "purpose": "dialogue", "sizeBytes": len(data), "sha256": sha(data)})
+    elif kind == "platform":
+        # the platform's: the version was established with its original beside its first package, so that
+        # package is derived. It was re-packaged into a new folder, which keeps no original — the original
+        # stays in the version that holds it — so the new package is canonical, and an event says which
+        # one took over. A German subtitle file came with the original: the source folder keeps a copy of
+        # it, and the second package made a subtitle of it. Once the second package was recorded, the
+        # original was deleted from the first folder, as the platform deletes every original after its
+        # package: an event names the version and the source whose original it was.
+        copy = sidecar("de")
         finish_source(edir, src)
         old, old_pkg = uid(eid, "version", "first"), uid(eid, "package", "first")
         primary, new_pkg = uid(eid, "version", "repackaged"), uid(eid, "package", "repackaged")
-        episode_version(edir, old, old_pkg, sid, None, tracks, False, VERSIONED, PACKAGED, "canonical")
+        episode_version(edir, old, old_pkg, sid, src["file"]["name"], tracks, False, VERSIONED, PACKAGED, "derived")
         episode_version(edir, primary, new_pkg, sid, None, tracks, True, REPACKAGED, REPACKAGED, "canonical",
-                        platform=sidecar)
+                        platform=copy)
         event(edir, SUPERSEDED, "package-superseded", by="packager example", versionId=old,
               packageId=old_pkg, supersededBy={"versionId": primary, "packageId": new_pkg},
               reason="re-packaged with a second rung")
-        event(edir, ORIGINAL_RETIRED, "original-deleted", by="catalog example (originals are not kept)",
-              versionId=primary, sourceId=sid, reason="originals are not kept: the package is the record",
-              accepted=[])
+        event(edir, ORIGINAL_RETIRED, "original-deleted", by="catalog example (originals are deleted after packaging)",
+              versionId=old, sourceId=sid, reason="the package is the record once it is recorded", accepted=[])
+    else:
+        # taken in before anything packaged it: the version is its record and its original alone — no
+        # package, no checksums, no .complete — until its first package is added to it. An English SDH
+        # subtitle file came with the original, and the source folder keeps a copy of it.
+        sidecar("en", sdh=True)
+        primary = uid(eid, "version")
+        vdir = os.path.join(edir, "versions", primary)
+        original = place_original(vdir, src, f"Example Show, {token}")
+        finish_source(edir, src)
+        version_record(vdir, primary,
+                       {"kind": "unknown", "label": None, "decidedBy": "inferred", "decidedAt": TAKEN_IN, "evidence": []},
+                       {"colour": "colour", "dynamicRange": "hdr10", "stereo3d": "none", "aspectRatio": "16:9"},
+                       2700000, [sid], [original], created=TAKEN_IN)
 
+    aired = datetime.date(2024, 1, 9) + datetime.timedelta(days=7 * number)
     write(os.path.join(edir, "metadata.json"), {
         "schema": "zaentrum.library.metadata/2", "itemId": eid, "type": "episode",
         "asOf": PROJECTED, "projectedBy": "catalog example", "databaseUpdatedAt": ROW_UPDATED, "externalIds": {},
@@ -708,7 +745,7 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
                    "localized": {"en": {"title": title, "sortTitle": title.lower(), "tagline": None,
                                         "overview": overview}}},
         "genres": [], "tags": [], "rating": None, "credits": [],
-        "episode": {"airDate": f"2024-01-{9 + number * 7:02d}"},
+        "episode": {"airDate": aired.isoformat()},
         "library": {
             "primaryVersionId": primary,
             "match": {"status": "unmatched", "decidedBy": "inferred", "decidedAt": PROJECTED,
@@ -723,12 +760,12 @@ def episode_item(sdir, series_id, eid, number, title, overview, numbering, keeps
 
 
 def series():
-    """Example Show: one season, two episodes, in two orderings — aired, and a disc ordering that
-    runs the two the other way round. Nothing lists the episodes: the folders are the list, and each
-    episode records its own place in each ordering."""
+    """Example Show: one season, three episodes, in two orderings — aired, and a disc ordering that
+    runs the first two the other way round. Nothing lists the episodes: the folders are the list, and
+    each episode records its own place in each ordering."""
     sid = uid("series", "example-show-us")
     sdir = os.path.join(ROOT, "series", sid[:2], sid)
-    ep1, ep2 = uid(sid, "S01E01"), uid(sid, "S01E02")
+    ep1, ep2, ep4 = uid(sid, "S01E01"), uid(sid, "S01E02"), uid(sid, "S01E04")
     item_record(sdir, {
         "schema": "zaentrum.library.item/2", "itemId": sid, "type": "series", "title": "Example Show",
         "externalIds": {}, "createdAt": CREATED, "createdBy": "ingest example",
@@ -771,15 +808,18 @@ def series():
     # last, are what say it is finished; the projection decides nothing about it, so it is shown in
     # the order the extras were taken in.
     extra(sdir, uid(sid, "extra", "behind-the-scenes", "season-1"), "behind-the-scenes",
-          "Behind the Scenes of Season 1", "Example Show (US) - Season 1 - Behind the Scenes.mkv", 1260000,
+          "Behind the Scenes of Season 1", 1260000,
           [video(0, "h264", 1920, 1080), audio(1, "aac", 2, "stereo")], essence(maxVideoHeight=1080),
           "h264/high/8bit/sdr/1920x1080", season=1)
     episode_item(sdir, sid, ep1, 1, "Pilot", "The first episode.",
                  {"aired": {"season": 1, "episode": 1, "episodeEnd": None},
-                  "dvd": {"season": 1, "episode": 2, "episodeEnd": None}}, keeps_original=True)
+                  "dvd": {"season": 1, "episode": 2, "episodeEnd": None}}, kind="kept")
     episode_item(sdir, sid, ep2, 2, "Crosswind", "The second episode, and the third on one file.",
                  {"aired": {"season": 1, "episode": 2, "episodeEnd": 3},
-                  "dvd": {"season": 1, "episode": 1, "episodeEnd": None}}, keeps_original=False)
+                  "dvd": {"season": 1, "episode": 1, "episodeEnd": None}}, kind="platform")
+    episode_item(sdir, sid, ep4, 4, "Tailwind", "The fourth episode.",
+                 {"aired": {"season": 1, "episode": 4, "episodeEnd": None},
+                  "dvd": {"season": 1, "episode": 3, "episodeEnd": None}}, kind="taken in")
 
 
 def person(pid, portraits=(), **fields):

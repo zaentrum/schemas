@@ -121,14 +121,17 @@ says. A database rebuilt from the tree has lost the defaults people chose.
 --subset reports the rows only the database has without counting them, for a tree that was built
 from part of a catalog.
 
-The arrivals are not the record. An original waits outside the library — in <root>/.work/incoming
-on the platform — until its package is recorded, and is deleted then, so the export's rows of the
-files there are no rows the tree can give back: --arrivals-root names that folder, and the asset and
-subtitle rows of files under it are not compared. Neither is ever the row of an original that was
-retired (kind original). A subtitle the package made from a sidecar is the catalog's row of that
-sidecar while the original waits — at the arrivals, not compared — and the rebuild gives it no row of
-its own until the original is deleted; then it is a row of the package's subtitle in the sidecar's
-language, and a sidecar nothing was made from is a row of the copy its source folder keeps.
+The arrivals are not the record. A file waits there — in <root>/.work/incoming on the platform — until
+the first record of its title is made: an original until its version folder takes it in, a subtitle
+file that came with it until the original is deleted, an extra's original until its package is
+recorded. The export's rows of the files there are no rows the tree can give back: --arrivals-root
+names that folder, and the asset and subtitle rows of files under it are not compared. Neither is
+ever the row of an original that was retired (kind original). An original in its version folder is
+the record, and its row is compared. A subtitle the package made from a sidecar is the catalog's row
+of that sidecar while the original is there — the row at the arrivals, not compared — and the
+rebuild gives it no row of its own until an event deletes the original, from whichever version folder
+kept it; then it is a row of the package's subtitle in the sidecar's language, and a sidecar nothing
+was made from is a row of the copy its source folder keeps.
 """
 import argparse, base64, datetime, glob, hashlib, json, os, re, sys, uuid
 
@@ -477,6 +480,12 @@ class Rebuild:
                     if v["package"] and v["package"].get("packageId") == ev.get("packageId"):
                         v["superseded"] = True
                         v["supersededBy"] = by.get("packageId")
+        # an original deleted is its source's, whichever version folder kept it: a re-package keeps none, and
+        # the subtitles it made from the copies its source keeps stand for the catalog's rows once it is gone
+        deleted = {ev["sourceId"] for ev in events if ev.get("kind") == "original-deleted" and ev.get("sourceId")}
+        deleted |= {s for v in found.values() if v["whole"] for s in v["version"].get("sourceIds") or []}
+        for v in found.values():
+            v["deletedSources"] = deleted
 
         live, storage = [], []
         for vid in sorted(found):
@@ -614,7 +623,7 @@ class Rebuild:
         subtitle, in the sidecar's language, and the row of a sidecar nothing was made from at the copy
         the source folder keeps — which has no label of its own the record could give back."""
         sources = sources or {}
-        gone = lambda sid: v.get("whole") or sid in (v.get("gone") or ())
+        gone = lambda sid: v.get("whole") or sid in (v.get("gone") or ()) or sid in (v.get("deletedSources") or ())
         out, made = [], set()
         for s in v["package"].get("subtitles") or []:
             language, f = s.get("language"), s.get("fromSidecar")

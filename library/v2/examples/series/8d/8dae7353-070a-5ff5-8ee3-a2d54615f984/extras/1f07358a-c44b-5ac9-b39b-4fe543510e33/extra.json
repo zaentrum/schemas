@@ -10,15 +10,15 @@
   "runtimeMs": 1260000,
   "seasonNumber": 1,
   "originalFiles": [
-    "Example Show (US) - Season 1 - Behind the Scenes.mkv"
+    "original.mkv"
   ],
   "originals": [
     {
-      "name": "Example Show (US) - Season 1 - Behind the Scenes.mkv",
-      "sizeBytes": 90,
+      "name": "original.mkv",
+      "sizeBytes": 84,
       "fixity": {
-        "qh1": "sha256:68f3221db9728288475d9946073f13e51c01123817a41e3b4e33780b9dce7bc5",
-        "sha256": "sha256:2ba0ada3910e2586a4c6736a3c16ba39534f131c82c0eb387008ad4de2303fd8",
+        "qh1": "sha256:413ce06326eac61f3589bb512cfc162fbb19f9082606dc6a7bf414c95321c270",
+        "sha256": "sha256:a73b532fd9b2a88a914a4aba59155a60c37a11a8894b455767c209c263112b50",
         "sha256At": "2026-09-19T08:00:00Z"
       }
     }

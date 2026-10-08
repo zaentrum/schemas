@@ -4,29 +4,24 @@
   "takenAt": "2026-09-18T09:05:00Z",
   "takenBy": "analyzer example",
   "file": {
-    "name": "Tears of Steel (2012) - Director's Cut - part2.mkv",
+    "name": "original-2.mkv",
     "kind": "stream-container",
-    "sizeBytes": 88,
+    "sizeBytes": 71,
     "mtime": "2026-09-18T09:00:00Z",
     "fixity": {
-      "qh1": "sha256:563a1421d52f1fde4bbc5a6123d3cfe7365e27f360ca8eadcd11985e586c5758"
+      "qh1": "sha256:0e2fe8ed89a53a741f8122584f8a958e6721132d5657a5a51f0c290088a7307a"
     },
     "part": {
       "index": 2,
       "of": 2
     }
   },
-  "origin": {
-    "libraryPath": "movies/Tears of Steel (2012) - Director's Cut/Tears of Steel (2012) - Director's Cut - part2.mkv",
-    "folder": "movies/Tears of Steel (2012) - Director's Cut",
-    "takenBy": "move"
-  },
   "labels": {
     "quality": "1080p",
     "medium": "web",
     "resolution": "1080p",
-    "edition": null,
-    "folderEdition": null
+    "edition": "directors-cut",
+    "folderEdition": "Director's Cut"
   },
   "container": {
     "format": "matroska,webm",
@@ -141,7 +136,7 @@
     "version": null,
     "at": "2026-09-18T09:05:00Z",
     "file": "sources/b01e5486-1e84-5253-adfa-7c530752390b/ffprobe.json",
-    "sha256": "sha256:1bc06941d733736be03b15869017dbe4cc181b4414cfdcf088abf9a7b38cc058",
+    "sha256": "sha256:598a61ac9867fb594d2a97f2291a5218c8733c143657b182de5c8aff009a1af7",
     "note": null
   }
 }

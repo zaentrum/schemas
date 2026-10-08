@@ -896,7 +896,7 @@ def test_proves_itself(t):
     t.ok("an extra's checksums list its originals too, as a version's never do: an extra is written whole and keeps them",
          extras and all(set(jload(os.path.join(x, "extra.json"))["originalFiles"]) <= set(listing(x)) for x in extras)
          and not any(n.endswith(".mkv") for vp in glob.glob(os.path.join(EXAMPLES, "**", "versions", "*"), recursive=True)
-                     for n in listing(vp)), extras)
+                     if os.path.isfile(os.path.join(vp, "checksums.sha256")) for n in listing(vp)), extras)
     listed = [n for f in folders for n in listing(f)]
     t.ok("and no checksums file covers a projection or an image: those are replaced whole, or named by their hash",
          not {"metadata.json", "person.json"} & set(listed)
@@ -3105,8 +3105,9 @@ def test_projections_only(t):
         records = records_of(tree)
         code, text = run(FROM_CATALOG, "--export", export, "--out", tree, "--projections-only", "--text-language", "en")
         t.ok("on the example tree — removed versions, a deleted original, a superseded package, extras, a retired "
-             "extra, episodes — it projects every item and person", code == 0 and "'items': 4" in text and "'people': 3" in text,
-             text)
+             "extra, episodes — it projects every item and person",
+             code == 0 and f"'items': {len(glob.glob(os.path.join(tree, '**', 'item.json'), recursive=True))}" in text
+             and "'people': 3" in text, text)
         t.eq("and changes no byte of any of its records, nor touches one", records_of(tree), records)
         if have_jsonschema():
             code, vtext = run(VALIDATOR, "--check-checksums", tree)
@@ -4387,7 +4388,7 @@ def test_media_check(t):
     case("an extra's original that is not the sha256 extra.json wrote down", False, recorded_sha,
          "does not match the sha256 extra.json wrote down", ("--checksums",))
     case("an extra's original whose bytes changed", False, lambda r: open(x_original(featurette(r)), "ab").write(b"x"),
-         "On Location in Amsterdam.mkv: does not match its checksum", ("--checksums",))
+         "original.mkv: does not match its checksum", ("--checksums",))
     case("a file of an extra that its checksums do not list", False,
          lambda r: open(os.path.join(featurette(r), "hls", "v0", "seg-0001.m4s"), "wb").write(b"x"),
          "is a file of this extra that checksums.sha256 does not list")
