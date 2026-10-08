@@ -117,7 +117,9 @@ and copies of the subtitle files that came with the originals:
                                  and its images, sources/<sourceId>/ with the probe and a copy of each
                                  subtitle file, versions/<versionId>/ with version.json, checksums.sha256,
                                  package.json and .complete but none of the package files, which the
-                                 checksums list where the adopt puts them, extras/<extraId>/ the same
+                                 checksums list where the adopt puts them, nor the original, which the
+                                 adopt renames in, extras/<extraId>/ the same — a title nothing packaged
+                                 yet with version.json alone
   staged-people/<personId>/      person.json and the portraits of everyone a staged item credits,
                                  unless the library holds them already; the adopt puts them at
                                  people/<aa>/<personId>/ once the items are in
@@ -125,23 +127,29 @@ and copies of the subtitle files that came with the originals:
   report.json                    what is ready, every problem by its class, and what deleting every
                                  original would cost (report-<shard>.json for a shard)
 
-The records are the platform's: an original is never in the library, so a version keeps none
-(originalFiles []) and its package is canonical; the original goes to the arrivals, <root>/.work/
-incoming/ (an extra's to <root>/.work/extras/), at the path it had under media/ (extras/), and is
-deleted once its package is recorded — for an item whose original was already gone the source record
-has no fixity, its probe.note says why, and the adopt writes the original-deleted event (reason "gone
-before the library was recorded", accepted [] — the gate was never measured). A subtitle file the
-scanner paired with the original is copied into the source folder under the name the library gives
-it, subtitle-<n>.<lang>[.forced][.sdh].<ext>, and the package's subtitle made from it — its manifest
+The records are the platform's, and name no file as it arrived. Every original goes into its title's
+version folder at once, under the name the library gives it, original.<ext>, and is deleted from
+there once its package is recorded. A packaged title's version keeps it beside the package
+(originalFiles ["original.<ext>"], the package derived); a title nothing packaged yet is taken in:
+its version holds version.json and the original alone — no checksums, no package.json, no .complete
+— until its first package is added to it. For an item whose original was already gone the source
+record has no fixity, its probe.note says why, the version keeps none (originalFiles [], the package
+canonical), and the adopt writes the original-deleted event (reason "gone before the library was
+recorded", accepted [] — the gate was never measured). A subtitle file the scanner paired with the
+original is copied into the source folder under the name the library gives it,
+subtitle-<n>.<lang>[.forced][.sdh].<ext>, and the package's subtitle made from it — its manifest
 marks it external; they are paired by the order katalog-manager handed the packager the files, by
-path, and by language — names the copy as fromSidecar. Nothing else beside the original is copied or
-moved: a .nfo, an image or a text file is no part of the record, and stays for the cleanup. Extras are the catalog's own rows
-(the export's extras), each named by its row's id and staged when its package finished; one without a
-finished package stays the catalog's, its original among the arrivals. An episode under a season is in
-its series' folder; music and anything else the library does not record is skipped. Ids are UUIDv5 of
-the item and a stable name — a source's is the database's own when it already has one — so staging
-again writes the same records; an item the library holds already, or whose package the database holds
-as complete, is not staged again.
+path, and by language — names the copy as fromSidecar; the file itself goes to the arrivals,
+<root>/.work/incoming/, at the path it had under media/. Nothing else beside the original is copied
+or moved: a .nfo, an image or a text file is no part of the record, and stays for the cleanup. An
+extra keeps no original: it goes to the arrivals, <root>/.work/extras/ (or .work/incoming/ from
+media/), at the path it had, until its package is recorded. Extras are the catalog's own rows (the
+export's extras), each named by its row's id and staged when its package finished; one without a
+finished package stays the catalog's, its original among the arrivals. An episode under a season is
+in its series' folder; music and anything else the library does not record is skipped. Ids are
+UUIDv5 of the item and a stable name — a source's is the database's own when it already has one — so
+staging again writes the same records; an item the library holds already, or whose package the
+database holds as complete, is not staged again.
 
 A unit plan says, for katalog-manager's adopt (POST /api/library/migrations/<run>/adopt), what to
 move and what to change, all paths absolute as the run saw them — run it with --root at the services'
@@ -152,9 +160,10 @@ own path of the share:
        package  an old package folder's hls/ subs/ trickplay/, and an extra's, into the staged records
        publish  the staged item folder to itemDir (an episode's into its series' folder, which the
                 series' unit put in place first: series before episodes)
-       original the original to the arrivals, and an extra's original
+       original the original into its version folder, itemDir/versions/<versionId>/original.<ext>, once
+                the item is in place; and an extra's original to the arrivals
        sidecar  a subtitle file the scanner paired with the original, of which the source keeps a
-                copy, to the arrivals beside it
+                copy, to the arrivals, at the path it had under media/
        legacy   what is left of an old package folder (manifest.json, .complete) to the run's legacy/
    "guards": {"manifestSha256", "completeMtime", "listingSha256"}   checked again before the first
        move — when one differs the plan is stale and the item is staged again:
@@ -169,12 +178,16 @@ own path of the share:
                                                           its staged metadata.json reflects
           "sources": [{"sourceId", "filename", "arrivalPath", "libraryPath", "sizeBytes", "qh1",
                        "recordDir", "sidecars": [{"subtitleAssetId", "rendition", "path"}]}],
-                       arrivalPath and qh1 null for an original gone before the library was recorded;
-                       recordDir null for an original nothing packaged yet, recorded at its first package
+                       filename the name the library gives the original, arrivalPath where it lies once
+                       adopted, its version folder, and libraryPath null: the catalog keeps library paths
+                       only once a version is established; arrivalPath and qh1 null for an original gone
+                       before the library was recorded
           "versions": [{"versionId", "packageId", "dir", "completedAt", "sourceIds", "verifiedAt",
-                        "verifiedLevel": "full"}]   every byte was hashed by the stage
+                        "verifiedLevel", "takenIn"}]   verifiedLevel full, every byte was hashed by the
+                       stage, and takenIn false; a version taken in — recorded with no package — has
+                       packageId, completedAt, verifiedAt and verifiedLevel null, and takenIn true
           "assets": [{"id", "path", "sourceId"} | {"id", "path", "versionId"}]   the original's row at
-                       the arrivals — or, gone before, at its source folder, a retired one — and the
+                       its version folder — or, gone before, at its source folder, a retired one — and the
                        packaged row at <dir>/package.json; any other packaged row of the item goes
           "subtitles": [{"id", "path"}]   the package's rows in the version folder, the sidecars' at the
                        arrivals — or, the original gone before, where a retire points them
@@ -1070,7 +1083,7 @@ class Platform(Build):
                          if isinstance(v, dict) and v.get("state") == "complete"}
         self.entries, self.staged_rows, self.current = [], [], None
         self.gate, self.measured, self.unmeasured = {}, 0, 0
-        self.counts.update(units=0, recorded=0)
+        self.counts.update(units=0, recorded=0, takenIn=0)
 
     # -------------------------------------------------- where everything is
     def series_of(self, row):
@@ -1212,9 +1225,10 @@ class Platform(Build):
 
     # -------------------------------------------------- an item's original and its package
     def media(self, row, d, target, moves, db, guards):
-        """The source record of the item's original and the version and package records of its package,
-        staged; the moves that put the package, the original and its sidecars where the record says,
-        and the rows that change with them. Returns the versionId, or None when nothing was packaged."""
+        """The source record of the item's original and the version made of it, staged — with the records
+        of its package, when it has one; the moves that put the package and the original where the record
+        says, and the subtitle files that came with the original among the arrivals; and the rows that
+        change with them. Returns the versionId, or None when there is nothing the library can record."""
         iid = row["id"]
         assets = row.get("playbackAssets") or []
         primary = next((a for a in assets if a.get("kind") == "primary" and a.get("isPrimary")), None) \
@@ -1242,10 +1256,10 @@ class Platform(Build):
                 except (OSError, ValueError) as e:
                     self.problem("missing .complete", f"the package manifest {mp} cannot be read ({e})")
         name = os.path.basename(original or str((primary or {}).get("path") or "").replace("\\", "/"))
-        arrival, rel = self.arrival_of(original) if original else (None, None)
-        if original and arrival is None:
-            self.problem("original outside the media root", f"{original} stays where it is")
-            arrival = original
+        rel = self.arrival_of(original)[1] if original else None
+        if original and rel is None:
+            self.problem("original outside the media root", f"{original} is not under the media root, so the adopt "
+                                                            f"refuses to move it into the library")
         library_path = rel or os.path.basename(name)
         if not original and primary:
             p = str(primary.get("path") or "").replace("\\", "/")
@@ -1295,43 +1309,25 @@ class Platform(Build):
                     and (s.get("arrivalPath") == (primary or {}).get("path") or s.get("filename") == name)), None) \
             or did(iid, "source", name)
         source_dir = os.path.join(target, "sources", sid)
-        # the copy the source folder keeps of each subtitle file that came with the original, in the order the
-        # catalog lists them, under the name the record logic gives it: nothing else beside the original is kept
-        entries = [sidecar_entry(sid, n, local, os.path.basename(local), s.get("language"))
-                   for n, (s, local) in enumerate(sidecar_rows, 1)]
-        copy_of = {s.get("id"): e["file"] for (s, _), e in zip(sidecar_rows, entries)}
-        if original:
-            moves["original"].append({"kind": "original", "from": original, "to": arrival})
-            for local in [p for _, p in sidecar_rows]:
-                to = self.arrival_of(local)[0]
-                if to:
-                    moves["original"].append({"kind": "sidecar", "from": local, "to": to})
-            if primary:
-                db["assets"].append({"id": primary.get("id"), "path": arrival, "sourceId": sid})
-            for s, local in sidecar_rows:
-                to = self.arrival_of(local)[0]
-                if to:
-                    db["subtitles"].append({"id": s.get("id"), "path": to})
-
         size = os.path.getsize(original) if original else num((primary or {}).get("sizeBytes"))
         if pkg and size is None:
             self.problem("missing original", "and the catalog recorded no size for it: no source record can be "
                                              "written, so its package is not recorded")
             pkg = None
-        if not pkg:
-            if original:
-                db["sources"].append({"sourceId": sid, "filename": name, "arrivalPath": arrival,
-                                      "libraryPath": library_path, "sizeBytes": size, "qh1": qh1(original),
-                                      "recordDir": None, "sidecars": []})
-            return None
+        if not pkg and not original:
+            return None  # nothing the library can record: the catalog keeps the title as it is
 
-        # sources/<sourceId>/: the probe, the copies, the record
-        a, folder, man = pkg
+        # sources/<sourceId>/: the probe, a copy of each subtitle file that came with the original — in the order
+        # the catalog lists them, under the name the record logic gives it, and nothing else that sat beside it —
+        # the record
         probe = ffprobe(original) if original and self.probe_version else None
         if probe:
             self.counts["probed"] += 1
         elif original:
             self.note(iid, f"{name} was not probed: streams, fidelity and essence stay empty")
+        entries = [sidecar_entry(sid, n, local, os.path.basename(local), s.get("language"))
+                   for n, (s, local) in enumerate(sidecar_rows, 1)]
+        copy_of = {s.get("id"): e["file"] for (s, _), e in zip(sidecar_rows, entries)}
         files = {os.path.basename(e["file"]): open(local, "rb").read() for (_, local), e in zip(sidecar_rows, entries)}
         rec, raw = source_record(sid, name, size, taken_at=self.as_of, taken_by="library-v2-from-catalog",
                                  library_path=library_path, qh1=qh1(original) if original else None,
@@ -1344,55 +1340,86 @@ class Platform(Build):
         self.w.covered(os.path.join(d, "sources", sid), files)
         self.counts["sources"] += 1
 
-        # versions/<versionId>/: the records over the package, which the adopt moves in beside them
-        store = os.path.relpath(folder, self.a.packages)
-        vid, pid = did(iid, "version", store), did(iid, "package", store)
-        vp = os.path.join(d, "versions", vid)
+        # versions/<versionId>/: version.json, which names the original the adopt renames in beside it under the
+        # name the library gives it — and the records over the package, when there is one, which the adopt moves
+        # in too. A title nothing packaged yet is taken in: its version holds the original alone, no checksums,
+        # no package.json, no .complete, until its first package is added
+        kept = rec["file"]["name"] if original else None
+        if pkg:
+            a, folder, man = pkg
+            store = os.path.relpath(folder, self.a.packages)
+            vid, pid, created = did(iid, "version", store), did(iid, "package", store), ts(man.get("packagedAt"))
+        else:
+            vid, pid, created = did(iid, "version", name), None, None
+        vp, vdir = os.path.join(d, "versions", vid), os.path.join(target, "versions", vid)
         marks, marks_from = chapter_marks(row.get("chapters")), "legacy-catalog"
         if not marks:
             marks, marks_from = probe_chapters(probe), "original-file"
-        version = version_record(vid, rec, created_at=ts(man.get("packagedAt")) or self.as_of,
-                                 created_by="library-v2-from-catalog", chapters=marks, chapters_from=marks_from,
-                                 segments=segments(row.get("segments")))
+        version = version_record(vid, rec, created_at=created or self.as_of, created_by="library-v2-from-catalog",
+                                 chapters=marks, chapters_from=marks_from, segments=segments(row.get("segments")),
+                                 original_files=[kept] if kept else [])
         version_bytes = json_bytes(version)
-        listed = [] if self.a.dry_run else package_files(folder) + [record_entry("version.json", version_bytes)]
-        package, notes = package_record(
-            pid, man, listed, source=rec, created_at=self.as_of, duration_ms=a.get("durationMs"),
-            peak_bandwidth_bps=peak_bandwidth(folder, (man.get("hls") or {}).get("master") or "hls/master.m3u8")
-            or (num(a.get("bitrateKbps")) or 0) * 1000 or None,
-            sidecars={e.get("id"): copy_of[row_id] for row_id, e in mapped.items()})
-        for n in notes:
-            self.note(iid, n)
-        if rec["streams"]:
-            self.measured += 1
-            for key in deletion_gate([rec["essence"]], package["essence"]):
-                self.gate[key] = self.gate.get(key, 0) + 1
-        else:
-            self.unmeasured += 1
-        package_bytes = json_bytes(package)
         self.w.write(os.path.join(vp, "version.json"), version_bytes)
-        self.w.write(os.path.join(vp, "checksums.sha256"), checksums(listed)[0])
-        self.w.write(os.path.join(vp, "package.json"), package_bytes)
-        self.w.write(os.path.join(vp, ".complete"), complete(package_bytes))
         self.counts["versions"] += 1
-        self.counts["packages"] += 1
-        for sub in PACKAGE_DIRS:
-            if os.path.isdir(os.path.join(folder, sub)):
-                moves["package"].append({"kind": "package", "from": os.path.join(folder, sub), "to": os.path.join(vp, sub)})
-        moves["legacy"].append({"kind": "legacy", "from": folder, "to": os.path.join(self.run_dir, "legacy", store)})
-        mp = os.path.join(folder, "manifest.json")
-        guards.update(manifestSha256=sha_file(mp) if os.path.isfile(mp) else None,
-                      completeMtime=mtime_ns(os.path.join(folder, ".complete")))
+        if pkg:
+            listed = [] if self.a.dry_run else package_files(folder) + [record_entry("version.json", version_bytes)]
+            package, notes = package_record(
+                pid, man, listed, source=rec, role="derived" if kept else "canonical", created_at=self.as_of,
+                duration_ms=a.get("durationMs"),
+                peak_bandwidth_bps=peak_bandwidth(folder, (man.get("hls") or {}).get("master") or "hls/master.m3u8")
+                or (num(a.get("bitrateKbps")) or 0) * 1000 or None,
+                sidecars={e.get("id"): copy_of[row_id] for row_id, e in mapped.items()})
+            for n in notes:
+                self.note(iid, n)
+            if rec["streams"]:
+                self.measured += 1
+                for key in deletion_gate([rec["essence"]], package["essence"]):
+                    self.gate[key] = self.gate.get(key, 0) + 1
+            else:
+                self.unmeasured += 1
+            package_bytes = json_bytes(package)
+            self.w.write(os.path.join(vp, "checksums.sha256"), checksums(listed)[0])
+            self.w.write(os.path.join(vp, "package.json"), package_bytes)
+            self.w.write(os.path.join(vp, ".complete"), complete(package_bytes))
+            self.counts["packages"] += 1
+            for sub in PACKAGE_DIRS:
+                if os.path.isdir(os.path.join(folder, sub)):
+                    moves["package"].append({"kind": "package", "from": os.path.join(folder, sub),
+                                             "to": os.path.join(vp, sub)})
+            moves["legacy"].append({"kind": "legacy", "from": folder, "to": os.path.join(self.run_dir, "legacy", store)})
+            mp = os.path.join(folder, "manifest.json")
+            guards.update(manifestSha256=sha_file(mp) if os.path.isfile(mp) else None,
+                          completeMtime=mtime_ns(os.path.join(folder, ".complete")))
+        else:
+            self.counts["takenIn"] += 1
 
-        vdir = os.path.join(target, "versions", vid)
-        db["sources"].append({"sourceId": sid, "filename": name, "arrivalPath": arrival if original else None,
-                              "libraryPath": library_path, "sizeBytes": size,
-                              "qh1": rec["file"].get("fixity", {}).get("qh1"), "recordDir": source_dir,
+        # the original into its version folder once the item is in place, and the subtitle files that came
+        # with it — the source keeps a copy of each — to the arrivals beside where it was
+        if original:
+            moves["original"].append({"kind": "original", "from": original, "to": os.path.join(vdir, kept)})
+            for _, local in sidecar_rows:
+                to = self.arrival_of(local)[0]
+                if to:
+                    moves["original"].append({"kind": "sidecar", "from": local, "to": to})
+            if primary:
+                db["assets"].append({"id": primary.get("id"), "path": os.path.join(vdir, kept), "sourceId": sid})
+            for s, local in sidecar_rows:
+                to = self.arrival_of(local)[0]
+                if to:
+                    db["subtitles"].append({"id": s.get("id"), "path": to})
+        db["sources"].append({"sourceId": sid, "filename": rec["file"]["name"],
+                              "arrivalPath": os.path.join(vdir, kept) if original else None, "libraryPath": None,
+                              "sizeBytes": size, "qh1": rec["file"].get("fixity", {}).get("qh1"),
+                              "recordDir": source_dir,
                               "sidecars": [{"subtitleAssetId": row_id, "rendition": e.get("id"), "path": e.get("path")}
                                            for row_id, e in sorted(mapped.items())]})
+        if not pkg:
+            db["versions"].append({"versionId": vid, "packageId": None, "dir": vdir, "completedAt": None,
+                                   "sourceIds": [sid], "verifiedAt": None, "verifiedLevel": None, "takenIn": True})
+            return vid
         db["versions"].append({"versionId": vid, "packageId": pid, "dir": vdir, "completedAt": package["createdAt"],
                                "sourceIds": [sid], "verifiedAt": None if self.a.dry_run else now_utc(),
-                               "verifiedLevel": "full"})
+                               "verifiedLevel": "full", "takenIn": False})
         db["assets"].append({"id": a.get("id"), "path": os.path.join(vdir, "package.json"), "versionId": vid})
         if not original and primary:
             # gone before the library was recorded: the original's row is a retired one, as a retire leaves it
@@ -1537,8 +1564,8 @@ class Platform(Build):
                   "dryRun": bool(self.a.dry_run), "shard": self.a.shard or None, "root": self.root,
                   "counts": {"items": len(self.entries), "staged": self.counts["units"],
                              "ready": sum(1 for e in self.entries if e["ready"]), "recorded": self.counts["recorded"],
-                             "versions": self.counts["versions"], "extras": self.counts["extras"],
-                             "people": self.counts["people"]},
+                             "versions": self.counts["versions"], "takenIn": self.counts["takenIn"],
+                             "extras": self.counts["extras"], "people": self.counts["people"]},
                   "problems": dict(sorted(problems.items())),
                   "loss": {"measured": self.measured, "unmeasured": self.unmeasured,
                            "gate": dict(sorted(self.gate.items(), key=lambda kv: (-kv[1], kv[0])))},

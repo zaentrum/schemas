@@ -1897,6 +1897,7 @@ PF_SERIES = "c3000000-0000-4000-8000-000000000003"
 PF_EPISODE = "d4000000-0000-4000-8000-000000000004"
 PF_EXTRA = "e5000000-0000-4000-8000-000000000005"     # the movie's trailer, packaged
 PF_PENDING = "f6000000-0000-4000-8000-000000000006"   # an extra never packaged
+PF_TAKEN = "a7a00000-0000-4000-8000-000000000007"     # an original and a forced subtitle beside it, no package
 PF_PERSON = "99000000-0000-4000-8000-000000000009"
 PF_RUN = "2026-10-07a"
 
@@ -1959,13 +1960,23 @@ def legacy_store(root):
                 "externalIds": [], "genres": [], "tags": [], "people": [], "chapters": [], "segments": [],
                 "playbackAssets": [], "subtitleAssets": [], "trailers": [], "artwork": [], **fields}
 
+    def original(aid, path, size):
+        """A primary row as the catalog fills it from the probe of its file: codec, resolution, bitrate and
+        duration, and no audio fields."""
+        return asset(aid, path, "primary", sizeBytes=size, codec="h264", resolution="1920x1080", bitrateKbps=4000,
+                     durationMs=90000, audioCodec=None, audioLanguage=None, audioChannels=None, audioBitrateKbps=None,
+                     audioTrackCount=None, subtitleTrackCount=None)
+
     media, packages, extras = (os.path.join(root, n) for n in ("media", "packages", "extras"))
     svc = "/var/lib/katalog"
-    film = "Example Film (2024)/Example Film (2024).mkv"
-    for rel, body in ((film, b"an original of an example film\n" * 500),
+    film, other = "Example Film (2024)/Example Film (2024).mkv", "Other Film (2025)/Other Film (2025).mkv"
+    episode = "tv/Example Show/Season 01/Example Show - S01E01.mkv"
+    bodies = {film: b"an original of an example film\n" * 500, other: b"an original nothing packaged yet\n" * 300,
+              episode: b"an episode\n" * 400}
+    for rel, body in (*bodies.items(),
                       ("Example Film (2024)/Example Film (2024).de.srt", b"1\n00:00:01,000 --> 00:00:02,000\nHallo\n"),
                       ("Example Film (2024)/Example Film (2024).nfo", b"<movie/>\n"),
-                      ("tv/Example Show/Season 01/Example Show - S01E01.mkv", b"an episode\n" * 400)):
+                      ("Other Film (2025)/Other Film (2025).en.forced.srt", b"1\n00:00:01,000 --> 00:00:02,000\nHi\n")):
         os.makedirs(os.path.dirname(os.path.join(media, rel)), exist_ok=True)
         with open(os.path.join(media, rel), "wb") as f:
             f.write(body)
@@ -1993,7 +2004,7 @@ def legacy_store(root):
                       {"startMs": 10000, "endMs": 20000, "title": "Two", "ordinal": 2}],
             segments=[{"kind": "credits", "startMs": 18000, "endMs": 20000, "source": "blackframe", "confidence": 0.8,
                        "label": None}],
-            playbackAssets=[asset("pa1", f"{svc}/media/{film}", "primary", sizeBytes=16000),
+            playbackAssets=[original("pa1", f"{svc}/media/{film}", len(bodies[film])),
                             asset("pa2", f"{pm}/manifest.json", "packaged", subtitleTrackCount=2)],
             # sa1 a default a person chose, which the database keeps: behaviour, which no record holds
             subtitleAssets=[{"id": "sa1", "path": f"{pm}/subs/0.vtt", "format": "webvtt", "language": "eng",
@@ -2008,9 +2019,13 @@ def legacy_store(root):
                             asset("pb2", f"{pg}/manifest.json", "packaged")]),
         row(PF_SERIES, "series", "Example Show", durationMs=None),
         row(PF_EPISODE, "episode", "Pilot", parentId=PF_SERIES, seasonNumber=1, episodeNumber=1,
-            playbackAssets=[asset("pd1", f"{svc}/media/tv/Example Show/Season 01/Example Show - S01E01.mkv", "primary",
-                                  sizeBytes=4400),
-                            asset("pd2", f"{pe}/manifest.json", "packaged")])]
+            playbackAssets=[original("pd1", f"{svc}/media/{episode}", len(bodies[episode])),
+                            asset("pd2", f"{pe}/manifest.json", "packaged")]),
+        # nothing packaged it yet: it is taken in, its version the original alone
+        row(PF_TAKEN, "movie", "Other Film",
+            playbackAssets=[original("pt1", f"{svc}/media/{other}", len(bodies[other]))],
+            subtitleAssets=[{"id": "st1", "path": f"{svc}/media/Other Film (2025)/Other Film (2025).en.forced.srt",
+                             "format": "srt", "language": "en", "label": "English", "isDefault": False}])]
     extras_rows = [
         {"id": PF_EXTRA, "itemId": PF_MOVIE, "kind": "trailer", "title": "Trailer", "localizedTitles": {"de": "Vorschau"},
          "language": None, "seasonNumber": None, "origin": None,
@@ -2121,8 +2136,10 @@ def adopt(root, run, export, fresh):
 
 def test_platform(t):
     """--platform stages the library from the store before it, every record under .work/migration/<run>/
-    and a plan per item, and the adopt the plans describe leaves a library that validates, passes the
-    media check, and rebuilds to the database the adopt left — the arrivals aside."""
+    and a plan per item that moves every original into its version folder, under the name the library
+    gives it — a title nothing packaged yet taken in, its version the original alone — and the adopt the
+    plans describe leaves a library that validates, passes the media check, names no file as it arrived,
+    and rebuilds to the database the adopt left, the arrivals aside."""
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "katalog")
         export = legacy_store(root)
@@ -2136,14 +2153,15 @@ def test_platform(t):
         t.ok("a dry run writes report.json and nothing else",
              code == 0 and sorted(os.listdir(rundir)) == ["report.json"]
              and {k: v for k, v in tree_files(root).items() if not k.startswith(".work")} == before, text)
-        t.eq("it says what is ready and what is not, by class",
-             (report.get("dryRun"), report.get("counts", {}).get("staged"), report.get("problems")),
-             (True, 4, {"extra not packaged": 1, "missing original": 1}))
+        t.eq("it says what is ready and what is not, by class, and how many titles are taken in without a package",
+             (report.get("dryRun"), report.get("counts", {}).get("staged"), report.get("counts", {}).get("takenIn"),
+              report.get("problems")),
+             (True, 5, 1, {"extra not packaged": 1, "missing original": 1}))
         t.ok("and what deleting every original would cost, from the probes", report.get("loss", {}).get("measured") == 2
              and report["loss"]["unmeasured"] == 1, report.get("loss"))
 
         code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN)
-        t.ok("--platform stages every item", code == 0 and len(glob.glob(os.path.join(rundir, "units", "*.json"))) == 4,
+        t.ok("--platform stages every item", code == 0 and len(glob.glob(os.path.join(rundir, "units", "*.json"))) == 5,
              text)
         t.ok("and touches nothing outside the run's folder",
              {k: v for k, v in tree_files(root).items() if not k.startswith(".work")} == before)
@@ -2154,20 +2172,21 @@ def test_platform(t):
         unit = jload(os.path.join(rundir, "units", PF_MOVIE + ".json"))
         movie_dir = os.path.join(root, "movies", PF_MOVIE[:2], PF_MOVIE)
         vid = unit["db"]["versions"][0]["versionId"]
+        vdir = os.path.join(movie_dir, "versions", vid)
         staged_rel = os.path.relpath(unit["stagedDir"], root)
         legacy = os.path.join(".work", "migration", PF_RUN, "legacy")
         pkg_rel = os.path.join("packages", "movies", PF_MOVIE[:2], PF_MOVIE)
         xpkg_rel = os.path.join("packages", "extras", PF_EXTRA[:2], PF_EXTRA)
-        t.eq("a unit plan moves the package folders into the staged records, publishes the item, moves the original, "
-             "its sidecars and the extras' originals to the arrivals and what is left of the old package folders "
-             "aside, in that order",
+        t.eq("a unit plan moves the package folders into the staged records, publishes the item, moves the original "
+             "into its version folder under the name the library gives it, the subtitle file beside it and the "
+             "extras' originals to the arrivals and what is left of the old package folders aside, in that order",
              [(m["kind"], os.path.relpath(m["from"], root), os.path.relpath(m["to"], root)) for m in unit["moves"]],
              [("package", os.path.join(pkg_rel, d), os.path.join(staged_rel, "versions", vid, d))
               for d in ("hls", "subs", "trickplay")]
              + [("package", os.path.join(xpkg_rel, "hls"), os.path.join(staged_rel, "extras", PF_EXTRA, "hls")),
                 ("publish", staged_rel, os.path.relpath(movie_dir, root)),
                 ("original", "media/Example Film (2024)/Example Film (2024).mkv",
-                 ".work/incoming/Example Film (2024)/Example Film (2024).mkv"),
+                 os.path.relpath(os.path.join(vdir, "original.mkv"), root)),
                 ("sidecar", "media/Example Film (2024)/Example Film (2024).de.srt",
                  ".work/incoming/Example Film (2024)/Example Film (2024).de.srt"),
                 ("original", "extras/example-film/trailer.mov", ".work/extras/example-film/trailer.mov"),
@@ -2175,18 +2194,28 @@ def test_platform(t):
                 ("legacy", pkg_rel, os.path.join(legacy, "movies", PF_MOVIE[:2], PF_MOVIE)),
                 ("legacy", xpkg_rel, os.path.join(legacy, "extras", PF_EXTRA[:2], PF_EXTRA))])
         sid = unit["db"]["sources"][0]["sourceId"]
-        t.eq("the database changes it names: the source and its sidecar's rendition, the version verified in full, the "
-             "rows' new paths, the extras",
-             (unit["db"]["sources"][0]["sidecars"], unit["db"]["versions"][0]["verifiedLevel"],
-              sorted(a["id"] for a in unit["db"]["assets"]), sorted(x["id"] for x in unit["db"]["subtitles"]),
+        source = unit["db"]["sources"][0]
+        t.eq("the database changes it names: the source by the library's name and at its version folder, and its "
+             "sidecar's rendition, the version verified in full, the rows' new paths, the extras",
+             ((source["filename"], source["arrivalPath"], source["libraryPath"], source["sidecars"]),
+              (unit["db"]["versions"][0]["verifiedLevel"], unit["db"]["versions"][0]["takenIn"]),
+              sorted((a["id"], a["path"]) for a in unit["db"]["assets"]), sorted(x["id"] for x in unit["db"]["subtitles"]),
               sorted((x["id"], x["dir"] is not None) for x in unit["db"]["extras"])),
-             ([{"subtitleAssetId": "sa2", "rendition": "sub1", "path": "subs/1.vtt"}], "full", ["pa1", "pa2"],
+             (("original.mkv", os.path.join(vdir, "original.mkv"), None,
+               [{"subtitleAssetId": "sa2", "rendition": "sub1", "path": "subs/1.vtt"}]),
+              ("full", False), [("pa1", os.path.join(vdir, "original.mkv")), ("pa2", os.path.join(vdir, "package.json"))],
               ["sa1", "sa2"], [(PF_EXTRA, True), (PF_PENDING, False)]))
         staged_images = jload(os.path.join(unit["stagedDir"], "metadata.json"))["images"]
         t.ok("the backdrop that is the poster's bytes is staged as both, sharing one file",
              [i["kind"] for i in staged_images] == ["backdrop", "poster"] and len({i["file"] for i in staged_images}) == 1
              and os.listdir(os.path.join(unit["stagedDir"], "metadata")) == [staged_images[0]["file"]], staged_images)
-        package = jload(os.path.join(unit["stagedDir"], "versions", unit["db"]["versions"][0]["versionId"], "package.json"))
+        staged_version = os.path.join(unit["stagedDir"], "versions", vid)
+        package = jload(os.path.join(staged_version, "package.json"))
+        t.eq("the version names the original it keeps beside its package, which is derived, and the staged folder "
+             "holds the records over the package but neither the package nor the original",
+             (jload(os.path.join(staged_version, "version.json"))["originalFiles"], package["role"],
+              sorted(os.listdir(staged_version))),
+             (["original.mkv"], "derived", [".complete", "checksums.sha256", "package.json", "version.json"]))
         t.eq("the subtitle made from the sidecar names the copy the source folder keeps, under the name the library "
              "gives it — and the .nfo beside the original is neither copied nor moved",
              ([s.get("fromSidecar") for s in package["subtitles"]],
@@ -2195,23 +2224,63 @@ def test_platform(t):
               ["checksums.sha256", "ffprobe.json", "source.json", "subtitle-1.de.srt"]))
         gone = jload(os.path.join(rundir, "units", PF_GONE + ".json"))
         gone_source = jload(glob.glob(os.path.join(gone["stagedDir"], "sources", "*", "source.json"))[0])
-        t.ok("a package whose original is gone gets a source record without fixity, which says why",
+        t.ok("a package whose original is gone gets a source record without fixity, which says why, and a version "
+             "that keeps no original, its package canonical",
              "fixity" not in gone_source["file"] and gone_source["file"]["sizeBytes"] == 777
              and "gone before the library was recorded" in gone_source["probe"]["note"]
-             and gone["db"]["sources"][0]["arrivalPath"] is None, gone_source)
+             and gone["db"]["sources"][0]["arrivalPath"] is None
+             and jload(glob.glob(os.path.join(gone["stagedDir"], "versions", "*", "version.json"))[0])["originalFiles"] == []
+             and jload(glob.glob(os.path.join(gone["stagedDir"], "versions", "*", "package.json"))[0])["role"] == "canonical",
+             gone_source)
         t.ok("every id is the one the item and a stable name make, and the extra's is its row's",
              os.path.isdir(os.path.join(unit["stagedDir"], "extras", PF_EXTRA))
              and unit["db"]["versions"][0]["versionId"] == load_tool(RECORDS).did(
                  PF_MOVIE, "version", os.path.join("movies", PF_MOVIE[:2], PF_MOVIE)))
 
+        # a title nothing packaged yet is taken in: its version is the original alone
+        taken = jload(os.path.join(rundir, "units", PF_TAKEN + ".json"))
+        taken_dir = os.path.join(root, "movies", PF_TAKEN[:2], PF_TAKEN)
+        tvid = taken["db"]["versions"][0]["versionId"]
+        tsid = taken["db"]["sources"][0]["sourceId"]
+        t.eq("a title nothing packaged yet is staged with its source and a version holding version.json alone, which "
+             "names the original the adopt renames in, and nothing guards a package it has not got",
+             (sorted(os.listdir(os.path.join(taken["stagedDir"], "versions", tvid))),
+              jload(os.path.join(taken["stagedDir"], "versions", tvid, "version.json"))["originalFiles"],
+              sorted(os.listdir(os.path.join(taken["stagedDir"], "sources", tsid))),
+              [(m["kind"], os.path.relpath(m["to"], root)) for m in taken["moves"]], taken["guards"]),
+             (["version.json"], ["original.mkv"],
+              ["checksums.sha256", "ffprobe.json", "source.json", "subtitle-1.en.forced.srt"],
+              [("publish", os.path.relpath(taken_dir, root)),
+               ("original", os.path.relpath(os.path.join(taken_dir, "versions", tvid, "original.mkv"), root)),
+               ("sidecar", ".work/incoming/Other Film (2025)/Other Film (2025).en.forced.srt")],
+              {"manifestSha256": None, "completeMtime": None, "listingSha256": None}))
+        t.eq("and the database records the version taken in, with no package",
+             (taken["db"]["versions"], taken["db"]["sources"][0]["recordDir"], taken["db"]["assets"]),
+             ([{"versionId": tvid, "packageId": None, "dir": os.path.join(taken_dir, "versions", tvid), "completedAt": None,
+                "sourceIds": [tsid], "verifiedAt": None, "verifiedLevel": None, "takenIn": True}],
+              os.path.join(taken_dir, "sources", tsid),
+              [{"id": "pt1", "path": os.path.join(taken_dir, "versions", tvid, "original.mkv"), "sourceId": tsid}]))
+
         fresh = os.path.join(tmp, "after.json")
         units, stale = adopt(root, PF_RUN, export, fresh)
-        t.ok("the guards hold: nothing changed since the plans were made", stale == [] and len(units) == 4, stale)
-        t.ok("the share holds the library now, and the arrivals beside it",
-             os.path.isfile(os.path.join(movie_dir, "item.json"))
-             and os.path.isfile(os.path.join(root, ".work", "incoming", "Example Film (2024)", "Example Film (2024).mkv"))
+        t.ok("the guards hold: nothing changed since the plans were made", stale == [] and len(units) == 5, stale)
+        t.ok("the share holds the library now, every original in its version folder, the subtitle files and the "
+             "extras' originals among the arrivals, and what is no part of the record where it was",
+             os.path.isfile(os.path.join(movie_dir, "item.json")) and os.path.isfile(os.path.join(vdir, "original.mkv"))
+             and os.path.isfile(os.path.join(taken_dir, "versions", tvid, "original.mkv"))
+             and os.path.isfile(os.path.join(root, ".work", "incoming", "Example Film (2024)", "Example Film (2024).de.srt"))
              and os.path.isfile(os.path.join(root, ".work", "extras", "example-film", "trailer.mov"))
+             and not glob.glob(os.path.join(root, ".work", "incoming", "**", "*.mkv"), recursive=True)
+             and not glob.glob(os.path.join(root, "media", "**", "*.mkv"), recursive=True)
+             and os.path.isfile(os.path.join(root, "media", "Example Film (2024)", "Example Film (2024).nfo"))
              and not glob.glob(os.path.join(root, "packages", "*", "*", "*", "hls")))
+        library = {rel: data for rel, data in tree_files(root).items() if rel.split(os.sep)[0] in ("movies", "series", "people")}
+        arrived = (b"Example Film (2024)", b"Other Film (2025)", b"Example Show - S01E01", b"trailer.mov", b"making-of.mov")
+        t.eq("and nothing in the library names a file as it arrived, every name in it of letters, digits, dots and "
+             "dashes",
+             (sorted(rel for rel, data in library.items() if any(a in data for a in arrived)),
+              sorted(rel for rel in library if not all(re.fullmatch(r"[A-Za-z0-9.-]+", p) for p in rel.split(os.sep)))),
+             ([], []))
         if have_jsonschema():
             code, vtext = run(VALIDATOR, "--check-checksums", root)
             t.ok("validate-library-v2.py --check-checksums finds the adopted library valid, .work/ beside it",
@@ -2223,19 +2292,26 @@ def test_platform(t):
         after = {x["id"]: x for r in jload(fresh)["items"] for x in r["subtitleAssets"]}
         t.ok("the adopt keeps the subtitle default a person chose, of a row it carries into the version folder",
              after["sa1"]["isDefault"] is True
-             and after["sa1"]["path"] == os.path.join(movie_dir, "versions", vid, "subs", "0.vtt"), after["sa1"])
+             and after["sa1"]["path"] == os.path.join(vdir, "subs", "0.vtt"), after["sa1"])
         rebuilt, _ = rows_of(root, "--text-language", "und")
         t.eq("which the rebuild cannot know: the subtitle row it writes has no default",
              [x["isDefault"] for x in rebuilt[PF_MOVIE]["subtitleAssets"]], [False])
+        t.eq("and it plays each original from its version folder, the one taken in with no package",
+             [sorted((a["kind"], os.path.relpath(a["path"], root)) for a in rebuilt[i]["playbackAssets"])
+              for i in (PF_MOVIE, PF_TAKEN)],
+             [[("packaged", os.path.relpath(os.path.join(vdir, "package.json"), root)),
+               ("primary", os.path.relpath(os.path.join(vdir, "original.mkv"), root))],
+              [("primary", os.path.relpath(os.path.join(taken_dir, "versions", tvid, "original.mkv"), root))]])
         code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
                           "--ignore-fields", "id,path,hash", "--text-language", "und")
-        t.ok("and the rebuild agrees with the database the adopt left, the arrivals aside and the chosen default "
-             "not compared", code == 0 and "the tree and the database agree" in ctext, ctext)
+        t.ok("and the rebuild agrees with the database the adopt left — the originals in their version folders "
+             "compared, the arrivals aside and the chosen default not compared",
+             code == 0 and "the tree and the database agree" in ctext, ctext)
 
         code, text = run_with(env, FROM_CATALOG, "--platform", "--export", fresh, "--root", root, "--run", PF_RUN + "b")
         report = jload(os.path.join(root, ".work", "migration", PF_RUN + "b", "report.json"))
         t.ok("a run after the adopt stages nothing: every item is recorded",
-             code == 0 and report["counts"]["staged"] == 0 and report["counts"]["recorded"] == 4, report["counts"])
+             code == 0 and report["counts"]["staged"] == 0 and report["counts"]["recorded"] == 5, report["counts"])
 
 
 def test_platform_problems(t):
