@@ -315,6 +315,28 @@ def test_pieces(t):
          {"scheme": "unknown", "seasonNumber": 1, "episodeNumber": 5, "episodeEnd": None, "raw": "1x05"})
     t.eq("a quality token is not an episode range", rec.naming("Show S01E02-1080p.mkv")["episodeEnd"], None)
     t.eq("a name that numbers nothing says nothing", rec.naming("Example Film (2024).mkv"), None)
+    # the names the catalog's scanner reads (katalog-manager internal/scanner, TestEpisodeRanges), each as it
+    # reads it: season, first and last episode, or nothing
+    ranges = {"Show.S05E15.mkv": (5, 15, 15), "Show.S05E15-E16.mkv": (5, 15, 16), "Show.S05E15E16.mkv": (5, 15, 16),
+              "Show.S05E15-16.mkv": (5, 15, 16), "Show.S05E15-E17.mkv": (5, 15, 17), "show.s05e15e16.mkv": (5, 15, 16),
+              "Show.s05E15-e16.mkv": (5, 15, 16), "Show.S05E15.E16.mkv": (5, 15, 16),
+              "Show S05E15 E16 The Finale.mkv": (5, 15, 16), "Show.S05E15_E16.mkv": (5, 15, 16), "Show_S05E15.mkv": None,
+              "Show.S05E15E16E17.mkv": (5, 15, 17), "Show.S05E15-E16-E17.mkv": (5, 15, 17),
+              "Show.S05E15-16.720p.The.Finale.mkv": (5, 15, 16), "Show.S01E01-E02.1080p.mkv": (1, 1, 2),
+              "Show.S05E15-720p.mkv": (5, 15, 15), "Show.S05E15-1080p.mkv": (5, 15, 15), "Show.S05E15-2160P.mkv": (5, 15, 15),
+              "Show.S05E15-576i.mkv": (5, 15, 15), "Show.S05E15-264.mkv": (5, 15, 15), "Show.S05E15-E14.mkv": (5, 15, 15),
+              "Show.S05E15-E26.mkv": (5, 15, 15), "Show.S05E15-E24.mkv": (5, 15, 24), "Show.S05E15.720p.mkv": (5, 15, 15),
+              "Show.S05E15-E16x.mkv": (5, 15, 15), "Show.S05E15Finale.mkv": None, "Show.S05E1500.mkv": None,
+              "Big Buck Bunny (2008).mp4": None}
+    read = lambda n: (lambda x: x and (x["seasonNumber"], x["episodeNumber"], x["episodeEnd"] or x["episodeNumber"]))(
+        rec.naming(n))
+    t.eq("a name numbers the episodes its file holds as the catalog's scanner reads them: from the first to the last, "
+         "each after the one before and at most ten, never a resolution, the token standing apart",
+         {n: read(n) for n in ranges}, ranges)
+    t.eq("and records the token it read them from, and no end for a file of one episode",
+         [(rec.naming(n)["raw"], rec.naming(n)["episodeEnd"]) for n in ("Show.S05E15E16E17.mkv", "Show.S05E15-E16x.mkv",
+                                                                        "Show.S05E15-264.mkv")],
+         [("S05E15E16E17", 17), ("S05E15", None), ("S05E15", None)])
     t.eq("the v1 converter reads a name the same way", load_tool(FROM_V1).Convert.naming(None, "Show - S07E23-24.mkv"),
          rec.naming("Show - S07E23-24.mkv"))
 
