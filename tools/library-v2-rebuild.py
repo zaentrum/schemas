@@ -617,14 +617,20 @@ class Rebuild:
                 row["segments"].append({"kind": s["kind"], "startMs": s["startMs"], "endMs": s["endMs"],
                                         "source": s.get("detector"), "confidence": s.get("confidence"),
                                         "label": s.get("label")})
+        # The title's file is the original the version that plays was made from, in whichever version
+        # folder it is kept: a package made again goes to a folder of its own, and the original stays in
+        # the folder of the version before it until it is retired.
+        made_from = (primary.get("version") or {}).get("sourceIds") if primary else None
+        made_from = set(made_from) if isinstance(made_from, list) else None
         for v in versions:
-            row["playbackAssets"] += self.assets(item, v, sources, v is primary)
+            row["playbackAssets"] += self.assets(item, v, sources, v is primary, made_from)
             if v["package"] and not v["superseded"]:
                 row["subtitleAssets"] += self.subtitles(item, v, sources)
         return row
 
-    def assets(self, item, v, sources, is_primary):
+    def assets(self, item, v, sources, is_primary, made_from=None):
         out = []
+        of = {id(src): sid for sid, src in sources.items()}
         # an original is found among the sources of its own version: every version names its original
         # original.<ext>, so another version's source may carry the same name
         ids = (v.get("version") or {}).get("sourceIds")
@@ -641,7 +647,8 @@ class Rebuild:
                         "bitrateKbps": ((src or {}).get("container") or {}).get("bitrate") // 1000
                         if ((src or {}).get("container") or {}).get("bitrate") else None,
                         "sizeBytes": (src or {}).get("file", {}).get("sizeBytes"), "hash": None,
-                        "isPrimary": bool(is_primary and i == 0),
+                        "isPrimary": bool(i == 0 and (is_primary or (
+                            made_from is not None and src is not None and of.get(id(src)) in made_from))),
                         "audioCodec": None, "audioLanguage": None, "audioChannels": None,
                         "audioBitrateKbps": None, "audioTrackCount": None, "subtitleTrackCount": None,
                         "durationMs": ((src or {}).get("container") or {}).get("durationMs")})

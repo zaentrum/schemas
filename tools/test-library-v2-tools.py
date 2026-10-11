@@ -1037,6 +1037,15 @@ def test_events(t):
         t.ok("the version it names is canonical and its losses are permanent",
              bool(loss) and loss[0]["canonical"] and "surround" in loss[0]["permanentLoss"])
 
+        # ---- an original in the folder of the version before a package made again is the title's file
+        kept = glob.glob(os.path.join(base, "series", "*", "*", "episodes", "*", "events", "*-original-deleted"))[0]
+        episode = os.path.basename(os.path.dirname(os.path.dirname(kept)))
+        shutil.move(kept, aside)
+        originals = [a for a in rows_of(base)[0][episode]["playbackAssets"] if a["kind"] == "primary"]
+        t.ok("an original kept beside a package that was made again, in the folder of the version before, is the "
+             "title's file", len(originals) == 1 and originals[0]["isPrimary"] is True, originals)
+        shutil.move(aside, kept)
+
         # ---- extra-removed: the extra has no row, even while its folder is still there
         featurette = extra_of(base, "featurette")
         movie_dir = os.path.dirname(os.path.dirname(featurette))
