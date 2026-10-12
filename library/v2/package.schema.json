@@ -89,13 +89,15 @@
 
     "checksums": {
       "type": "object",
-      "description": "A sha256sum-style file listing version.json and every file of the package — the rendition, subtitle, trickplay and trailer folders — so a copy can be verified file by file; in an extra's folder, extra.json, the originals and every file of the package. It is written with the package, not later: once the original is gone the package is the truth, and this is its fixity.",
-      "required": ["file", "algorithm", "sha256", "files", "bytes"],
+      "description": "A sha256sum-style file listing version.json and every file of the package — the rendition, subtitle, trickplay and trailer folders — so a copy can be verified file by file; in an extra's folder, extra.json, the originals and every file of the package. It is written with the package, not later: once the original is gone the package is the truth, and this is its fixity. The one exception is a package a migration adopted with its checksums pending (pending), whose file is written once its files are hashed.",
+      "required": ["file", "algorithm", "files", "bytes"],
+      "oneOf": [{ "required": ["sha256"] }, { "required": ["pending"] }],
       "additionalProperties": false,
       "properties": {
         "file": { "const": "checksums.sha256", "description": "In this version folder: lines of '<hex digest>  <path>', paths relative to this folder." },
         "algorithm": { "const": "sha256" },
         "sha256": { "$ref": "defs.schema.json#/$defs/sha256", "description": "Hash of the checksums file itself: the link from this record down to the files it lists." },
+        "pending": { "const": true, "description": "In place of sha256, while nothing has hashed the package's files yet: a package adopted from a store too large to read through in the time a migration had. No checksums file is written until every file is hashed; then this record is written again with sha256 in place of pending — its checksums the only thing that changes — and .complete names it. files and bytes say what the checksums file will list, counted without reading. A version whose checksums are pending is played as any other; its original is not deleted before they are filled." },
         "files": { "type": "integer", "minimum": 0, "description": "How many files it lists, version.json included — or extra.json and the originals, in an extra's folder." },
         "bytes": { "type": "integer", "minimum": 0, "description": "Their total size, the same files included." }
       }

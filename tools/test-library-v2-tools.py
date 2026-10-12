@@ -2215,7 +2215,8 @@ def adopt(root, run, export, fresh):
             continue
         for m in u["moves"]:
             os.makedirs(os.path.dirname(m["to"]), exist_ok=True)
-            os.rename(m["from"], m["to"])
+            # a link leaves the original where the old library plays it: a second name for the same file
+            (os.link if m["kind"] == "link" else os.rename)(m["from"], m["to"])
         row, db = rows[u["itemId"]], u["db"]
         assets = {a["id"]: a for a in row["playbackAssets"]}
         keep = set()
@@ -2438,6 +2439,179 @@ def test_platform(t):
         report = jload(os.path.join(root, ".work", "migration", PF_RUN + "b", "report.json"))
         t.ok("a run after the adopt stages nothing: every item is recorded",
              code == 0 and report["counts"]["staged"] == 0 and report["counts"]["recorded"] == 5, report["counts"])
+
+
+def test_platform_beside_the_old(t):
+    """--originals link --checksums pending stages the library beside the one before it: each original
+    stays where the old library plays it and its version folder gets a second name for the same file,
+    the subtitle files beside it stay too, and a package is staged without one of its files read — its
+    record counts them, says its checksums are pending, and the version is planned as not verified. The
+    adopt leaves a library that validates with what it shares named, and library-v2-fill-checksums.py
+    closes every chain afterwards, once, journaled, and never over a folder that changed."""
+    FILL = os.path.join(TOOLS, "library-v2-fill-checksums.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "katalog")
+        export = legacy_store(root)
+        services_to(root, export)
+        env = fake_ffprobe(os.path.join(tmp, "bin"))
+        film = os.path.join(root, "media", "Example Film (2024)", "Example Film (2024).mkv")
+        other = os.path.join(root, "media", "Other Film (2025)", "Other Film (2025).mkv")
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                              "--originals", "link", "--checksums", "pending")
+        rundir = os.path.join(root, ".work", "migration", PF_RUN)
+        report = jload(os.path.join(rundir, "report.json")) if code == 0 else {}
+        t.eq("the report counts the packages staged with their checksums pending and the originals it links",
+             (code, report.get("counts", {}).get("staged"), report.get("counts", {}).get("pending"),
+              report.get("counts", {}).get("linked")), (0, 5, 3, 3))
+        unit = jload(os.path.join(rundir, "units", PF_MOVIE + ".json"))
+        movie_dir = os.path.join(root, "movies", PF_MOVIE[:2], PF_MOVIE)
+        vid = unit["db"]["versions"][0]["versionId"]
+        sid = unit["db"]["sources"][0]["sourceId"]
+        vdir = os.path.join(movie_dir, "versions", vid)
+        arrived_srt = ".work/incoming/Example Film (2024)/Example Film (2024).de.srt"
+        t.eq("a unit plans a link in place of the original's move and of the subtitle file's beside it, to where "
+             "a move takes them",
+             [(m["kind"], os.path.relpath(m["from"], root), os.path.relpath(m["to"], root)) for m in unit["moves"]
+              if m["kind"] in ("link", "original", "sidecar") and "extras" not in m["from"]],
+             [("link", "media/Example Film (2024)/Example Film (2024).mkv",
+               os.path.relpath(os.path.join(vdir, "original.mkv"), root)),
+              ("link", "media/Example Film (2024)/Example Film (2024).de.srt", arrived_srt)])
+        t.eq("the rows it names are a move's — the original at its version folder, the subtitle file among the "
+             "arrivals — and the version is not verified",
+             (sorted((a["id"], a["path"]) for a in unit["db"]["assets"]),
+              sorted((x["id"], x["path"]) for x in unit["db"]["subtitles"]),
+              (unit["db"]["versions"][0]["verifiedAt"], unit["db"]["versions"][0]["verifiedLevel"])),
+             ([("pa1", os.path.join(vdir, "original.mkv")), ("pa2", os.path.join(vdir, "package.json"))],
+              [("sa1", os.path.join(vdir, "subs", "0.vtt")), ("sa2", os.path.join(root, arrived_srt))],
+              (None, None)))
+        staged_version = os.path.join(unit["stagedDir"], "versions", vid)
+        package = jload(os.path.join(staged_version, "package.json"))
+        t.eq("a package staged pending has no checksums file: its record counts its files and their bytes, names "
+             "no hash, and .complete names that record",
+             (sorted(os.listdir(staged_version)), sorted(package["checksums"]), package["checksums"]["pending"],
+              open(os.path.join(staged_version, ".complete")).read().strip()),
+             ([".complete", "package.json", "version.json"], ["algorithm", "bytes", "file", "files", "pending"], True,
+              "sha256:" + digest(os.path.join(staged_version, "package.json"))))
+        taken = jload(os.path.join(rundir, "units", PF_TAKEN + ".json"))
+        taken_dir = os.path.join(root, "movies", PF_TAKEN[:2], PF_TAKEN)
+        tvid = taken["db"]["versions"][0]["versionId"]
+        t.eq("a title nothing packaged yet is linked in as well",
+             [(m["kind"], os.path.relpath(m["to"], root)) for m in taken["moves"]],
+             [("publish", os.path.relpath(taken_dir, root)),
+              ("link", os.path.relpath(os.path.join(taken_dir, "versions", tvid, "original.mkv"), root)),
+              ("link", ".work/incoming/Other Film (2025)/Other Film (2025).en.forced.srt")])
+
+        old_world = {rel: data for rel, data in tree_files(root).items() if rel.split(os.sep)[0] == "media"}
+        fresh = os.path.join(tmp, "after.json")
+        units, stale = adopt(root, PF_RUN, export, fresh)
+        t.ok("the guards hold", stale == [] and len(units) == 5, stale)
+        t.ok("the old library holds every file it held, and each original is one file under two names",
+             {rel: data for rel, data in tree_files(root).items() if rel.split(os.sep)[0] == "media"} == old_world
+             and os.path.samefile(film, os.path.join(vdir, "original.mkv"))
+             and os.path.samefile(other, os.path.join(taken_dir, "versions", tvid, "original.mkv"))
+             and os.stat(film).st_nlink == 2
+             and os.path.samefile(os.path.join(root, arrived_srt), os.path.join(os.path.dirname(film),
+                                                                                "Example Film (2024).de.srt")))
+        library = {rel: data for rel, data in tree_files(root).items() if rel.split(os.sep)[0] in ("movies", "series")}
+        t.eq("nothing in the new one names a file as it arrived", sorted(
+            rel for rel, data in library.items() if any(a in data for a in (b"Example Film (2024)", b"Other Film (2025)",
+                                                                             b"Example Show - S01E01"))), [])
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-media", "--shared-originals", root)
+            t.ok("validate-library-v2.py --check-media --shared-originals finds it valid, and says what is pending "
+                 "and what is shared", code == 0 and vtext.strip().endswith("OK")
+                 and "3 package(s) with their checksums pending" in vtext and "3 original(s) shared" in vtext, vtext)
+            code, vtext = run(VALIDATOR, "--check-media", root)
+            t.ok("without --shared-originals a linked original is a problem, as in any library",
+                 code != 0 and "hard links shared with another path" in vtext, vtext)
+            code, vtext = run(VALIDATOR, "--check-media", "--shared-originals", "--no-pending", root)
+            t.ok("and with --no-pending a pending package is", code != 0 and "checksums are pending" in vtext, vtext)
+        else:
+            t.skip("validate-library-v2.py finds the library beside the old one valid", "jsonschema is not importable here")
+        code, mtext = run(MEDIA_CHECK, "--shared-originals", root)
+        t.ok("the media check agrees, with the same two notes", code == 0 and mtext.strip().endswith("OK")
+             and "3 package(s) with their checksums pending" in mtext and "3 original(s) shared" in mtext, mtext)
+        code, mtext = run(MEDIA_CHECK, root)
+        t.ok("and without --shared-originals it does not", code != 0 and "hard links shared" in mtext, mtext)
+        code, mtext = run(MEDIA_CHECK, "--shared-originals", "--no-pending", root)
+        t.ok("nor with --no-pending", code != 0 and "checksums are pending" in mtext, mtext)
+        code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
+                          "--ignore-fields", "id,path,hash", "--text-language", "und")
+        t.ok("the rebuild agrees with the database the adopt left", code == 0
+             and "the tree and the database agree" in ctext, ctext)
+
+        # the chains are closed afterwards
+        before = tree_files(root)
+        code, text = run(FILL, root)
+        t.ok("a dry run of library-v2-fill-checksums.py lists what is pending and writes nothing",
+             code == 0 and "3 package(s) with their checksums pending" in text and tree_files(root) == before, text)
+        seg = sorted(glob.glob(os.path.join(vdir, "hls", "**", "*.*"), recursive=True))[0]
+        with open(seg, "ab") as f:
+            f.write(b"x")
+        code, text = run(FILL, root, "--apply", "--items", PF_MOVIE)
+        t.ok("a folder that no longer holds the bytes its record counted is a conflict, left as it was",
+             code != 0 and "conflict" in text and not os.path.isfile(os.path.join(vdir, "checksums.sha256"))
+             and jload(os.path.join(vdir, "package.json"))["checksums"].get("pending") is True, text)
+        with open(seg, "rb+") as f:
+            f.truncate(os.path.getsize(seg) - 1)
+        code, text = run(FILL, root, "--apply", "--items", PF_MOVIE)
+        filled = jload(os.path.join(vdir, "package.json"))
+        t.ok("--items fills that item's package alone: checksums.sha256 written, package.json naming its hash "
+             "and nothing else of it changed, .complete naming that package.json",
+             code == 0 and "filled 1 of 1" in text and "pending" not in filled["checksums"]
+             and filled["checksums"]["sha256"] == "sha256:" + digest(os.path.join(vdir, "checksums.sha256"))
+             and {k: v for k, v in filled.items() if k != "checksums"} == {k: v for k, v in package.items() if k != "checksums"}
+             and (filled["checksums"]["files"], filled["checksums"]["bytes"])
+             == (package["checksums"]["files"], package["checksums"]["bytes"])
+             and open(os.path.join(vdir, ".complete")).read().strip() == "sha256:" + digest(os.path.join(vdir, "package.json")),
+             text)
+        journal = [json.loads(line) for line in open(os.path.join(root, ".work", "migration", "fill-checksums",
+                                                                  "checksums.jsonl"), encoding="utf-8")]
+        rel = os.path.relpath(vdir, root)
+        t.eq("the journal says what it replaced and what is verified in full now, and keeps the records it replaced",
+             ([(e["op"], e["dir"]) for e in journal], journal[-1]["itemId"], journal[-1]["versionId"],
+              journal[-1]["packageId"], journal[-1]["files"],
+              sorted(os.listdir(os.path.join(root, ".work", "migration", "fill-checksums", "before", rel)))),
+             ([("fill", rel), ("filled", rel)], PF_MOVIE, vid, filled["packageId"], package["checksums"]["files"],
+              [".complete", "package.json"]))
+        code, text = run(FILL, root, "--apply", "--max-bytes", "1")
+        t.ok("--max-bytes starts no folder once that much was read: one more is filled, one left, and it says so",
+             code == 0 and "filled 1 of 2" in text and "stopped" in text, text)
+        code, text = run(FILL, root, "--apply")
+        t.ok("the next run fills the rest", code == 0 and "filled 1 of 1" in text, text)
+        after = tree_files(root)
+        code, text = run(FILL, root, "--apply")
+        t.ok("and one after it changes nothing", code == 0 and "filled 0 of 0" in text and tree_files(root) == after, text)
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", "--shared-originals", "--no-pending", root)
+            t.ok("validate-library-v2.py --check-checksums --no-pending finds every chain closed and every byte "
+                 "the one it lists", code == 0 and vtext.strip().endswith("OK"), vtext)
+        code, mtext = run(MEDIA_CHECK, "--checksums", "--shared-originals", "--no-pending", root)
+        t.ok("and the media check, every package file hashed", code == 0 and mtext.strip().endswith("OK"), mtext)
+
+        # a run that stopped between a folder's package.json and its .complete
+        records = load_tool(RECORDS)
+        ep_dir = glob.glob(os.path.join(root, "series", "*", "*", "episodes", PF_EPISODE, "versions", "*"))[0]
+        fill_run = os.path.join(root, ".work", "migration", "fill-checksums")
+        shutil.copy(os.path.join(fill_run, "before", os.path.relpath(ep_dir, root), ".complete"),
+                    os.path.join(ep_dir, ".complete"))
+        with open(os.path.join(fill_run, "checksums.jsonl"), encoding="utf-8") as f:
+            kept_lines = [line for line in f if not (json.loads(line)["op"] == "filled"
+                                                     and json.loads(line)["dir"] == os.path.relpath(ep_dir, root))]
+        with open(os.path.join(fill_run, "checksums.jsonl"), "w", encoding="utf-8") as f:
+            f.writelines(kept_lines)
+        t.ok("a folder whose .complete still names the package.json before is not a closed chain",
+             records.chain_problems(ep_dir) != [] and len(kept_lines) == 5)
+        code, text = run(FILL, root, "--apply")
+        t.ok("the next run finishes it from its journal", code == 0 and "finished 1 folder" in text
+             and records.chain_problems(ep_dir) == [], text)
+
+        # once the old library is gone, the originals are the library's own
+        for p in (film, other, os.path.join(root, "media", "tv", "Example Show", "Season 01", "Example Show - S01E01.mkv")):
+            os.remove(p)
+        code, mtext = run(MEDIA_CHECK, "--checksums", "--no-pending", root)
+        t.ok("once the old library's names are removed the library passes as any other, nothing shared",
+             code == 0 and mtext.strip().endswith("OK") and "shared" not in mtext, mtext)
 
 
 def test_platform_problems(t):
@@ -5007,6 +5181,7 @@ def main():
                         ("catalog -> v2", test_from_catalog), ("an image of several kinds", test_images_of_several_kinds),
                         ("the arrivals are not the record", test_arrivals),
                         ("the platform's library, staged and adopted", test_platform),
+                        ("the platform's library, staged beside the old one", test_platform_beside_the_old),
                         ("what the platform's library cannot hold", test_platform_problems),
                         ("one file, several episodes, staged; a disc image left out", test_platform_covers),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras),

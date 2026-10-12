@@ -333,6 +333,20 @@ def rechecksum(vp):
     close(vp)
 
 
+def pending(vp):
+    """The version folder as a migration adopts one whose files it did not read: no checksums.sha256,
+    a package.json that counts its files and says its checksums are pending, and .complete over that."""
+    os.remove(sums(vp))
+    edit_raw(pkg(vp), lambda d: (d["checksums"].pop("sha256"), d["checksums"].update(pending=True)))
+    close(vp)
+
+
+def pending_extra(root):
+    """The trailer's package said to be pending, which only a version's may be."""
+    xp = next(x for x in (featurette(root), trailer(root), bts(root)) if os.path.isfile(pkg(x)))
+    pending(xp)
+
+
 def rechecksum_extra(xp):
     """Rewrite an extra's checksums over extra.json, the originals that are there and its package
     files, the package record's hash of them, and .complete, after one of them changed."""
@@ -787,6 +801,16 @@ CASES = [
     ("a subtitle missing", False, lambda r: os.remove(os.path.join(version_of(episode(r, 1), True), "subs", "1.vtt")), "subtitle subs/1.vtt missing", ["--check-media"]),
     ("a trickplay sprite sheet missing", False, lambda r: os.remove(os.path.join(version_of(episode(r, 1), True), "trickplay", "sprite-0002.jpg")), "sprite sheet sprite-0002.jpg named by the VTT is missing", ["--check-media"]),
     ("trickplay that stops early", False, lambda r: open(os.path.join(gone(r), "trickplay", "thumbnails.vtt"), "w").write("WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nsprite-0000.jpg#xywh=0,0,320,180\n"), "trickplay covers 1 of 73 thumbnails", ["--check-media"]),
+    # ---- a library adopted beside the one before it: checksums pending, originals shared
+    ("a package adopted with its checksums pending", True, lambda r: pending(kept(r)), "1 package(s) with their checksums pending", ["--check-checksums"]),
+    ("a pending package once every one is said to be filled", False, lambda r: pending(kept(r)), "checksums are pending: no file of this package was ever hashed", ["--no-pending"]),
+    ("a checksums file beside a record that says its checksums are pending", False, lambda r: (pending(kept(r)), open(sums(kept(r)), "w").write("")), "while the record says its checksums are pending", []),
+    ("a pending package that holds another file than its record counted", False, lambda r: (pending(kept(r)), open(os.path.join(kept(r), "hls", "v0", "seg-0001.m4s"), "wb").write(b"x")), "the record counted", ["--check-media"]),
+    ("a pending package whose file is of another size", False, lambda r: (pending(version_of(episode(r, 1), True)), open(os.path.join(version_of(episode(r, 1), True), "subs", "1.vtt"), "ab").write(b"x")), "bytes, the record counted", ["--check-media"]),
+    ("an extra whose checksums are pending", False, pending_extra, "checksums are never pending", []),
+    ("an original the library before still names, with --shared-originals", True, lambda r: os.link(os.path.join(kept(r), originals(kept(r))[0]), os.path.join(r, "..", "outside-link")), "1 original(s) shared with another path", ["--check-media", "--shared-originals"]),
+    ("an original the library before still names", False, lambda r: os.link(os.path.join(kept(r), originals(kept(r))[0]), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media"]),
+    ("a package file shared with another path, whatever --shared-originals allows", False, lambda r: os.link(os.path.join(kept(r), "hls", "v0", ".keep"), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media", "--shared-originals"]),
     ("a hard-linked file", False, lambda r: os.link(os.path.join(kept(r), "hls", "v0", ".keep"), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media"]),
 
     # ---- the original, and the event that says it is gone

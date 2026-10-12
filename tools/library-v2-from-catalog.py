@@ -182,6 +182,11 @@ own path of the share:
                 series' unit put in place first: series before episodes)
        original the original into its version folder, itemDir/versions/<versionId>/original.<ext>, once
                 the item is in place; and an extra's original to the arrivals
+       link     in place of original and of sidecar, with --originals link: the file stays where it
+                is and gets a second name for the same bytes, a hard link — the original in its
+                version folder, a subtitle file among the arrivals. The library before this one
+                keeps playing them, nothing is copied, and the library is what a move leaves.
+                Undone by removing that second name
        sidecar  a subtitle file the scanner paired with the original, of which the source keeps a
                 copy, to the arrivals, at the path it had under media/
        legacy   what is left of an old package folder (manifest.json, .complete) to the run's legacy/
@@ -206,8 +211,10 @@ own path of the share:
                        order, this unit's item first — the adopt links every other one to it (coveredby)
           "versions": [{"versionId", "packageId", "dir", "completedAt", "sourceIds", "verifiedAt",
                         "verifiedLevel", "takenIn"}]   verifiedLevel full, every byte was hashed by the
-                       stage, and takenIn false; a version taken in — recorded with no package — has
-                       packageId, completedAt, verifiedAt and verifiedLevel null, and takenIn true
+                       stage, and takenIn false — staged with --checksums pending, verifiedAt and
+                       verifiedLevel are null until its checksums are filled; a version taken in —
+                       recorded with no package — has packageId, completedAt, verifiedAt and
+                       verifiedLevel null, and takenIn true
           "assets": [{"id", "path", "sourceId"} | {"id", "path", "versionId"}]   the original's row at
                        its version folder — or, gone before, at its source folder, a retired one — and the
                        packaged row at <dir>/package.json; any other packaged row of the item goes
@@ -224,6 +231,10 @@ subtitle row without its file, original outside the media root, dropped external
 not an image, extra not packaged, extra of an episode, extra without an id, extra original gone,
 covered episode missing, disc image. The report's counts say how many files of several episodes are
 staged (covering) and how many episodes they cover (covered).
+--checksums pending stages a package without reading its files: its record counts them and their
+bytes and says its checksums are pending, no checksums.sha256 is staged, and the version is planned
+as not verified — a store of many terabytes cannot be read through while its service is paused.
+library-v2-fill-checksums.py closes those chains afterwards.
 --dry-run writes report.json and nothing else, and hashes no package file. --shard narrows the run to
 the items whose folder is in that shard — left(coalesce(seriesId, id), 2), as the export narrows by
 it: run each shard of one run with the same --as-of, so the people two shards credit are staged alike.
@@ -234,7 +245,8 @@ try:  # the record logic the packager writes the same records with: beside this 
     from libv2_records import (
         EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, chapter_marks, checksums, complete, deletion_gate, did,
         external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
-        library_original_name, listdir, naming, num, package_files, package_record, peak_bandwidth, primary_language,
+        library_original_name, listdir, naming, num, package_files, package_listing, package_record, peak_bandwidth,
+        primary_language,
         probe_chapters, qh1, record_entry, segments, sha_file, sidecar_entry, source_record, text, ts, ts_of_mtime,
         version_record)
 except ImportError:
@@ -1121,7 +1133,7 @@ class Platform(Build):
                          if isinstance(v, dict) and v.get("state") == "complete"}
         self.entries, self.staged_rows, self.current = [], [], None
         self.gate, self.measured, self.unmeasured = {}, 0, 0
-        self.counts.update(units=0, recorded=0, takenIn=0, covering=0, covered=0)
+        self.counts.update(units=0, recorded=0, takenIn=0, covering=0, covered=0, pending=0, linked=0)
         # one file, several episodes (plan_covers): the holder of each covered episode, the episodes each
         # holder's file covers after it, those the catalog linked itself, the holders whose original is a
         # disc image, and what the plan found to say of each holder; once a holder is staged, the episodes
@@ -1549,13 +1561,15 @@ class Platform(Build):
         self.w.write(os.path.join(vp, "version.json"), version_bytes)
         self.counts["versions"] += 1
         if pkg:
-            listed = [] if self.a.dry_run else package_files(folder) + [record_entry("version.json", version_bytes)]
+            pending = self.a.checksums == "pending"
+            listed = [] if self.a.dry_run else ((package_listing if pending else package_files)(folder)
+                                                + [record_entry("version.json", version_bytes)])
             package, notes = package_record(
                 pid, man, listed, source=rec, role="derived" if kept else "canonical", created_at=self.as_of,
                 duration_ms=a.get("durationMs"),
                 peak_bandwidth_bps=peak_bandwidth(folder, (man.get("hls") or {}).get("master") or "hls/master.m3u8")
                 or (num(a.get("bitrateKbps")) or 0) * 1000 or None,
-                sidecars={e.get("id"): copy_of[row_id] for row_id, e in mapped.items()})
+                sidecars={e.get("id"): copy_of[row_id] for row_id, e in mapped.items()}, pending=pending)
             for n in notes:
                 self.note(iid, n)
             if rec["streams"]:
@@ -1565,7 +1579,10 @@ class Platform(Build):
             else:
                 self.unmeasured += 1
             package_bytes = json_bytes(package)
-            self.w.write(os.path.join(vp, "checksums.sha256"), checksums(listed)[0])
+            if pending:
+                self.counts["pending"] += 1
+            else:
+                self.w.write(os.path.join(vp, "checksums.sha256"), checksums(listed)[0])
             self.w.write(os.path.join(vp, "package.json"), package_bytes)
             self.w.write(os.path.join(vp, ".complete"), complete(package_bytes))
             self.counts["packages"] += 1
@@ -1583,11 +1600,17 @@ class Platform(Build):
         # the original into its version folder once the item is in place, and the subtitle files that came
         # with it — the source keeps a copy of each — to the arrivals beside where it was
         if original:
-            moves["original"].append({"kind": "original", "from": original, "to": os.path.join(vdir, kept)})
+            # --originals link: the old library keeps its files, and the library gets a second name for
+            # each — the original in its version folder, the subtitle files among the arrivals — so the
+            # plan is the one a move makes, and only what becomes of the old name differs
+            linked = self.a.originals == "link"
+            self.counts["linked"] += linked
+            moves["original"].append({"kind": "link" if linked else "original", "from": original,
+                                      "to": os.path.join(vdir, kept)})
             for _, local in sidecar_rows:
                 to = self.arrival_of(local)[0]
                 if to:
-                    moves["original"].append({"kind": "sidecar", "from": local, "to": to})
+                    moves["original"].append({"kind": "link" if linked else "sidecar", "from": local, "to": to})
             if primary:
                 db["assets"].append({"id": primary.get("id"), "path": os.path.join(vdir, kept), "sourceId": sid})
             for s, local in sidecar_rows:
@@ -1605,9 +1628,10 @@ class Platform(Build):
             db["versions"].append({"versionId": vid, "packageId": None, "dir": vdir, "completedAt": None,
                                    "sourceIds": [sid], "verifiedAt": None, "verifiedLevel": None, "takenIn": True})
             return vid
+        # verified in full when the stage hashed every byte; not at all while its checksums are pending
         db["versions"].append({"versionId": vid, "packageId": pid, "dir": vdir, "completedAt": package["createdAt"],
-                               "sourceIds": [sid], "verifiedAt": None if self.a.dry_run else now_utc(),
-                               "verifiedLevel": "full", "takenIn": False})
+                               "sourceIds": [sid], "verifiedAt": None if self.a.dry_run or pending else now_utc(),
+                               "verifiedLevel": None if pending else "full", "takenIn": False})
         db["assets"].append({"id": a.get("id"), "path": os.path.join(vdir, "package.json"), "versionId": vid})
         if not original and primary:
             # gone before the library was recorded: the original's row is a retired one, as a retire leaves it
@@ -1754,7 +1778,8 @@ class Platform(Build):
                              "ready": sum(1 for e in self.entries if e["ready"]), "recorded": self.counts["recorded"],
                              "versions": self.counts["versions"], "takenIn": self.counts["takenIn"],
                              "extras": self.counts["extras"], "people": self.counts["people"],
-                             "covering": self.counts["covering"], "covered": self.counts["covered"]},
+                             "covering": self.counts["covering"], "covered": self.counts["covered"],
+                             "pending": self.counts["pending"], "linked": self.counts["linked"]},
                   "problems": dict(sorted(problems.items())),
                   "loss": {"measured": self.measured, "unmeasured": self.unmeasured,
                            "gate": dict(sorted(self.gate.items(), key=lambda kv: (-kv[1], kv[0])))},
@@ -1794,6 +1819,14 @@ def main():
                                                 "a selected series brings its episodes")
     ap.add_argument("--media-mode", choices=("copy", "move", "none"), default="copy",
                     help="copy (default) or move the bytes into the version folder, or leave them where they are")
+    ap.add_argument("--checksums", choices=("full", "pending"), default="full",
+                    help="--platform: full (default) hashes every package file where it lies; pending counts the "
+                         "files and their bytes and records the checksums as pending, for a store too large to "
+                         "read through while its service is paused (library-v2-fill-checksums.py closes the chains)")
+    ap.add_argument("--originals", choices=("move", "link"), default="move",
+                    help="--platform: move (default) plans the original's rename into its version folder and the "
+                         "subtitle files' beside it to the arrivals; link plans a hard link in place of each and "
+                         "leaves them where they are — the library before this one keeps playing them beside it")
     ap.add_argument("--as-of", default="", help="the moment every record says it was written; the export's "
                                                 "exportedAt by default, which is what makes a re-run identical")
     ap.add_argument("--text-language", default="und",

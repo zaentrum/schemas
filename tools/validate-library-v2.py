@@ -87,15 +87,20 @@ with the bytes beside them, never about a document being up to date.
                original is finished by its checksums file, and one that never finished is a note;
                only a series' extra names a season, and only one the series' metadata lists;
                library.extras names extras that are there
-  checksums    the checksums file matches its recorded hash and file count
-  --check-media  no file under an item folder is a hard link shared with another path; every
+  checksums    the checksums file matches its recorded hash and file count; a package adopted with
+               its checksums pending has no checksums file yet and is a note, counted (pending) —
+               and a problem with --no-pending, once a migration says every one is filled
+  --check-media  no file under an item folder is a hard link shared with another path — but, with
+               --shared-originals, a version's original, which a migration that keeps the old
+               library beside this one leaves under its old path too (a note, counted); every
                original a version names is there with its size and qh1, unless an original-deleted
                event covers it — in which case it must NOT be there; every rendition folder, 5.1
                companion, subtitle, subtitle HLS rendition, master playlist and trickplay sheet a
                package names exists and the cues cover the duration;
                checksums.sha256 lists exactly version.json and the package's files, with their total
-               size, and an extra's lists files of that total; an extra's every original has the
-               size and qh1 extra.json records
+               size (pending, the folder holds the files and the bytes the record counted), and an
+               extra's lists files of that total; an extra's every original has the size and qh1
+               extra.json records
   --check-checksums  also hash every package file and every file an extra's checksums list, and
                an extra's originals against the sha256 extra.json records (implies --check-media)
 
@@ -119,6 +124,8 @@ ROOT_ENTRIES = {"movies", "series", "people"}
 # empties them of everything the catalog knows, and its cleanup moves what is left to .work/legacy/.
 OLD_STORE = ("media", "packages", "extras", "incoming")
 SUMS = "checksums.sha256"
+# a version's original, relative to its item folder: versions/<versionId>/original[-n].<ext>
+SHARED_ORIGINAL = re.compile(r"^versions/[^/]+/original(-\d+)?\.[a-z0-9]+$")
 ITEM_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "sources", "versions", "events", "extras"}
 SERIES_ENTRIES = {"item.json", SUMS, "metadata.json", "metadata", "episodes", "events", "extras"}
 VERSION_ENTRIES = {"version.json", "package.json", SUMS, ".complete", "hls", "subs", "trickplay", "trailers"}
@@ -359,10 +366,15 @@ def describe(e):
 
 # ---------------------------------------------------------------- checker
 class Checker:
-    def __init__(self, validators, check_media, check_checksums=False):
+    def __init__(self, validators, check_media, check_checksums=False, shared_originals=False, no_pending=False):
         self.v = validators
         self.check_media = check_media or check_checksums
         self.check_checksums = check_checksums
+        # a migration that keeps the old library beside this one: a version's original is the old
+        # path's file too, a hard link; and, once it says its checksums are filled, none is pending
+        self.shared_originals = shared_originals
+        self.no_pending = no_pending
+        self.pending, self.shared = 0, 0
         self.errors = []
         self.notes = []
         self.root_dir = None
@@ -922,7 +934,17 @@ class Checker:
                                     f"record, so none of its subtitles is made from a source's sidecar")
         cs = pkg["checksums"]
         f = os.path.join(vp, cs["file"])
-        if not os.path.isfile(f):
+        if cs.get("pending"):
+            # adopted before anything hashed its files: the chain closes when they are (fill-checksums)
+            self.pending += 1
+            if what != "version":
+                self.err(where, f"an {what}'s checksums are never pending: only a version adopted by a migration")
+            elif os.path.isfile(f):
+                self.err(where, f"checksums file {cs['file']} is here while the record says its checksums are pending")
+            elif self.no_pending:
+                self.err(where, "checksums are pending: no file of this package was ever hashed "
+                                "(library-v2-fill-checksums.py closes the chain)")
+        elif not os.path.isfile(f):
             self.err(where, f"checksums file {cs['file']} missing")
         elif sha_file(f) != cs["sha256"]:
             self.err(where, f"checksums file {cs['file']} does not match its recorded sha256")
@@ -1006,7 +1028,15 @@ class Checker:
         where = os.path.join(vp, "package.json")
         self.playable(vp, pkg)
         cs = pkg["checksums"]
-        if os.path.isfile(os.path.join(vp, cs["file"])):
+        if cs.get("pending"):
+            # nothing to hash against yet: the folder holds the files and the bytes the record counted
+            on_disk = package_files(vp) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
+            total = sum(os.path.getsize(os.path.join(vp, rel)) for rel in on_disk)
+            if len(on_disk) != cs["files"]:
+                self.err(where, f"the package holds {len(on_disk)} files, the record counted {cs['files']}")
+            elif total != cs["bytes"]:
+                self.err(where, f"the package's files total {total} bytes, the record counted {cs['bytes']}")
+        elif os.path.isfile(os.path.join(vp, cs["file"])):
             listed = read_checksums(os.path.join(vp, cs["file"]))
             on_disk = package_files(vp) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
             for rel in sorted(set(on_disk) - set(listed)):
@@ -1073,7 +1103,11 @@ class Checker:
             for f in sorted(files):
                 p = os.path.join(root, f)
                 if not OS_ARTEFACTS.match(f) and not os.path.islink(p) and os.stat(p).st_nlink > 1:
-                    linked.append(os.path.relpath(p, d))
+                    rel = os.path.relpath(p, d)
+                    if self.shared_originals and SHARED_ORIGINAL.match(rel.replace(os.sep, "/")):
+                        self.shared += 1  # the old library's file too, until that library is gone
+                        continue
+                    linked.append(rel)
         if linked:
             self.err(d, f"{len(linked)} file(s) are hard links shared with another path, e.g. {linked[0]}; "
                         f"the library must hold independent files")
@@ -1537,11 +1571,23 @@ def main():
     ap.add_argument("--check-media", action="store_true")
     ap.add_argument("--check-checksums", action="store_true",
                     help="also hash every package file against its checksums file (implies --check-media)")
+    ap.add_argument("--shared-originals", action="store_true",
+                    help="a version's original may be a hard link shared with another path: a migration keeps "
+                         "the old library beside this one, and the original is that library's file too")
+    ap.add_argument("--no-pending", action="store_true",
+                    help="a package whose checksums are pending is a problem, not a note: every one is filled")
     args = ap.parse_args()
-    c = Checker(load_schemas(args.schemas), args.check_media, args.check_checksums)
+    c = Checker(load_schemas(args.schemas), args.check_media, args.check_checksums,
+                shared_originals=args.shared_originals, no_pending=args.no_pending)
     for r in args.roots:
         c.root(r)
     print("checked:", c.counts)
+    if c.pending:
+        c.notes.insert(0, f"{c.pending} package(s) with their checksums pending: adopted before their files were "
+                          f"hashed; library-v2-fill-checksums.py closes their chains")
+    if c.shared:
+        c.notes.insert(0, f"{c.shared} original(s) shared with another path (--shared-originals): the old library's "
+                          f"files too, until that library is gone")
     for n in c.notes[:50]:
         print("  note " + n)
     if len(c.notes) > 50:

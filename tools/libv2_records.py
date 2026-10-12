@@ -33,6 +33,12 @@ The order a version's folder is written in, which only the writer can keep:
   package.json        package_record(), holding the checksums file's hash
   .complete           complete(): sha256:<hex> of package.json, written last
 
+A package adopted from a store whose files nobody could read through in the time there was — a
+migration of many terabytes — is recorded with its checksums pending: package_record(pending=True)
+counts the files and their bytes and names no hash, no checksums.sha256 is written, and .complete
+names that package.json. fill_checksums() closes the chain later: it hashes every file, and returns
+the checksums file with the package.json and the .complete that name it, to be written in that order.
+
 The original a version is established with is no link of that chain — its source record's fixity
 covers it, and it is deleted later — and goes in under library_original_name() once the rest is
 built: renamed last into the staged folder, which then goes into place whole. A version taken in
@@ -55,8 +61,10 @@ import copy, datetime, hashlib, json, os, re, shutil, subprocess, uuid
 # value, and the copy a writer vendors names the one it was taken at. 2: no record names a file as
 # it arrived, and a source copies only the subtitle files that came with its original. 3: a source
 # covers the episodes its file holds as the database linked them, and its naming reads a file of
-# several episodes as the catalog's scanner does, from the first to the last.
-LIBV2_RECORDS = 3
+# several episodes as the catalog's scanner does, from the first to the last. 4: a package's checksums
+# can be pending (package_listing, checksums and package_record with pending, fill_checksums), and
+# chain_problems() reads such a chain.
+LIBV2_RECORDS = 4
 
 NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://zaentrum.github.io/schemas/library")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
@@ -1100,18 +1108,35 @@ def package_files(folder, dirs=PACKAGE_DIRS):
     return sorted(out)
 
 
+def package_listing(folder, dirs=PACKAGE_DIRS):
+    """Every file of the package in folder as package_files() lists it, with nothing read:
+    [(path relative to folder, None, size)] — what a record with its checksums pending counts."""
+    out = []
+    for sub in dirs:
+        base = os.path.join(folder, sub)
+        if not os.path.isdir(base):
+            continue
+        for rel in walk_files(base):
+            out.append((os.path.join(sub, rel).replace(os.sep, "/"), None, os.path.getsize(os.path.join(base, rel))))
+    return sorted(out)
+
+
 def record_entry(name, data):
     """A record about to be written, as checksums() lists it: (name, hex sha256, size)."""
     return name, hashlib.sha256(data).hexdigest(), len(data)
 
 
-def checksums(listed):
+def checksums(listed, pending=False):
     """checksums.sha256 over listed — [(relative path, hex sha256, size)] — and the object a package
-    record keeps of it: '<hex>  <path>' lines, sorted by path. Returns (bytes, object)."""
-    listed = sorted(listed)
+    record keeps of it: '<hex>  <path>' lines, sorted by path. Returns (bytes, object). With pending,
+    nothing was hashed: no file is to be written (None), and the object says so in place of the
+    file's hash, with the count and the bytes of what the file will list."""
+    listed = sorted(listed, key=lambda e: e[0])
+    files, total = len(listed), sum(size for _, _, size in listed)
+    if pending:
+        return None, {"file": SUMS, "algorithm": "sha256", "pending": True, "files": files, "bytes": total}
     data = "".join(f"{digest}  {rel}\n" for rel, digest, _ in listed).encode("utf-8")
-    return data, {"file": SUMS, "algorithm": "sha256", "sha256": sha_bytes(data), "files": len(listed),
-                  "bytes": sum(size for _, _, size in listed)}
+    return data, {"file": SUMS, "algorithm": "sha256", "sha256": sha_bytes(data), "files": files, "bytes": total}
 
 
 def complete(package_bytes):
@@ -1120,11 +1145,12 @@ def complete(package_bytes):
 
 
 def package_record(package_id, manifest, listed, *, source=None, role="canonical", created_at=None,
-                   packaged_by=None, duration_ms=None, peak_bandwidth_bps=None, sidecars=None):
+                   packaged_by=None, duration_ms=None, peak_bandwidth_bps=None, sidecars=None, pending=False):
     """package.json for the package a packager manifest describes — the manifest the packager builds,
     or one a legacy package folder holds — and listed, every file the checksums written below it list
     ([(path, hex sha256, size)], the record they cover among them, the package files under hls/ subs/
-    trickplay/ trailers/ the rest). Returns (record, notes).
+    trickplay/ trailers/ the rest). Returns (record, notes). With pending, listed is the files as
+    package_listing() counts them, none hashed, and the record says its checksums are pending.
 
     source is the record the package was made from — a source record, or an extra record that was
     probed — whose streams and essence say what the package failed to carry; without them that is said
@@ -1172,7 +1198,7 @@ def package_record(package_id, manifest, listed, *, source=None, role="canonical
     else:
         losses = [{"kind": "other", "detail": "the original was not probed, so what the package failed to "
                                               "carry was never measured", "sourceStreamIndex": None}]
-    data, sums = checksums(listed)
+    data, sums = checksums(listed, pending)
     doc = {"schema": "zaentrum.library.package/2", "packageId": package_id,
            "createdAt": ts(manifest.get("packagedAt")) or created_at,
            "packagedBy": text(manifest.get("packager")) or packaged_by or "unknown", "state": "complete",
@@ -1255,6 +1281,19 @@ def chain_problems(folder, record="version.json", dirs=PACKAGE_DIRS, kept=(), fu
             cs = (json.load(f) or {}).get("checksums") or {}
     except (OSError, ValueError) as e:
         return out + [f"package.json cannot be read: {e}"]
+    if cs.get("pending") is True:
+        # the chain is not closed yet: nothing was hashed, so there is no file to name, and what can
+        # be held against the record is what it counted
+        if os.path.isfile(sums_path):
+            out.append(f"{SUMS} is here while package.json says its checksums are pending")
+        present = [record] + [rel for rel, _, _ in _listing(folder, dirs)]
+        if len(present) != cs.get("files"):
+            out.append(f"the folder holds {len(present)} files, package.json counted {cs.get('files')}")
+        total = sum(os.path.getsize(os.path.join(folder, rel)) for rel in present
+                    if os.path.isfile(os.path.join(folder, rel)))
+        if total != cs.get("bytes"):
+            out.append(f"the folder's files total {total} bytes, package.json counted {cs.get('bytes')}")
+        return out
     if not os.path.isfile(sums_path):
         return out + [f"{SUMS} is missing"]
     if sha_file(sums_path) != cs.get("sha256"):
@@ -1281,6 +1320,38 @@ def chain_problems(folder, record="version.json", dirs=PACKAGE_DIRS, kept=(), fu
             if sha_file(os.path.join(folder, rel)).split(":", 1)[1] != listed[rel]:
                 out.append(f"{rel} does not match its checksum")
     return out
+
+
+def checksums_pending(folder):
+    """True when the package.json in folder says its checksums are pending (package_record with
+    pending): the chain .complete heads is to be closed by fill_checksums()."""
+    try:
+        with open(os.path.join(folder, "package.json"), encoding="utf-8") as f:
+            return ((json.load(f) or {}).get("checksums") or {}).get("pending") is True
+    except (OSError, ValueError):
+        return False
+
+
+def fill_checksums(folder, record="version.json", dirs=PACKAGE_DIRS):
+    """Closes the chain of a version folder whose checksums are pending: every package file is
+    hashed, with the record beside them, and what the folder is to hold is returned —
+    (checksums.sha256 bytes, package.json bytes, .complete bytes) — to be written in that order, each
+    in one step. The package record changes in its checksums alone. None when the folder's checksums
+    are not pending, or when what it holds is no longer what the record counted: then nothing may be
+    written, and chain_problems() says what is wrong."""
+    pkg_path = os.path.join(folder, "package.json")
+    if not checksums_pending(folder) or chain_problems(folder, record, dirs):
+        return None
+    with open(pkg_path, encoding="utf-8") as f:
+        package = json.load(f)
+    with open(os.path.join(folder, record), "rb") as f:
+        listed = package_files(folder, dirs) + [record_entry(record, f.read())]
+    data, sums = checksums(listed)
+    if (sums["files"], sums["bytes"]) != (package["checksums"].get("files"), package["checksums"].get("bytes")):
+        return None  # a file changed between the count and the hash
+    package["checksums"] = sums
+    package_bytes = json_bytes(package)
+    return data, package_bytes, complete(package_bytes)
 
 
 def _listing(folder, dirs):

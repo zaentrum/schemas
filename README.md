@@ -49,6 +49,7 @@ tools/
   library-v2-media-check.py        check a v2 tree against the bytes, without jsonschema
   library-v2-upgrade.py            upgrade a v2 tree in place to the layout in which every record proves itself
   library-v2-sweep.py              find provable garbage in a v2 tree and, through a quarantine, remove it
+  library-v2-fill-checksums.py     close the chains of the packages a migration adopted with their checksums pending
   libv2_records.py                 the record logic the packager vendors: source, version, package, extra records
   test-library-v2-tools.py         prove the v2 tools do what they say
   testdata/libv2_records/          probes and manifests, and the records libv2_records.py writes from them
@@ -396,6 +397,17 @@ flowchart LR
   SUMS -->|"sha256 of each"| FILES["version.json · hls/ · subs/ · trickplay/ · trailers/"]
 ```
 
+One exception leaves the chain open for a while. A package a migration adopts from a store too large
+to read through while its service is paused is recorded with its checksums **pending**: its
+`package.json` counts the files the checksums file will list and their bytes (`checksums.files`,
+`checksums.bytes`) and carries `"pending": true` in place of the file's hash, there is no
+`checksums.sha256`, and `.complete` names that `package.json`. Such a version plays as any other;
+what it cannot do is prove a byte, so it is not verified, and its original is not deleted, until
+`library-v2-fill-checksums.py` has hashed its files — then the checksums file is written,
+`package.json` again with the file's hash in place of `pending` and nothing else of it changed, and
+`.complete` again over that. Only a migration writes a pending record; a packager closes the chain
+as it completes a package, and an extra's checksums are never pending.
+
 The checksums file therefore never lists `.complete`, `package.json` or itself — each holds the hash
 of the link below it — and it never lists the originals, which their source records' fixity covers
 and which may be deleted later. A version that has no package yet has no checksums file, and its
@@ -684,6 +696,26 @@ one is the problem *disc image*, left out of the plan — with every episode its
 in the report until its owner converts it to a single file. The report counts the files of several
 episodes it staged (`covering`) and the episodes they cover (`covered`).
 
+A store that cannot be moved in one step is staged beside itself. `--originals link` plans a hard
+link in place of each rename of an original and of a subtitle file that came with it (move kind
+`link`): the file stays where the library before this one plays it and gets a second name for the
+same bytes — the original in its version folder, the subtitle file among the arrivals — so nothing
+is copied, the records and the database are exactly what a move leaves, and the old name shows
+nowhere in the new library. The package folders are still renamed: there is one copy of a package,
+and it is the new library's from the adopt on. `--checksums pending` stages each package without
+reading its files: the record counts them and their bytes, no `checksums.sha256` is staged, and the
+plan's version is not verified (`verifiedAt`, `verifiedLevel` null). The report counts both
+(`linked`, `pending`). Afterwards `library-v2-fill-checksums.py <root> --apply` hashes the pending
+packages folder by folder and closes each chain — `--until HH:MM` and `--max-bytes` keep the reading
+out of the hours the library is watched, `--items` narrows it, and a folder that no longer holds the
+files and the bytes its record counted is a conflict, reported and left as it was. Its journal,
+`.work/migration/<run>/checksums.jsonl`, lists each version it closed (`filled`): what the catalog
+may now call verified in full. While the old names are there, a library check takes
+`--shared-originals` — a version's original, and nothing else, may be a hard link shared with another
+path — and says how many are; `--no-pending` makes a pending package a problem once every one is
+said to be filled. When the library before is removed, the originals are this library's alone, and
+it passes with neither.
+
 Once adopted, the library is verified where it is: `validate-library-v2.py --check-media` and the
 media check on the share's root — `.work/` beside the record is not looked at — and
 `library-v2-rebuild.py --compare` of a fresh export with `--arrivals-root <root>/.work`: an original
@@ -816,6 +848,21 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-13** — a library adopted beside the one before it. `package.json`'s `checksums` may say
+  `"pending": true` in place of `sha256`: a package adopted before anything hashed its files has no
+  `checksums.sha256` yet, and its record counts the files that file will list and their bytes. The
+  form is new and optional — every record written before validates as it is, and the `$id`s are the
+  published ones. `libv2_records.py` (4) takes `pending` in `checksums()` and `package_record()`,
+  gains `package_listing()` (a package's files and sizes, nothing read), `checksums_pending()` and
+  `fill_checksums()`, and `chain_problems()` holds a pending folder to what its record counted; a
+  record written without `pending` is byte for byte the one before. `library-v2-from-catalog.py
+  --platform` gains `--checksums pending` and `--originals link`, whose plans carry the move kind
+  `link` — a hard link in place of the rename of an original and of a subtitle file that came with
+  it, so the library before keeps its files; a plan written without the two is the one before.
+  `library-v2-fill-checksums.py` is new: it hashes the pending packages and closes their chains,
+  journaled, in the hours it is given. The validator and the media check count pending packages as
+  a note, hold them to the files and bytes their records counted, refuse a checksums file beside a
+  pending record and a pending extra, and take `--no-pending` and `--shared-originals`.
 - **2026-10-08 (b)** — one file, several episodes, and no disc images. A file that holds two episodes or
   more — two episodes cut as one have no clean boundary — is never split: it is packaged once and serves
   every episode it holds. The published contract had the fields, and the texts now say how they fit

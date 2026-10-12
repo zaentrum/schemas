@@ -2,7 +2,7 @@
 """Check a v2 library tree against the bytes beside it, where the bytes are.
 
 Usage:
-  library-v2-media-check.py LIBRARY [--checksums] [--quiet]
+  library-v2-media-check.py LIBRARY [--checksums] [--shared-originals] [--no-pending] [--quiet]
 
 The schema validator answers whether the records are well formed; this answers whether they still
 describe what is on the disk. It needs nothing but the standard library, so it runs in the pod that
@@ -19,7 +19,9 @@ What it checks, for every item folder:
     of checksums.sha256, which lists version.json and every file of the package — the rendition,
     subtitle, trickplay and trailer folders — and never .complete, package.json or itself, and
     matches the count and the total size package.json recorded (--checksums also hashes every
-    package file);
+    package file). A package a migration adopted with its checksums pending has no checksums file
+    yet: its folder holds the files and the bytes its record counted, and it is a note, counted —
+    a problem with --no-pending, once a migration says every one is filled;
   * every file a record names is there: the probe and the sidecars of each source, every image
     metadata.json lists, each version's originals, and each package's rendition folders — its 5.1
     companions' too — subtitles and their HLS renditions, master playlist and trickplay sheet;
@@ -38,7 +40,9 @@ What it checks, for every item folder:
     always and every other with --checksums; each original has the size and the qh1 fingerprint
     extra.json wrote down, as a version's has its source record's; an extra that never finished is
     a note;
-  * no file is a hard link shared with another path, because a library of links is not portable.
+  * no file is a hard link shared with another path, because a library of links is not portable —
+    but, with --shared-originals, a version's original: a migration that keeps the old library
+    beside this one leaves it under its old path too (a note, counted).
 
 Projections — metadata.json and person.json — carry no checksums: they are replaced whole, and an
 image is named by its own hash. A tree from before 2026-10-02 (b), with sources/<id>.json and
@@ -112,9 +116,18 @@ def read_sums(path):
     return entries, bad
 
 
+# a version's original, relative to its item folder: versions/<versionId>/original[-n].<ext>
+SHARED_ORIGINAL = re.compile(r"^versions/[^/]+/original(-\d+)?\.[a-z0-9]+$")
+
+
 class Check:
-    def __init__(self, hash_everything):
+    def __init__(self, hash_everything, shared_originals=False, no_pending=False):
         self.hash_everything = hash_everything
+        # a migration that keeps the old library beside this one: a version's original is the old
+        # path's file too, a hard link; and, once it says its checksums are filled, none is pending
+        self.shared_originals = shared_originals
+        self.no_pending = no_pending
+        self.pending, self.shared = 0, 0
         self.problems = []
         self.notes = []
         self.counts = {"items": 0, "people": 0, "versions": 0, "packages": 0, "originals": 0, "deleted": 0,
@@ -373,6 +386,9 @@ class Check:
         self.playable(vp, pkg)
         cs = pkg.get("checksums") or {}
         f = os.path.join(vp, cs.get("file") or "checksums.sha256")
+        if cs.get("pending") is True:
+            self.pending_package(vp, f, cs)
+            return
         if not os.path.isfile(f):
             self.err(f, "the checksums file the package record names is missing")
             return
@@ -406,6 +422,25 @@ class Check:
             for rel in present:
                 if sha_file(os.path.join(vp, rel)).split(":", 1)[1] != listed[rel]:
                     self.err(os.path.join(vp, rel), "does not match its checksum")
+
+    def pending_package(self, vp, f, cs):
+        """A package adopted before anything hashed its files: there is nothing to hold them against
+        but the count and the bytes its record took, and no checksums file until they are filled."""
+        self.pending += 1
+        if os.path.isfile(f):
+            self.err(f, "is here while package.json says its checksums are pending")
+            return
+        if self.no_pending:
+            self.err(vp, "its checksums are pending: no file of this package was ever hashed "
+                         "(library-v2-fill-checksums.py closes the chain)")
+        on_disk = package_files(vp) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
+        total = sum(os.path.getsize(os.path.join(vp, rel)) for rel in on_disk)
+        self.counts["files"] += len(on_disk)
+        self.counts["bytes"] += total
+        if len(on_disk) != cs.get("files"):
+            self.err(vp, f"the package holds {len(on_disk)} files, package.json counted {cs.get('files')}")
+        elif total != cs.get("bytes"):
+            self.err(vp, f"the package's files total {total} bytes, package.json counted {cs.get('bytes')}")
 
     # -------------------------------------------------- bonus material
     def extras(self, d, kind, retired=()):
@@ -528,7 +563,11 @@ class Check:
                 p = os.path.join(root, name)
                 try:
                     if not OS_ARTEFACTS.match(name) and not os.path.islink(p) and os.stat(p).st_nlink > 1:
-                        linked.append(os.path.relpath(p, d))
+                        rel = os.path.relpath(p, d)
+                        if self.shared_originals and SHARED_ORIGINAL.match(rel.replace(os.sep, "/")):
+                            self.shared += 1  # the old library's file too, until that library is gone
+                            continue
+                        linked.append(rel)
                 except OSError:
                     continue
         if linked:
@@ -571,11 +610,22 @@ def main():
                                  description="Check a v2 library tree against the bytes beside it.")
     ap.add_argument("root", help="the library root holding movies/ and series/")
     ap.add_argument("--checksums", action="store_true", help="also hash every package file")
+    ap.add_argument("--shared-originals", action="store_true",
+                    help="a version's original may be a hard link shared with another path: a migration keeps "
+                         "the old library beside this one, and the original is that library's file too")
+    ap.add_argument("--no-pending", action="store_true",
+                    help="a package whose checksums are pending is a problem, not a note: every one is filled")
     ap.add_argument("--quiet", action="store_true", help="print the summary only")
     args = ap.parse_args()
-    c = Check(args.checksums)
+    c = Check(args.checksums, shared_originals=args.shared_originals, no_pending=args.no_pending)
     c.run(os.path.abspath(args.root))
     print("checked:", c.counts)
+    if c.pending:
+        c.notes.insert(0, f"{c.pending} package(s) with their checksums pending: adopted before their files were "
+                          f"hashed; library-v2-fill-checksums.py closes their chains")
+    if c.shared:
+        c.notes.insert(0, f"{c.shared} original(s) shared with another path (--shared-originals): the old library's "
+                          f"files too, until that library is gone")
     for n in c.notes[:50]:
         print("  note " + n)
     if not c.problems:
