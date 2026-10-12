@@ -863,6 +863,9 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   journaled, in the hours it is given. The validator and the media check count pending packages as
   a note, hold them to the files and bytes their records counted, refuse a checksums file beside a
   pending record and a pending extra, and take `--no-pending` and `--shared-originals`.
+  `library-v2-rebuild.py --compare` no longer compares a person's `tmdbFetchedAt` and
+  `tmdbChangedAt`: the catalog moves both every time it asks its source about a person and projects
+  again only when a value changed, so a current projection differed in them the day after.
 - **2026-10-08 (b)** — one file, several episodes, and no disc images. A file that holds two episodes or
   more — two episodes cut as one have no clean boundary — is never split: it is packaged once and serves
   every episode it holds. The published contract had the fields, and the texts now say how they fit

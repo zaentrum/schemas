@@ -121,6 +121,11 @@ downloaded trailer moved into its extra's folder, under the name the library giv
 whether the link has a local copy can be compared, and neither where it lives nor the name it came
 with.
 
+A person's tmdbFetchedAt and tmdbChangedAt are never compared either: when the catalog last asked its
+source about a person, and the day of the change it last saw there, move every time it asks, and a
+person no value of whom changed is not projected again — the row's modifiedAt does not move. A
+database rebuilt from the tree asks again sooner, and has lost nothing.
+
 A subtitle row's isDefault is never compared, whatever --ignore-fields says, and the rebuild writes
 it false: which subtitle a viewer gets is behaviour — the player's rule, or a default a person
 chose and the database keeps — which no record holds; a package's default is only what its playlist
@@ -789,6 +794,11 @@ CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath"
 # The fields of an item row compared only when the export's row carries them, for the same reason:
 # items do not carry the first two yet, and coveredBy only once the catalog links covered episodes.
 CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt", "coveredBy")
+# A person's row says when the catalog last asked its source about them, and the day of the change it
+# last saw there. Asking moves both and changes nothing of the person: the row's modifiedAt — and so
+# its projection — moves only when a value does. --compare never compares them, whatever
+# --ignore-fields says: a database rebuilt from the tree asks again sooner, and has lost nothing.
+PERSON_BOOKKEEPING = ("tmdbFetchedAt", "tmdbChangedAt")
 # Behaviour, not data: which subtitle a viewer gets is the player's rule, or a default a person chose,
 # which the database keeps and no record holds. The rebuild writes isDefault false, and --compare never
 # compares it, whatever --ignore-fields says.
@@ -1190,7 +1200,8 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
                 continue
             n += diff_field(fields, iid, key, a, b, ignore)
     for pid in sorted(set(mine) & set(theirs)):
-        for key in sorted(k for k in theirs[pid] if k not in ("id", "modifiedAt") and k not in ignore):
+        for key in sorted(k for k in theirs[pid] if k not in ("id", "modifiedAt") and k not in ignore
+                          and k not in PERSON_BOOKKEEPING):
             n += diff_field(fields, pid, key, mine[pid], theirs[pid], ignore, "people.")
     for key in sorted(fields):
         rows = fields[key]

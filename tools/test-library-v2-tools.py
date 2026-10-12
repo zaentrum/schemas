@@ -3285,8 +3285,6 @@ def test_people_in_full(t):
                 ("the lock", lambda p: p.update(metadataLocked=True), "people.metadataLocked: 1 difference"),
                 ("the locked fields", lambda p: p.update(lockedFields=["biography", "name"]), "people.lockedFields: 1 difference"),
                 ("where a field came from", lambda p: p["fieldOrigins"].update(name="manual"), "people.fieldOrigins: 1 difference"),
-                ("when TMDB was asked", lambda p: p.update(tmdbFetchedAt="2026-09-30T09:00:00Z"), "people.tmdbFetchedAt: 1 difference"),
-                ("when TMDB last changed the person", lambda p: p.update(tmdbChangedAt="2026-09-30"), "people.tmdbChangedAt: 1 difference"),
                 ("which portrait is primary", lambda p: (portrait_row(0, isPrimary=True)(p), portrait_row(1, isPrimary=False)(p)),
                  "people.artwork.isPrimary: 2 difference"),
                 ("the path TMDB lists a portrait under", portrait_row(1, sourcePath="/newer.png"), "people.artwork.sourcePath: 1 difference"),
@@ -3302,6 +3300,11 @@ def test_people_in_full(t):
                  "people: stale projection — the database changed after it was projected")):
             code, ctext = changed(change)
             t.ok(f"--compare catches the database changing {what}", code == 1 and phrase in ctext, ctext)
+        # asking again moves when the catalog last asked and what it last saw change, and nothing of the
+        # person: the row is not modified, its projection not written again, and that is no difference
+        code, ctext = changed(lambda p: p.update(tmdbFetchedAt="2026-09-30T09:00:00Z", tmdbChangedAt="2026-09-30"))
+        t.ok("--compare does not hold a person's projection to when the catalog last asked about them",
+             code == 0 and "the tree and the database agree" in ctext, ctext)
 
         # ---- what the export says that a record cannot hold, or that its bytes contradict
         e = jload(export)
