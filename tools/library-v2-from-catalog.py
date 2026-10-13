@@ -238,7 +238,9 @@ problem classes: missing original, missing .complete, several packages, episode 
 episode without numbers, season parent, music, not a library item, no title, unmappable sidecar,
 subtitle row without its file, original outside the media root, dropped external-id source, artwork
 not an image, extra not packaged, extra of an episode, extra without an id, extra original gone,
-covered episode missing, disc image. The report's counts say how many files of several episodes are
+covered episode missing, disc image, package folder not writable (the user the stage runs as, which
+the adopt runs as too, may not write into a package's folder, the one above it or one of the folders
+that move: a store another user wrote without group write, which the adopt could not move). The report's counts say how many files of several episodes are
 staged (covering) and how many episodes they cover (covered).
 --checksums pending stages a package without reading its files: its record counts them and their
 bytes and says its checksums are pending, no checksums.sha256 is staged, and the version is planned
@@ -1329,6 +1331,21 @@ class Platform(Build):
     def problem(self, cls, detail):
         self.current["problems"].append({"class": cls, "detail": detail})
 
+    def movable(self, folder, moved):
+        """The adopt renames a package's folders out of the folder the store kept them in, and what is
+        left of that folder aside. The user it runs as — this stage runs as the same — must be allowed
+        to: write into the folder and into the one above it, and into each folder that moves, whose
+        parent changes. A store another user wrote under a mask without group write is read by
+        everyone and moved by no one but its writer: the problem package folder not writable."""
+        held = [p for p in [os.path.dirname(folder), folder, *moved]
+                if os.path.isdir(p) and not os.access(p, os.W_OK | os.X_OK)]
+        if held:
+            more = f" and {len(held) - 1} more of its folders" if len(held) > 1 else ""
+            self.problem("package folder not writable",
+                         f"{held[0]}{more} cannot be written by the user this runs as, which the adopt runs as too: "
+                         f"it could not move the package. Give the store's folders that user's write first "
+                         f"(group write, where they share a group)")
+
     def item_json(self, row):
         doc = super().item_json(row)
         if row["type"] == "episode":
@@ -1601,6 +1618,7 @@ class Platform(Build):
                     moves["package"].append({"kind": "package", "from": os.path.join(folder, sub),
                                              "to": os.path.join(vp, sub)})
             moves["legacy"].append({"kind": "legacy", "from": folder, "to": os.path.join(self.run_dir, "legacy", store)})
+            self.movable(folder, [m["from"] for m in moves["package"] if os.path.dirname(m["from"]) == folder])
             mp = os.path.join(folder, "manifest.json")
             guards.update(manifestSha256=sha_file(mp) if os.path.isfile(mp) else None,
                           completeMtime=mtime_ns(os.path.join(folder, ".complete")))
@@ -1757,6 +1775,7 @@ class Platform(Build):
                     moves["package"].append({"kind": "package", "from": os.path.join(folder, sub),
                                              "to": os.path.join(xp, sub)})
             moves["legacy"].append({"kind": "legacy", "from": folder, "to": os.path.join(self.run_dir, "legacy", store)})
+            self.movable(folder, [m["from"] for m in moves["package"] if os.path.dirname(m["from"]) == folder])
             db["extras"].append({"id": xid, "dir": os.path.join(target, "extras", xid),
                                  "packageId": package["packageId"], "sourcePath": arrival or local})
             decision = {k: v for k, v in (("order", num(x.get("sortOrder"))), ("hidden", x.get("hidden") is True or None),

@@ -868,6 +868,10 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   it, so the library before keeps its files; a plan written without the two is the one before.
   `--originals prelinked` is for a store that is one filesystem with the library only where its disk
   is: the run lists the links to make there before the adopt (`links.tsv`), and its plans hold none.
+  A stage also reports a package it could read and the adopt could not move — the user it runs as,
+  which the adopt runs as too, may not write into the package's folder, the one above it or one of
+  the folders that move — as the problem *package folder not writable*: a store another user wrote
+  without group write.
   `library-v2-fill-checksums.py` is new: it hashes the pending packages and closes their chains,
   journaled, in the hours it is given. The validator and the media check count pending packages as
   a note, hold them to the files and bytes their records counted, refuse a checksums file beside a

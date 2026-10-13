@@ -2690,6 +2690,40 @@ def test_platform_prelinked(t):
              and "the tree and the database agree" in ctext, ctext)
 
 
+def test_platform_not_writable(t):
+    """A store another user wrote without group write is read by everyone and moved by no one but its
+    writer: the stage, which runs as the user the adopt runs as, reports a package whose folders it
+    may not write into — the folder, the one above it, or one that moves — as the problem package
+    folder not writable, before an adopt fails on it."""
+    if os.geteuid() == 0:
+        t.skip("a package folder the user may not write into is a problem", "root may write anywhere")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "katalog")
+        export = legacy_store(root)
+        services_to(root, export)
+        env = fake_ffprobe(os.path.join(tmp, "bin"))
+        folder = os.path.join(root, "packages", "movies", PF_MOVIE[:2], PF_MOVIE)
+
+        def problems():
+            code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                                  "--dry-run")
+            report = jload(os.path.join(root, ".work", "migration", PF_RUN, "report.json"))
+            return {item["itemId"]: [p["class"] for p in item["problems"]] for item in report["items"]}, text
+
+        for what, held in (("the package's folder", folder), ("a folder that moves", os.path.join(folder, "hls"))):
+            os.chmod(held, 0o555)
+            try:
+                found, text = problems()
+            finally:
+                os.chmod(held, 0o755)
+            t.ok(f"{what} the user may not write into is a problem of its item, and of no other",
+                 "package folder not writable" in found.get(PF_MOVIE, [])
+                 and not any("package folder not writable" in v for k, v in found.items() if k != PF_MOVIE), text)
+        found, text = problems()
+        t.ok("and none once it may", not any("package folder not writable" in v for v in found.values()), text)
+
+
 def test_platform_problems(t):
     """What the platform's library cannot hold as the store has it is reported by its class, and the
     rest is staged: an episode under a season is in its series' folder, music is skipped, and a shard
@@ -5262,6 +5296,7 @@ def main():
                         ("the platform's library, staged and adopted", test_platform),
                         ("the platform's library, staged beside the old one", test_platform_beside_the_old),
                         ("the platform's library, its originals linked where the disk is", test_platform_prelinked),
+                        ("a store the adopt could not move", test_platform_not_writable),
                         ("what the platform's library cannot hold", test_platform_problems),
                         ("one file, several episodes, staged; a disc image left out", test_platform_covers),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras),
