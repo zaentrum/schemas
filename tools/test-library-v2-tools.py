@@ -2614,6 +2614,82 @@ def test_platform_beside_the_old(t):
              code == 0 and mtext.strip().endswith("OK") and "shared" not in mtext, mtext)
 
 
+def test_platform_prelinked(t):
+    """--originals prelinked is for a store that is one filesystem with the library only where its disk
+    is: no plan holds a link. The run lists the second names to make before the adopt — links.tsv, each
+    among the arrivals — and plans each original's move from there into its version folder. Made as the
+    list says, the adopt leaves what --originals link leaves: the old library whole, each original one
+    file under two names, a library that validates with what it shares named."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "katalog")
+        export = legacy_store(root)
+        services_to(root, export)
+        env = fake_ffprobe(os.path.join(tmp, "bin"))
+        before = tree_files(root)
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                              "--originals", "prelinked", "--checksums", "pending", "--dry-run")
+        rundir = os.path.join(root, ".work", "migration", PF_RUN)
+        report = jload(os.path.join(rundir, "report.json")) if code == 0 else {}
+        t.ok("a dry run says how many links the list will hold, and writes report.json alone",
+             code == 0 and sorted(os.listdir(rundir)) == ["report.json"] and report["links"]["count"] == 5
+             and report["links"]["file"] == "links.tsv" and report["counts"]["linked"] == 3, text)
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                              "--originals", "prelinked", "--checksums", "pending")
+        t.ok("the stage touches nothing outside the run's folder",
+             code == 0 and {k: v for k, v in tree_files(root).items() if not k.startswith(".work")} == before, text)
+        links = [line.split("\t") for line in open(os.path.join(rundir, "links.tsv"), encoding="utf-8").read().splitlines()]
+        t.eq("links.tsv lists every original and every subtitle file beside one, relative to the media folder, "
+             "and the second name of each among the arrivals, relative to the library's root",
+             links, [[rel, ".work/incoming/" + rel] for rel in (
+                 "Example Film (2024)/Example Film (2024).de.srt", "Example Film (2024)/Example Film (2024).mkv",
+                 "Other Film (2025)/Other Film (2025).en.forced.srt", "Other Film (2025)/Other Film (2025).mkv",
+                 "tv/Example Show/Season 01/Example Show - S01E01.mkv")])
+        unit = jload(os.path.join(rundir, "units", PF_MOVIE + ".json"))
+        vid = unit["db"]["versions"][0]["versionId"]
+        vdir = os.path.join(root, "movies", PF_MOVIE[:2], PF_MOVIE, "versions", vid)
+        arrived_srt = ".work/incoming/Example Film (2024)/Example Film (2024).de.srt"
+        t.eq("a plan holds no link: it moves its original from the arrivals into its version folder, and leaves "
+             "the subtitle file's second name where the list puts it",
+             [(m["kind"], os.path.relpath(m["from"], root), os.path.relpath(m["to"], root)) for m in unit["moves"]
+              if m["kind"] in ("link", "original", "sidecar") and "extras" not in m["from"]],
+             [("original", ".work/incoming/Example Film (2024)/Example Film (2024).mkv",
+               os.path.relpath(os.path.join(vdir, "original.mkv"), root))])
+        t.eq("and its rows are a move's", (sorted((a["id"], a["path"]) for a in unit["db"]["assets"]),
+                                           sorted((x["id"], x["path"]) for x in unit["db"]["subtitles"])),
+             ([("pa1", os.path.join(vdir, "original.mkv")), ("pa2", os.path.join(vdir, "package.json"))],
+              [("sa1", os.path.join(vdir, "subs", "0.vtt")), ("sa2", os.path.join(root, arrived_srt))]))
+
+        # the links made as the list says, where the two are one filesystem
+        for rel_from, rel_to in links:
+            os.makedirs(os.path.dirname(os.path.join(root, rel_to)), exist_ok=True)
+            os.link(os.path.join(root, "media", rel_from), os.path.join(root, rel_to))
+        old_world = {rel: data for rel, data in tree_files(root).items() if rel.split(os.sep)[0] == "media"}
+        fresh = os.path.join(tmp, "after.json")
+        units, stale = adopt(root, PF_RUN, export, fresh)
+        film = os.path.join(root, "media", "Example Film (2024)", "Example Film (2024).mkv")
+        t.ok("the adopt leaves the old library whole, each original one file under two names, none left among "
+             "the arrivals, and the subtitle file's second name there",
+             stale == [] and len(units) == 5
+             and {rel: data for rel, data in tree_files(root).items() if rel.split(os.sep)[0] == "media"} == old_world
+             and os.path.samefile(film, os.path.join(vdir, "original.mkv")) and os.stat(film).st_nlink == 2
+             and not glob.glob(os.path.join(root, ".work", "incoming", "**", "*.mkv"), recursive=True)
+             and os.path.samefile(os.path.join(root, arrived_srt),
+                                  os.path.join(os.path.dirname(film), "Example Film (2024).de.srt")), stale)
+        code, mtext = run(MEDIA_CHECK, "--shared-originals", root)
+        t.ok("the media check finds the library whole, three originals shared and three packages pending",
+             code == 0 and mtext.strip().endswith("OK") and "3 original(s) shared" in mtext
+             and "3 package(s) with their checksums pending" in mtext, mtext)
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-media", "--shared-originals", root)
+            t.ok("and so does the validator", code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("validate-library-v2.py finds the prelinked library valid", "jsonschema is not importable here")
+        code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
+                          "--ignore-fields", "id,path,hash", "--text-language", "und")
+        t.ok("and the rebuild agrees with the database the adopt left", code == 0
+             and "the tree and the database agree" in ctext, ctext)
+
+
 def test_platform_problems(t):
     """What the platform's library cannot hold as the store has it is reported by its class, and the
     rest is staged: an episode under a season is in its series' folder, music is skipped, and a shard
@@ -5185,6 +5261,7 @@ def main():
                         ("the arrivals are not the record", test_arrivals),
                         ("the platform's library, staged and adopted", test_platform),
                         ("the platform's library, staged beside the old one", test_platform_beside_the_old),
+                        ("the platform's library, its originals linked where the disk is", test_platform_prelinked),
                         ("what the platform's library cannot hold", test_platform_problems),
                         ("one file, several episodes, staged; a disc image left out", test_platform_covers),
                         ("a downloaded trailer -> an extra", test_from_catalog_extras),

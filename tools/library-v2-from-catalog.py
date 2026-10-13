@@ -124,6 +124,7 @@ and copies of the subtitle files that came with the originals:
                                  unless the library holds them already; the adopt puts them at
                                  people/<aa>/<personId>/ once the items are in
   units/<itemId>.json            the plan of one item (zaentrum.migration.unit/1), below
+  links.tsv                      with --originals prelinked: the hard links to make before the adopt
   report.json                    what is ready, every problem by its class, and what deleting every
                                  original would cost (report-<shard>.json for a shard)
 
@@ -187,6 +188,14 @@ own path of the share:
                 version folder, a subtitle file among the arrivals. The library before this one
                 keeps playing them, nothing is copied, and the library is what a move leaves.
                 Undone by removing that second name
+                With --originals prelinked no plan holds a link: the store before and the library
+                are one filesystem where their disk is, and two where the adopt runs. The run
+                writes links.tsv instead — '<file, relative to the media folder><TAB><its second
+                name, relative to the library's root>' a line, the second name among the arrivals,
+                where a move of before put an original — for whoever sees both as one filesystem
+                to make, a hard link a line, before the adopt; and each plan moves its original
+                from the arrivals into its version folder (kind original), as it would one that
+                waited there. A subtitle file's second name is its arrival, and no move
        sidecar  a subtitle file the scanner paired with the original, of which the source keeps a
                 copy, to the arrivals, at the path it had under media/
        legacy   what is left of an old package folder (manifest.json, .complete) to the run's legacy/
@@ -1134,6 +1143,7 @@ class Platform(Build):
         self.entries, self.staged_rows, self.current = [], [], None
         self.gate, self.measured, self.unmeasured = {}, 0, 0
         self.counts.update(units=0, recorded=0, takenIn=0, covering=0, covered=0, pending=0, linked=0)
+        self.links = []   # --originals prelinked: (a file of the store before, the second name it is to get)
         # one file, several episodes (plan_covers): the holder of each covered episode, the episodes each
         # holder's file covers after it, those the catalog linked itself, the holders whose original is a
         # disc image, and what the plan found to say of each holder; once a holder is staged, the episodes
@@ -1599,7 +1609,20 @@ class Platform(Build):
 
         # the original into its version folder once the item is in place, and the subtitle files that came
         # with it — the source keeps a copy of each — to the arrivals beside where it was
-        if original:
+        if original and self.a.originals == "prelinked":
+            # --originals prelinked: the store before and the library are one filesystem only where the
+            # disk is, not where the adopt runs, so the second names are made there, ahead of the adopt
+            # and among the arrivals, by the list this run writes (links.tsv). The plan moves an
+            # original's from there into its version folder, and a subtitle file's is where it stays.
+            self.counts["linked"] += 1
+            arrived = self.arrival_of(original)[0]
+            self.links.append((original, arrived))
+            moves["original"].append({"kind": "original", "from": arrived, "to": os.path.join(vdir, kept)})
+            for _, local in sidecar_rows:
+                to = self.arrival_of(local)[0]
+                if to:
+                    self.links.append((local, to))
+        elif original:
             # --originals link: the old library keeps its files, and the library gets a second name for
             # each — the original in its version folder, the subtitle files among the arrivals — so the
             # plan is the one a move makes, and only what becomes of the old name differs
@@ -1611,6 +1634,7 @@ class Platform(Build):
                 to = self.arrival_of(local)[0]
                 if to:
                     moves["original"].append({"kind": "link" if linked else "sidecar", "from": local, "to": to})
+        if original:
             if primary:
                 db["assets"].append({"id": primary.get("id"), "path": os.path.join(vdir, kept), "sourceId": sid})
             for s, local in sidecar_rows:
@@ -1765,6 +1789,22 @@ class Platform(Build):
             except Exception as e:  # one unreadable person must not stop the run
                 self.skipped.append((pid, f"{type(e).__name__}: {e}"))
 
+    def write_links(self):
+        """links.tsv — links-<shard>.tsv for a shard — of a run staged with --originals prelinked: a line
+        for every second name the plans expect to be there before the adopt, '<a file of the store before,
+        relative to its media folder><TAB><its second name, relative to the library's root>'. Whoever sees
+        both as one filesystem makes them, a hard link a line. Returns what the report says of it."""
+        name = f"links-{self.a.shard}.tsv" if self.a.shard else "links.tsv"
+        lines = []
+        for src, dst in sorted(set(self.links)):
+            a, b = os.path.relpath(src, self.a.media), os.path.relpath(dst, self.root)
+            if any(c in a + b for c in "\t\n\r"):
+                sys.exit(f"{src!r} has a tab or a line break in its name, which {name} cannot list: rename it, and stage again")
+            lines.append(f"{a}\t{b}\n")
+        if not self.a.dry_run:
+            self.w.write(os.path.join(self.run_dir, name), "".join(lines).encode("utf-8"))
+        return {"file": name, "count": len(lines), "from": self.a.media, "to": self.root}
+
     def finish(self):
         """report.json — report-<shard>.json for a shard — written whatever else the run wrote: what is
         ready, the problems of every item by class, and what deleting every original would cost."""
@@ -1784,6 +1824,8 @@ class Platform(Build):
                   "loss": {"measured": self.measured, "unmeasured": self.unmeasured,
                            "gate": dict(sorted(self.gate.items(), key=lambda kv: (-kv[1], kv[0])))},
                   "items": self.entries}
+        if self.a.originals == "prelinked":
+            report["links"] = self.write_links()
         path = os.path.join(self.run_dir, f"report-{self.a.shard}.json" if self.a.shard else "report.json")
         os.makedirs(self.run_dir, exist_ok=True)
         with open(path + ".tmp", "wb") as f:
@@ -1823,10 +1865,13 @@ def main():
                     help="--platform: full (default) hashes every package file where it lies; pending counts the "
                          "files and their bytes and records the checksums as pending, for a store too large to "
                          "read through while its service is paused (library-v2-fill-checksums.py closes the chains)")
-    ap.add_argument("--originals", choices=("move", "link"), default="move",
+    ap.add_argument("--originals", choices=("move", "link", "prelinked"), default="move",
                     help="--platform: move (default) plans the original's rename into its version folder and the "
                          "subtitle files' beside it to the arrivals; link plans a hard link in place of each and "
-                         "leaves them where they are — the library before this one keeps playing them beside it")
+                         "leaves them where they are — the library before this one keeps playing them beside it; "
+                         "prelinked leaves them too, for a store that is one filesystem with the library only "
+                         "where its disk is: the run lists the hard links to make there before the adopt "
+                         "(links.tsv), among the arrivals, and plans each original's move from there")
     ap.add_argument("--as-of", default="", help="the moment every record says it was written; the export's "
                                                 "exportedAt by default, which is what makes a re-run identical")
     ap.add_argument("--text-language", default="und",

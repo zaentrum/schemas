@@ -705,7 +705,14 @@ nowhere in the new library. The package folders are still renamed: there is one 
 and it is the new library's from the adopt on. `--checksums pending` stages each package without
 reading its files: the record counts them and their bytes, no `checksums.sha256` is staged, and the
 plan's version is not verified (`verifiedAt`, `verifiedLevel` null). The report counts both
-(`linked`, `pending`). Afterwards `library-v2-fill-checksums.py <root> --apply` hashes the pending
+(`linked`, `pending`). A hard link needs both names on one filesystem where it is made, and two
+exports of one disk are two filesystems to the service that adopts: for such a store `--originals
+prelinked` puts no link in a plan. The run writes `links.tsv` — a line per second name, `<file,
+relative to the media folder><TAB><its second name, relative to the library's root>`, each among the
+arrivals, where a move of before put an original — for whoever sees both as one filesystem, the
+storage host itself, to make before the adopt, a hard link a line; and each plan moves its original
+from the arrivals into its version folder, a rename within the library's share. What the adopt
+leaves is the same. Afterwards `library-v2-fill-checksums.py <root> --apply` hashes the pending
 packages folder by folder and closes each chain — `--until HH:MM` and `--max-bytes` keep the reading
 out of the hours the library is watched, `--items` narrows it, and a folder that no longer holds the
 files and the bytes its record counted is a conflict, reported and left as it was. Its journal,
@@ -859,6 +866,8 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   --platform` gains `--checksums pending` and `--originals link`, whose plans carry the move kind
   `link` — a hard link in place of the rename of an original and of a subtitle file that came with
   it, so the library before keeps its files; a plan written without the two is the one before.
+  `--originals prelinked` is for a store that is one filesystem with the library only where its disk
+  is: the run lists the links to make there before the adopt (`links.tsv`), and its plans hold none.
   `library-v2-fill-checksums.py` is new: it hashes the pending packages and closes their chains,
   journaled, in the hours it is given. The validator and the media check count pending packages as
   a note, hold them to the files and bytes their records counted, refuse a checksums file beside a
