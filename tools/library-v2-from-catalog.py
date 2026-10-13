@@ -226,7 +226,11 @@ own path of the share:
                        verifiedLevel null, and takenIn true
           "assets": [{"id", "path", "sourceId"} | {"id", "path", "versionId"}]   the original's row at
                        its version folder — or, gone before, at its source folder, a retired one — and the
-                       packaged row at <dir>/package.json; any other packaged row of the item goes
+                       packaged row at <dir>/package.json; any other packaged row of the item goes.
+                       The row of an original its source's record probed carries "probed": {"codec",
+                       "resolution", "bitrateKbps", "durationMs"}, what the record says of it in the
+                       row's own fields: the adopt writes them, so a catalog that never probed its
+                       originals says of each what a rebuild from its record would
           "subtitles": [{"id", "path"}]   the package's rows in the version folder, the sidecars' at the
                        arrivals — or, the original gone before, where a retire points them
           "extras": [{"id", "dir", "packageId", "sourcePath"}]   dir and packageId null for an extra
@@ -1116,6 +1120,21 @@ def now_utc():
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def probed_row(rec):
+    """What a source's record probed of its original, in the fields the catalog's row of the original
+    says it in — the first video stream's codec and size, the container's bitrate and duration: what a
+    rebuild from the record gives that row. A catalog that never probed its originals holds none of
+    them, and the adopt writes these, so the database knows what its library does."""
+    stream = next((x for x in rec.get("streams") or []
+                   if x.get("type") == "video" and not (x.get("dispositions") or {}).get("attachedPic")), None)
+    container = rec.get("container") or {}
+    return {"codec": (stream or {}).get("codec"),
+            "resolution": f"{stream['width']}x{stream['height']}" if stream and stream.get("width") and stream.get("height")
+            else None,
+            "bitrateKbps": container["bitrate"] // 1000 if container.get("bitrate") else None,
+            "durationMs": container.get("durationMs")}
+
+
 class Platform(Build):
     """--platform: every record of the items an export holds, staged under <root>/.work/migration/<run>/
     for katalog-manager to adopt: one folder per item under staged/<itemId>/item/, written as the item
@@ -1654,7 +1673,8 @@ class Platform(Build):
                     moves["original"].append({"kind": "link" if linked else "sidecar", "from": local, "to": to})
         if original:
             if primary:
-                db["assets"].append({"id": primary.get("id"), "path": os.path.join(vdir, kept), "sourceId": sid})
+                db["assets"].append({"id": primary.get("id"), "path": os.path.join(vdir, kept), "sourceId": sid,
+                                     **({"probed": probed_row(rec)} if rec.get("streams") else {})})
             for s, local in sidecar_rows:
                 to = self.arrival_of(local)[0]
                 if to:

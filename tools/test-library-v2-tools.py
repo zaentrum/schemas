@@ -2238,6 +2238,8 @@ def adopt(root, run, export, fresh):
                              durationMs=pkg["durationMs"])
             elif a["path"].startswith(os.path.join(u["itemDir"], "sources", "")):
                 asset.update(kind="original", isPrimary=False)
+            elif a.get("probed"):
+                asset.update(a["probed"])   # what the record probed of the original, in the row's own fields
         row["playbackAssets"] = [a for a in row["playbackAssets"] if a["kind"] != "packaged" or a["id"] in keep]
         subs = {x["id"]: x for x in row["subtitleAssets"]}
         for x in db["subtitles"]:
@@ -2386,7 +2388,8 @@ def test_platform(t):
              ([{"versionId": tvid, "packageId": None, "dir": os.path.join(taken_dir, "versions", tvid), "completedAt": None,
                 "sourceIds": [tsid], "verifiedAt": None, "verifiedLevel": None, "takenIn": True}],
               os.path.join(taken_dir, "sources", tsid),
-              [{"id": "pt1", "path": os.path.join(taken_dir, "versions", tvid, "original.mkv"), "sourceId": tsid}]))
+              [{"id": "pt1", "path": os.path.join(taken_dir, "versions", tvid, "original.mkv"), "sourceId": tsid,
+                "probed": {"codec": "h264", "resolution": "1920x1080", "bitrateKbps": 4000, "durationMs": 90000}}]))
 
         fresh = os.path.join(tmp, "after.json")
         units, stale = adopt(root, PF_RUN, export, fresh)
@@ -2624,6 +2627,15 @@ def test_platform_prelinked(t):
         root = os.path.join(tmp, "katalog")
         export = legacy_store(root)
         services_to(root, export)
+        # as a catalog from before holds it: its originals never probed into their rows, and no tagline
+        # said as an empty one
+        e = jload(export)
+        for r in e["items"]:
+            r["tagline"] = ""
+            for a in r["playbackAssets"]:
+                if a["kind"] == "primary":
+                    a.update(codec=None, resolution=None, bitrateKbps=None, durationMs=None)
+        jwrite(export, e)
         env = fake_ffprobe(os.path.join(tmp, "bin"))
         before = tree_files(root)
         code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
@@ -2686,8 +2698,14 @@ def test_platform_prelinked(t):
             t.skip("validate-library-v2.py finds the prelinked library valid", "jsonschema is not importable here")
         code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
                           "--ignore-fields", "id,path,hash", "--text-language", "und")
-        t.ok("and the rebuild agrees with the database the adopt left", code == 0
-             and "the tree and the database agree" in ctext, ctext)
+        t.ok("and the rebuild agrees with the database the adopt left — the adopt wrote each original's row what "
+             "its record probed, which the catalog before never knew, and an empty tagline is none",
+             code == 0 and "the tree and the database agree" in ctext, ctext)
+        after = {a["id"]: a for r in jload(fresh)["items"] for a in r["playbackAssets"]}
+        t.eq("the plan says what the record probed of an original, in its row's own fields",
+             (unit["db"]["assets"][0].get("probed"), [after["pa1"][k] for k in ("codec", "resolution", "bitrateKbps", "durationMs")]),
+             ({"codec": "h264", "resolution": "1920x1080", "bitrateKbps": 4000, "durationMs": 90000},
+              ["h264", "1920x1080", 4000, 90000]))
 
 
 def test_platform_not_writable(t):

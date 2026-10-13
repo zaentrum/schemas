@@ -863,13 +863,17 @@ def normalise_artwork(a):
 
 def normalise(row):
     """A catalog row as it can be compared: the artwork reduced to its hash, its freshness in one form,
-    nothing else changed."""
+    an empty tagline or description none, nothing else changed."""
     out = dict(row)
     out["artwork"] = [normalise_artwork(a) for a in row.get("artwork") or [] if isinstance(a, dict)]
     if "tmdbFetchedAt" in out:
         out["tmdbFetchedAt"] = stamp(out["tmdbFetchedAt"])
     if "tmdbChangedAt" in out:
         out["tmdbChangedAt"] = day(out["tmdbChangedAt"])
+    # no tagline is no tagline, however a row says it: a record keeps none for an empty one
+    for key in ("tagline", "description"):
+        if out.get(key) == "":
+            out[key] = None
     if isinstance(row.get("trailers"), list):
         # a downloaded trailer moved into its extra's folder, under the name the library gives an
         # original, so of its local copy only whether there is one can be compared: neither where it
