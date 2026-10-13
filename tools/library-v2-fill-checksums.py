@@ -3,7 +3,7 @@
 
 Usage:
   library-v2-fill-checksums.py LIBRARY [--apply] [--run RUN] [--items ID[,ID…]] [--until HH:MM]
-                               [--max-bytes N] [--verbose]
+                               [--max-bytes N] [--jobs N] [--verbose]
 
 A migration that could not read a store of many terabytes through while its service was paused
 stages its packages with --checksums pending (library-v2-from-catalog.py): each package.json counts
@@ -36,7 +36,9 @@ changes nothing more.
 
 --until HH:MM (UTC) starts no folder after that time, and --max-bytes none once that many bytes were
 read: the reading is all the cost, and a library that is being watched in the evening is left alone.
---items narrows the run to those items' versions.
+--items narrows the run to those items' versions. --jobs N reads N files of a folder at a time: a
+package is thousands of small files, and on a share it is the wait for each that the reading costs,
+so several at once fill a library many times faster — and ask as much more of the storage meanwhile.
 
 It will not read or change an original, a source, an extra, a projection or the database, nor a
 package whose checksums are not pending.
@@ -51,8 +53,8 @@ except ImportError:
     if "LIBV2_RECORDS" not in globals():
         sys.exit("library-v2-fill-checksums.py needs libv2_records.py: run it from tools/, or pipe the two "
                  "together, cat tools/libv2_records.py tools/library-v2-fill-checksums.py | python3 - …")
-if LIBV2_RECORDS < 4:
-    sys.exit(f"library-v2-fill-checksums.py needs libv2_records.py 4 or later, found {LIBV2_RECORDS}")
+if LIBV2_RECORDS < 5:
+    sys.exit(f"library-v2-fill-checksums.py needs libv2_records.py 5 or later, found {LIBV2_RECORDS}")
 
 SUMS = "checksums.sha256"
 
@@ -180,6 +182,7 @@ def main():
     ap.add_argument("--items", default="", help="comma-separated item ids: only their versions")
     ap.add_argument("--until", default="", help="HH:MM in UTC: start no folder after that time")
     ap.add_argument("--max-bytes", type=int, default=0, help="start no folder once this many bytes were read")
+    ap.add_argument("--jobs", type=int, default=1, help="how many files of a folder are read at a time (1)")
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
     root = os.path.abspath(a.root)
@@ -201,7 +204,7 @@ def main():
         if n:
             print(f"finished {n} folder(s) an earlier run left between package.json and .complete")
 
-    pending, filled, conflicts, read, stopped = [], 0, [], 0, None
+    pending, filled, conflicts, read, stopped, began = [], 0, [], 0, None, now()
     for rel in version_folders(root):
         folder = os.path.join(root, rel)
         if only and ids_of(rel)[0] not in only:
@@ -227,7 +230,7 @@ def main():
         if problems:
             conflicts.append((rel, problems[0]))
             continue
-        out = fill_checksums(folder)
+        out = fill_checksums(folder, jobs=max(1, a.jobs))
         if out is None:
             conflicts.append((rel, "its files changed while they were read"))
             continue
@@ -257,8 +260,11 @@ def main():
         return
     for rel, why in conflicts:
         print(f"conflict {rel}: {why}")
+    took = max((now() - began).total_seconds(), 0.001)
     print(f"filled {filled} of {len(pending)} pending package(s), {read} bytes read; "
           f"{len(conflicts)} conflict(s), {len(pending) - filled - len(conflicts)} left")
+    if filled:
+        print(f"  in {took:.0f} s, {read / took / 1e6:.1f} MB/s, {a.jobs if a.jobs > 1 else 1} file(s) at a time")
     if stopped:
         print(f"stopped: {stopped}; run it again to go on")
     if conflicts:

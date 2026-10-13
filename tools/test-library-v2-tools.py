@@ -2580,8 +2580,9 @@ def test_platform_beside_the_old(t):
         code, text = run(FILL, root, "--apply", "--max-bytes", "1")
         t.ok("--max-bytes starts no folder once that much was read: one more is filled, one left, and it says so",
              code == 0 and "filled 1 of 2" in text and "stopped" in text, text)
-        code, text = run(FILL, root, "--apply")
-        t.ok("the next run fills the rest", code == 0 and "filled 1 of 1" in text, text)
+        code, text = run(FILL, root, "--apply", "--jobs", "4")
+        t.ok("the next run fills the rest, four files at a time, to the same chain", code == 0 and "filled 1 of 1" in text
+             and "4 file(s) at a time" in text, text)
         after = tree_files(root)
         code, text = run(FILL, root, "--apply")
         t.ok("and one after it changes nothing", code == 0 and "filled 0 of 0" in text and tree_files(root) == after, text)

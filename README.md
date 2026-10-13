@@ -714,7 +714,8 @@ storage host itself, to make before the adopt, a hard link a line; and each plan
 from the arrivals into its version folder, a rename within the library's share. What the adopt
 leaves is the same. Afterwards `library-v2-fill-checksums.py <root> --apply` hashes the pending
 packages folder by folder and closes each chain — `--until HH:MM` and `--max-bytes` keep the reading
-out of the hours the library is watched, `--items` narrows it, and a folder that no longer holds the
+out of the hours the library is watched, `--jobs N` reads N files at a time (a package is thousands
+of small files, and on a share it is the wait for each that costs), `--items` narrows it, and a folder that no longer holds the
 files and the bytes its record counted is a conflict, reported and left as it was. Its journal,
 `.work/migration/<run>/checksums.jsonl`, lists each version it closed (`filled`): what the catalog
 may now call verified in full. While the old names are there, a library check takes
@@ -868,6 +869,9 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   it, so the library before keeps its files; a plan written without the two is the one before.
   `--originals prelinked` is for a store that is one filesystem with the library only where its disk
   is: the run lists the links to make there before the adopt (`links.tsv`), and its plans hold none.
+  `library-v2-fill-checksums.py --jobs N` reads N files of a folder at a time, and says how fast it
+  read; `libv2_records.py` (5) takes `jobs` in `package_files()` and `fill_checksums()`, and every
+  record it writes is the one before.
   A stage also reports a package it could read and the adopt could not move — the user it runs as,
   which the adopt runs as too, may not write into the package's folder, the one above it or one of
   the folders that move — as the problem *package folder not writable*: a store another user wrote

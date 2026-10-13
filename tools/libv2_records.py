@@ -64,7 +64,7 @@ import copy, datetime, hashlib, json, os, re, shutil, subprocess, uuid
 # several episodes as the catalog's scanner does, from the first to the last. 4: a package's checksums
 # can be pending (package_listing, checksums and package_record with pending, fill_checksums), and
 # chain_problems() reads such a chain.
-LIBV2_RECORDS = 4
+LIBV2_RECORDS = 5
 
 NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://zaentrum.github.io/schemas/library")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
@@ -1094,18 +1094,28 @@ def peak_bandwidth(folder, master="hls/master.m3u8"):
     return None
 
 
-def package_files(folder, dirs=PACKAGE_DIRS):
+def package_files(folder, dirs=PACKAGE_DIRS, jobs=1):
     """Every file of the package in folder, as [(path relative to folder, hex sha256, size)]: the
-    rendition, subtitle, trickplay and trailer folders, never the records beside them."""
-    out = []
+    rendition, subtitle, trickplay and trailer folders, never the records beside them. With jobs
+    above one that many files are read at a time: a package is thousands of small files, and on a
+    share the wait for each, not the bytes, is what reading it costs."""
+    found = []
     for sub in dirs:
         base = os.path.join(folder, sub)
         if not os.path.isdir(base):
             continue
         for rel in walk_files(base):
-            p = os.path.join(base, rel)
-            out.append((os.path.join(sub, rel).replace(os.sep, "/"), sha_file(p).split(":", 1)[1], os.path.getsize(p)))
-    return sorted(out)
+            found.append((os.path.join(sub, rel).replace(os.sep, "/"), os.path.join(base, rel)))
+
+    def one(entry):
+        rel, p = entry
+        return rel, sha_file(p).split(":", 1)[1], os.path.getsize(p)
+
+    if jobs > 1 and len(found) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            return sorted(pool.map(one, found))
+    return sorted(one(entry) for entry in found)
 
 
 def package_listing(folder, dirs=PACKAGE_DIRS):
@@ -1332,20 +1342,20 @@ def checksums_pending(folder):
         return False
 
 
-def fill_checksums(folder, record="version.json", dirs=PACKAGE_DIRS):
+def fill_checksums(folder, record="version.json", dirs=PACKAGE_DIRS, jobs=1):
     """Closes the chain of a version folder whose checksums are pending: every package file is
     hashed, with the record beside them, and what the folder is to hold is returned —
     (checksums.sha256 bytes, package.json bytes, .complete bytes) — to be written in that order, each
     in one step. The package record changes in its checksums alone. None when the folder's checksums
     are not pending, or when what it holds is no longer what the record counted: then nothing may be
-    written, and chain_problems() says what is wrong."""
+    written, and chain_problems() says what is wrong. jobs is how many files are read at a time."""
     pkg_path = os.path.join(folder, "package.json")
     if not checksums_pending(folder) or chain_problems(folder, record, dirs):
         return None
     with open(pkg_path, encoding="utf-8") as f:
         package = json.load(f)
     with open(os.path.join(folder, record), "rb") as f:
-        listed = package_files(folder, dirs) + [record_entry(record, f.read())]
+        listed = package_files(folder, dirs, jobs) + [record_entry(record, f.read())]
     data, sums = checksums(listed)
     if (sums["files"], sums["bytes"]) != (package["checksums"].get("files"), package["checksums"].get("bytes")):
         return None  # a file changed between the count and the hash
