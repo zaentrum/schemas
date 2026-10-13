@@ -250,7 +250,12 @@ staged (covering) and how many episodes they cover (covered).
 bytes and says its checksums are pending, no checksums.sha256 is staged, and the version is planned
 as not verified — a store of many terabytes cannot be read through while its service is paused.
 library-v2-fill-checksums.py closes those chains afterwards.
---dry-run writes report.json and nothing else, and hashes no package file. --shard narrows the run to
+--jobs N probes N originals at a time, ahead of the staging, and --probe-cache FILE keeps what each
+probe said, by the original's path, size and modification time: a store of thousands of originals on
+a share is hours of probes one at a time, and a stage after a dry run need not take them again. The
+records are the ones a run without either writes.
+--dry-run writes report.json and nothing else — but the probe cache, when one is named — and hashes no
+package file. --shard narrows the run to
 the items whose folder is in that shard — left(coalesce(seriesId, id), 2), as the export narrows by
 it: run each shard of one run with the same --as-of, so the people two shards credit are staged alike.
 """
@@ -1165,6 +1170,7 @@ class Platform(Build):
         self.gate, self.measured, self.unmeasured = {}, 0, 0
         self.counts.update(units=0, recorded=0, takenIn=0, covering=0, covered=0, pending=0, linked=0)
         self.links = []   # --originals prelinked: (a file of the store before, the second name it is to get)
+        self.probes = {}  # --jobs / --probe-cache: an original's probe, taken before the items are staged
         # one file, several episodes (plan_covers): the holder of each covered episode, the episodes each
         # holder's file covers after it, those the catalog linked itself, the holders whose original is a
         # disc image, and what the plan found to say of each holder; once a holder is staged, the episodes
@@ -1214,6 +1220,55 @@ class Platform(Build):
                 rel = os.path.relpath(local, base)
                 return os.path.join(self.work, arrivals, rel), rel.replace(os.sep, "/")
         return None, None
+
+    def prefetch(self, rows):
+        """--jobs N and --probe-cache FILE: every original of the rows is probed before an item is staged,
+        N at a time, and what each probe said is kept in FILE — a line an original, by its path, size and
+        modification time — so a run after a dry run, or after one that stopped, does not probe again. A
+        store of thousands of originals on a share is hours of probes one at a time; nothing the run
+        writes of an item changes."""
+        if not self.probe_version or not (self.a.jobs > 1 or self.a.probe_cache):
+            return
+        paths = sorted({p for p in (self.located((self.primary_asset(r) or {}).get("path")) for r in rows
+                                    if r.get("type") in ("movie", "episode")) if p})
+        cache, known = self.a.probe_cache, {}
+        if cache and os.path.isfile(cache):
+            with open(cache, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        e = json.loads(line)
+                        known[(e["path"], e["size"], e["mtimeNs"])] = e["probe"]
+                    except (ValueError, KeyError, TypeError):
+                        pass  # a line a stop cut short: its original is probed again
+        todo = []
+        for path in paths:
+            st = os.stat(path)
+            key = (path, st.st_size, st.st_mtime_ns)
+            if key in known:
+                self.probes[path] = known[key]
+            else:
+                todo.append(key)
+        if todo:
+            from concurrent.futures import ThreadPoolExecutor
+            if cache:
+                os.makedirs(os.path.dirname(os.path.abspath(cache)), exist_ok=True)
+            out = open(cache, "a", encoding="utf-8") if cache else None
+            try:
+                with ThreadPoolExecutor(max_workers=max(1, self.a.jobs)) as pool:
+                    for key, probe in zip(todo, pool.map(lambda k: ffprobe(k[0]), todo)):
+                        self.probes[key[0]] = probe
+                        if out and probe is not None:   # one that failed is tried again by the next run
+                            out.write(json.dumps({"path": key[0], "size": key[1], "mtimeNs": key[2], "probe": probe},
+                                                 ensure_ascii=False) + "\n")
+            finally:
+                if out:
+                    out.close()
+        print(f"probes: {len(paths)} original(s), {len(paths) - len(todo)} known from before, {len(todo)} probed "
+              f"{max(1, self.a.jobs)} at a time")
+
+    def probe_of(self, path):
+        """The probe of an original: the one prefetch() took, or one taken now."""
+        return self.probes[path] if path in self.probes else ffprobe(path)
 
     def located(self, path, markers=("media",)):
         """A file the catalog names, where it is on this share, or None."""
@@ -1565,7 +1620,7 @@ class Platform(Build):
         # sources/<sourceId>/: the probe, a copy of each subtitle file that came with the original — in the order
         # the catalog lists them, under the name the record logic gives it, and nothing else that sat beside it —
         # the record
-        probe = ffprobe(original) if original and self.probe_version else None
+        probe = self.probe_of(original) if original and self.probe_version else None
         if probe:
             self.counts["probed"] += 1
         elif original:
@@ -1911,6 +1966,12 @@ def main():
                          "prelinked leaves them too, for a store that is one filesystem with the library only "
                          "where its disk is: the run lists the hard links to make there before the adopt "
                          "(links.tsv), among the arrivals, and plans each original's move from there")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="--platform: probe this many originals at a time, before the items are staged (1)")
+    ap.add_argument("--probe-cache", default="",
+                    help="--platform: a file that keeps what each probe said, by the original's path, size and "
+                         "modification time: a run after a dry run, or after one that stopped, does not probe again. "
+                         "It is written by a dry run too")
     ap.add_argument("--as-of", default="", help="the moment every record says it was written; the export's "
                                                 "exportedAt by default, which is what makes a re-run identical")
     ap.add_argument("--text-language", default="und",
@@ -1972,6 +2033,8 @@ def main():
         rows = [r for r in rows if b.shard_of(r) == args.shard]
     if not b.probe_version and not (args.people_only or args.projections_only):
         print("note: ffprobe is not on PATH; source records will carry size, mtime and qh1 only")
+    if args.platform and not (args.people_only or args.projections_only):
+        b.prefetch(rows)
     for row in ([] if args.people_only else sorted(rows, key=b.staging_order)):
         episodes = [r for r in (export.get("items") or []) if r.get("parentId") == row["id"]] \
             if row["type"] == "series" else []

@@ -872,6 +872,11 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   `library-v2-fill-checksums.py --jobs N` reads N files of a folder at a time, and says how fast it
   read; `libv2_records.py` (5) takes `jobs` in `package_files()` and `fill_checksums()`, and every
   record it writes is the one before.
+  `library-v2-from-catalog.py --platform` takes `--jobs N`, which probes N originals at a time ahead
+  of the staging, and `--probe-cache FILE`, which keeps what each probe said by the original's path,
+  size and modification time, so a stage after a dry run probes none again; `library-v2-rebuild.py`
+  takes `--shard aa`, which reads one shard of the tree and the people its items credit, to compare a
+  catalog too large for one export shard by shard.
   A stage also reports a package it could read and the adopt could not move — the user it runs as,
   which the adopt runs as too, may not write into the package's folder, the one above it or one of
   the folders that move — as the problem *package folder not writable*: a store another user wrote

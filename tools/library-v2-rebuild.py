@@ -3,7 +3,7 @@
 
 Usage:
   library-v2-rebuild.py LIBRARY [--out rows.json] [--compare CATALOG.json [--subset] [--arrivals-root DIR]]
-                        [--text-language LANG] [--ignore-fields a,b,c]
+                        [--shard aa] [--text-language LANG] [--ignore-fields a,b,c]
 
 The database is the working copy and this tree is the record that can rebuild it. This reads the
 records, applies the item's events in the order they happened, and writes the rows a catalog would
@@ -133,6 +133,10 @@ says. A database rebuilt from the tree has lost the defaults people chose.
 
 --subset reports the rows only the database has without counting them, for a tree that was built
 from part of a catalog.
+
+--shard aa reads one shard of the tree — movies/aa/ and series/aa/, with their episodes, and the
+people their items credit — which is what an export of that shard holds (psql -v shard=aa): a
+catalog too large for one export is compared shard by shard.
 
 The arrivals are not the record. A file waits there — in <root>/.work/incoming on the platform — until
 the first record of its title is made: an original until its version folder takes it in, a subtitle
@@ -318,8 +322,9 @@ def newest_record(d):
 
 # ---------------------------------------------------------------- reading one item
 class Rebuild:
-    def __init__(self, root, text_language):
+    def __init__(self, root, text_language, shard=None):
         self.root = root
+        self.shard = shard   # --shard: the one shard of movies/ and series/ read, and the people its items credit
         self.text_language = text_language
         self.items = []
         self.people = []
@@ -340,7 +345,7 @@ class Rebuild:
             base = os.path.join(self.root, category)
             if not os.path.isdir(base):
                 continue
-            for shard in listdir(base):
+            for shard in ([self.shard] if self.shard else listdir(base)):
                 sd = os.path.join(base, shard)
                 if not os.path.isdir(sd):
                     continue
@@ -355,11 +360,18 @@ class Rebuild:
                             self.item(os.path.join(ed, eid))
         self.covered()
         base = os.path.join(self.root, "people")
-        for shard in (listdir(base) if os.path.isdir(base) else []):
-            sd = os.path.join(base, shard)
-            for pid in (listdir(sd) if os.path.isdir(sd) else []):
-                if os.path.isdir(os.path.join(sd, pid)):
-                    self.person(os.path.join(sd, pid))
+        if self.shard:
+            # the people the shard's items credit, as an export of the shard carries them, and no other
+            credited = sorted({str(c.get("personId")) for r in self.items for c in r.get("people") or [] if c.get("personId")})
+            for pid in credited:
+                if os.path.isdir(os.path.join(base, pid[:2], pid)):
+                    self.person(os.path.join(base, pid[:2], pid))
+        else:
+            for shard in (listdir(base) if os.path.isdir(base) else []):
+                sd = os.path.join(base, shard)
+                for pid in (listdir(sd) if os.path.isdir(sd) else []):
+                    if os.path.isdir(os.path.join(sd, pid)):
+                        self.person(os.path.join(sd, pid))
         self.items.sort(key=lambda r: r["id"])
         self.people.sort(key=lambda r: r["id"])
         # an item's extras in the order a viewer sees them: by the order a person gave, then the rest
@@ -1273,12 +1285,15 @@ def main():
     ap.add_argument("--arrivals-root", action="append", default=[],
                     help="where the platform keeps the files that are not the record, e.g. <root>/.work: the "
                          "export's asset and subtitle rows of files there are not compared; repeatable")
+    ap.add_argument("--shard", default="",
+                    help="read one shard of the tree only — movies/<shard>/ and series/<shard>/, and the people "
+                         "their items credit — to compare with an export of that shard")
     ap.add_argument("--subset", action="store_true",
                     help="the tree holds only some of the database's items: rows only the database "
                          "has are reported but are not a difference")
     args = ap.parse_args()
 
-    r = Rebuild(os.path.abspath(args.root), args.text_language)
+    r = Rebuild(os.path.abspath(args.root), args.text_language, shard=args.shard or None)
     r.run()
     out = {"generatedAt": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
            .isoformat().replace("+00:00", "Z"),

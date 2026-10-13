@@ -2438,6 +2438,20 @@ def test_platform(t):
              "compared, the arrivals aside and the chosen default not compared",
              code == 0 and "the tree and the database agree" in ctext, ctext)
 
+        # a catalog too large for one export is compared shard by shard
+        e = jload(fresh)
+        shard = PF_MOVIE[:2]
+        mine = [r for r in e["items"] if r["id"][:2] == shard and r["type"] == "movie"]
+        credited = {c["personId"] for r in mine for c in r.get("people") or []}
+        part = dict(e, shard=shard, items=mine, people=[p for p in e.get("people") or [] if p["id"] in credited],
+                    extras=[x for x in e.get("extras") or [] if x.get("itemId") in {r["id"] for r in mine}])
+        jwrite(os.path.join(tmp, "after-shard.json"), part)
+        code, ctext = run(REBUILD, root, "--shard", shard, "--compare", os.path.join(tmp, "after-shard.json"),
+                          "--arrivals-root", os.path.join(root, ".work"), "--ignore-fields", "id,path,hash",
+                          "--text-language", "und")
+        t.ok("--shard reads one shard of the tree and the people its items credit, and agrees with an export of it",
+             code == 0 and "rebuilt: {'movie': 1}, people: 1," in ctext and "the tree and the database agree" in ctext, ctext)
+
         code, text = run_with(env, FROM_CATALOG, "--platform", "--export", fresh, "--root", root, "--run", PF_RUN + "b")
         report = jload(os.path.join(root, ".work", "migration", PF_RUN + "b", "report.json"))
         t.ok("a run after the adopt stages nothing: every item is recorded",
@@ -2707,6 +2721,47 @@ def test_platform_prelinked(t):
              (unit["db"]["assets"][0].get("probed"), [after["pa1"][k] for k in ("codec", "resolution", "bitrateKbps", "durationMs")]),
              ({"codec": "h264", "resolution": "1920x1080", "bitrateKbps": 4000, "durationMs": 90000},
               ["h264", "1920x1080", 4000, 90000]))
+
+
+def test_platform_probes(t):
+    """--jobs probes several originals at a time before the items are staged, and --probe-cache keeps
+    what each probe said: a dry run fills it, and the stage after it stages the same records without
+    one probe more — proven with an ffprobe that answers its version and nothing else."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "katalog")
+        export = legacy_store(root)
+        services_to(root, export)
+        env = fake_ffprobe(os.path.join(tmp, "bin"))
+        cache = os.path.join(tmp, "probes.jsonl")
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                              "--dry-run", "--jobs", "4", "--probe-cache", cache)
+        lines = [json.loads(line) for line in open(cache, encoding="utf-8")] if os.path.isfile(cache) else []
+        t.ok("a dry run with --jobs and --probe-cache probes every original once, ahead of the staging, and keeps "
+             "each probe by its path, size and modification time",
+             code == 0 and "probes: 3 original(s), 0 known from before, 3 probed 4 at a time" in text
+             and len(lines) == 3 and all(set(e) == {"path", "size", "mtimeNs", "probe"} for e in lines)
+             and sorted(os.listdir(os.path.join(root, ".work", "migration", PF_RUN))) == ["report.json"], text)
+        deaf = os.path.join(tmp, "deaf")
+        os.makedirs(deaf)
+        with open(os.path.join(deaf, "ffprobe"), "w") as f:
+            f.write(f"#!{sys.executable}\nimport sys\n"
+                    "print('ffprobe version 9.9-test') if '-version' in sys.argv else sys.exit(1)\n")
+        os.chmod(os.path.join(deaf, "ffprobe"), 0o755)
+        env2 = dict(os.environ, PATH=deaf + os.pathsep + os.environ.get("PATH", ""))
+        code, text = run_with(env2, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN,
+                              "--jobs", "4", "--probe-cache", cache)
+        report = jload(os.path.join(root, ".work", "migration", PF_RUN, "report.json")) if code == 0 else {}
+        unit = jload(os.path.join(root, ".work", "migration", PF_RUN, "units", PF_MOVIE + ".json")) if code == 0 else {}
+        t.ok("the stage after it takes every probe from the cache — its ffprobe would answer none — and stages the "
+             "records a run that probed would",
+             code == 0 and "probes: 3 original(s), 3 known from before, 0 probed" in text
+             and report.get("loss", {}).get("measured") == 2
+             and (unit.get("db", {}).get("assets") or [{}])[0].get("probed", {}).get("codec") == "h264", text)
+        os.utime(os.path.join(root, "media", "Example Film (2024)", "Example Film (2024).mkv"), (1, 1))
+        code, text = run_with(env, FROM_CATALOG, "--platform", "--export", export, "--root", root, "--run", PF_RUN + "x",
+                              "--dry-run", "--probe-cache", cache)
+        t.ok("an original that changed since is probed again", code == 0
+             and "probes: 3 original(s), 2 known from before, 1 probed 1 at a time" in text, text)
 
 
 def test_platform_not_writable(t):
@@ -5315,6 +5370,7 @@ def main():
                         ("the platform's library, staged and adopted", test_platform),
                         ("the platform's library, staged beside the old one", test_platform_beside_the_old),
                         ("the platform's library, its originals linked where the disk is", test_platform_prelinked),
+                        ("probes taken several at a time, and kept", test_platform_probes),
                         ("a store the adopt could not move", test_platform_not_writable),
                         ("what the platform's library cannot hold", test_platform_problems),
                         ("one file, several episodes, staged; a disc image left out", test_platform_covers),
