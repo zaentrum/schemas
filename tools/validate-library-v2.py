@@ -2,7 +2,8 @@
 """Validate a zaentrum library v2 tree against the JSON Schemas and the rules that span files.
 
 Usage:
-  validate-library-v2.py [--check-media | --check-checksums] [--schemas URL-or-dir] ROOT [ROOT ...]
+  validate-library-v2.py [--check-media | --check-checksums] [--schemas URL-or-dir] [--shard AA ...]
+                         ROOT [ROOT ...]
 
 ROOT is a folder holding movies/, series/ and people/. In v2 the database is the working copy and
 this tree is the record that can rebuild it: every file is either written once (item, source,
@@ -378,6 +379,7 @@ class Checker:
         self.errors = []
         self.notes = []
         self.root_dir = None
+        self.only_shards = None  # --shard: the shards to look at; None, every one
         self.counts = {"movie": 0, "series": 0, "episode": 0, "people": 0, "versions": 0, "packages": 0,
                        "sources": 0, "images": 0, "events": 0, "extras": 0}
 
@@ -1516,8 +1518,11 @@ class Checker:
             self.hard_links(d)
 
     def shards(self, base, what):
-        """The <aa>/<id>/ folders of one category, with the rules every category shares."""
+        """The <aa>/<id>/ folders of one category, with the rules every category shares; with --shard,
+        those of the shards named alone."""
         for shard in listdir(base):
+            if self.only_shards is not None and shard not in self.only_shards:
+                continue
             sd = os.path.join(base, shard)
             if not os.path.isdir(sd):
                 self.err(sd, "unexpected file among the shard folders")
@@ -1537,7 +1542,8 @@ class Checker:
     def root(self, r):
         self.root_dir = r
         found = 0
-        for name in listdir(r):
+        # the root's own entries are checked once: without --shard, or with the shard 00
+        for name in (listdir(r) if self.only_shards is None or "00" in self.only_shards else []):
             if name.startswith("."):
                 continue  # .work/ and every other dot-entry: what is beside the record is not the record
             if name in OLD_STORE and os.path.isdir(os.path.join(r, name)):
@@ -1560,7 +1566,7 @@ class Checker:
         if os.path.isdir(os.path.join(r, "people")):
             for p in self.shards(os.path.join(r, "people"), "a person"):
                 self.person(p)
-        if not found:
+        if not found and self.only_shards is None:
             self.err(r, "no items found under movies/ or series/")
 
 
@@ -1576,9 +1582,17 @@ def main():
                          "the old library beside this one, and the original is that library's file too")
     ap.add_argument("--no-pending", action="store_true",
                     help="a package whose checksums are pending is a problem, not a note: every one is filled")
+    ap.add_argument("--shard", action="append", metavar="AA",
+                    help="only the items and people of this shard (the first two characters of an id; may be "
+                         "given more than once); the root's own entries are checked with the shard 00. A large "
+                         "library is validated a few shards at a time, side by side")
     args = ap.parse_args()
+    for s in args.shard or []:
+        if not re.fullmatch(r"[0-9a-f]{2}", s):
+            ap.error(f"--shard {s!r}: a shard is two hex characters, e.g. 0f")
     c = Checker(load_schemas(args.schemas), args.check_media, args.check_checksums,
                 shared_originals=args.shared_originals, no_pending=args.no_pending)
+    c.only_shards = set(args.shard) if args.shard else None
     for r in args.roots:
         c.root(r)
     print("checked:", c.counts)

@@ -86,7 +86,7 @@ rule and checks the tool notices:
                  arrived; a source of a file of several episodes covers them as given, the holder
                  first; piped behind a tool, the module has none of its names redefined by it
 """
-import base64, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
+import ast, base64, collections, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES = os.path.join(TOOLS, "..", "library", "v2", "examples")
@@ -2550,6 +2550,49 @@ def test_platform_beside_the_old(t):
              and "3 package(s) with their checksums pending" in mtext and "3 original(s) shared" in mtext, mtext)
         code, mtext = run(MEDIA_CHECK, root)
         t.ok("and without --shared-originals it does not", code != 0 and "hard links shared" in mtext, mtext)
+        # shard by shard, as a verify of a large library runs them side by side: together the shards
+        # count what the whole tree counts, and a shard of nothing is no problem
+        def counts_of(text):
+            line = next((l for l in text.splitlines() if l.startswith("checked: ")), "checked: {}")
+            return ast.literal_eval(line[len("checked: "):])
+        shards = sorted({s for c in ("movies", "series", "people") if os.path.isdir(os.path.join(root, c))
+                         for s in os.listdir(os.path.join(root, c))})
+        whole = counts_of(run(MEDIA_CHECK, "--shared-originals", root)[1])
+        summed, all_ok = collections.Counter(), True
+        for s in shards:
+            code, stext = run(MEDIA_CHECK, "--shared-originals", "--shard", s, root)
+            all_ok = all_ok and code == 0 and stext.strip().endswith("OK")
+            summed.update(counts_of(stext))
+        t.ok(f"the media check shard by shard ({len(shards)} shards) finds each OK, and their counts are the "
+             "whole tree's", all_ok and {k: v for k, v in summed.items() if v} == {k: v for k, v in whole.items() if v}
+             and whole["items"] > 0,
+             (dict(summed), whole))
+        code, stext = run(MEDIA_CHECK, "--shared-originals", "--shard", "ff", root)
+        t.ok("a shard that holds nothing is checked and OK, not 'no item folders'",
+             code == 0 and stext.strip().endswith("OK") and "no item folders" not in stext, stext)
+        code, stext = run(MEDIA_CHECK, "--shard", "xyz", root)
+        t.ok("a shard is two hex characters", code != 0 and "a shard is two hex characters" in stext, stext)
+        code, stext = run(MEDIA_CHECK, "--shard", PF_TAKEN[:2], root)
+        t.ok("a shard's linked original is a problem without --shared-originals, as in the whole tree",
+             code != 0 and "hard links shared" in stext, stext)
+        if have_jsonschema():
+            vwhole = counts_of(run(VALIDATOR, "--shared-originals", root)[1])
+            vsummed, vall_ok = collections.Counter(), True
+            for s in shards:
+                code, stext = run(VALIDATOR, "--shared-originals", "--shard", s, root)
+                vall_ok = vall_ok and code == 0 and stext.strip().endswith("OK")
+                vsummed.update(counts_of(stext))
+            t.ok("the validator shard by shard finds each OK, and their counts are the whole tree's",
+                 vall_ok and {k: v for k, v in vsummed.items() if v} == {k: v for k, v in vwhole.items() if v},
+                 (dict(vsummed), vwhole))
+            os.makedirs(os.path.join(root, "stray"))
+            code, stext = run(VALIDATOR, "--shard", "ff", root)
+            code0, stext0 = run(VALIDATOR, "--shard", "00", root)
+            os.rmdir(os.path.join(root, "stray"))
+            t.ok("the root's own entries are checked with the shard 00 alone",
+                 "stray" not in stext and code0 != 0 and "stray" in stext0, (stext, stext0))
+        else:
+            t.skip("the validator shard by shard", "jsonschema is not importable here")
         code, mtext = run(MEDIA_CHECK, "--shared-originals", "--no-pending", root)
         t.ok("nor with --no-pending", code != 0 and "checksums are pending" in mtext, mtext)
         code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),

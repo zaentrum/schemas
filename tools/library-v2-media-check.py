@@ -3,6 +3,7 @@
 
 Usage:
   library-v2-media-check.py LIBRARY [--checksums] [--shared-originals] [--no-pending] [--quiet]
+                                   [--shard AA ...]
 
 The schema validator answers whether the records are well formed; this answers whether they still
 describe what is on the disk. It needs nothing but the standard library, so it runs in the pod that
@@ -50,7 +51,7 @@ events/<…>.json files and no item checksums, fails here until library-v2-upgra
 
 It exits non-zero when anything is wrong, and prints one line per problem.
 """
-import argparse, hashlib, json, os, re, sys
+import argparse, hashlib, json, os, re, stat, sys
 
 OS_ARTEFACTS = re.compile(r"^(\.DS_Store|\._.*|Thumbs\.db|desktop\.ini|@eaDir|\.@__thumb|#recycle|\.AppleDouble)$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -91,14 +92,39 @@ def qh1(p):
     return "sha256:" + h.hexdigest()
 
 
-def package_files(vp, folders=PACKAGE_DIRS):
+def scan(top, seen, skip_top=()):
+    """Every file under top, each with its lstat, as (path, stat): one stat a file, kept in seen (path
+    -> stat) and taken from it where a walk before saw the file. On a share every stat is a round trip
+    to the server, and a package holds hundreds of files. Folders named in skip_top are left out at
+    the top level only."""
+    out = []
+    try:
+        entries = sorted(os.scandir(top), key=lambda e: e.name)
+    except OSError:
+        return out
+    for e in entries:
+        if OS_ARTEFACTS.match(e.name) or (e.name in skip_top):
+            continue
+        try:
+            if e.is_dir(follow_symlinks=False):
+                out += scan(e.path, seen)
+                continue
+            st = seen.get(e.path)
+            if st is None:
+                st = seen[e.path] = e.stat(follow_symlinks=False)
+            out.append((e.path, st))
+        except OSError:
+            continue
+    return out
+
+
+def package_files(vp, folders=PACKAGE_DIRS, seen=None):
     """Every file of the package in a version folder, relative to it. The records, the chain above
     them and the original beside them are not part of the package."""
+    seen = {} if seen is None else seen
     out = []
     for d in folders:
-        for root, dirs, files in os.walk(os.path.join(vp, d)):
-            dirs[:] = sorted(x for x in dirs if not OS_ARTEFACTS.match(x))
-            out += [os.path.relpath(os.path.join(root, f), vp) for f in sorted(files) if not OS_ARTEFACTS.match(f)]
+        out += [os.path.relpath(p, vp) for p, _ in scan(os.path.join(vp, d), seen)]
     return sorted(out)
 
 
@@ -121,8 +147,13 @@ SHARED_ORIGINAL = re.compile(r"^versions/[^/]+/original(-\d+)?\.[a-z0-9]+$")
 
 
 class Check:
-    def __init__(self, hash_everything, shared_originals=False, no_pending=False):
+    def __init__(self, hash_everything, shared_originals=False, no_pending=False, shards=None):
         self.hash_everything = hash_everything
+        # the shards to look at (the first two characters of an id): a large library is checked a
+        # few shards at a time, side by side; None, every one
+        self.shards = set(shards) if shards else None
+        # what the walks of the item being checked saw: path -> lstat, one stat a file
+        self.seen = {}
         # a migration that keeps the old library beside this one: a version's original is the old
         # path's file too, a hard link; and, once it says its checksums are filled, none is pending
         self.shared_originals = shared_originals
@@ -135,6 +166,11 @@ class Check:
 
     def err(self, where, msg):
         self.problems.append(f"{where}: {msg}")
+
+    def size(self, p):
+        """The size of a file, from what a walk saw where it saw it."""
+        st = self.seen.get(p)
+        return st.st_size if st is not None else os.path.getsize(p)
 
     def load(self, p):
         try:
@@ -166,6 +202,7 @@ class Check:
 
     # -------------------------------------------------- one item
     def item(self, d, kind):
+        self.seen = {}
         item = self.load(os.path.join(d, "item.json"))
         if item is None:
             return
@@ -405,7 +442,7 @@ class Check:
             self.err(f, f"does not list version.json, the record its package was made for ({UPGRADE})")
         elif os.path.isfile(vj) and sha_file(vj).split(":", 1)[1] != listed["version.json"]:
             self.err(vj, f"does not match the checksum {SUMS} recorded for it: changed after the package completed")
-        on_disk = package_files(vp) + (["version.json"] if os.path.isfile(vj) else [])
+        on_disk = package_files(vp, seen=self.seen) + (["version.json"] if os.path.isfile(vj) else [])
         for rel in sorted(set(on_disk) - set(listed)):
             self.err(os.path.join(vp, rel), "is a file of this package that checksums.sha256 does not list")
         for rel in sorted(set(listed) - set(on_disk) - set(CHAIN)):
@@ -413,7 +450,7 @@ class Check:
         if cs.get("files") is not None and len(listed) != cs["files"]:
             self.err(f, f"lists {len(listed)} files, package.json says {cs['files']}")
         present = [rel for rel in listed if rel in set(on_disk)]
-        total = sum(os.path.getsize(os.path.join(vp, rel)) for rel in present)
+        total = sum(self.size(os.path.join(vp, rel)) for rel in present)
         self.counts["files"] += len(present)
         self.counts["bytes"] += total
         if len(present) == len(listed) and cs.get("bytes") is not None and total != cs["bytes"]:
@@ -433,8 +470,8 @@ class Check:
         if self.no_pending:
             self.err(vp, "its checksums are pending: no file of this package was ever hashed "
                          "(library-v2-fill-checksums.py closes the chain)")
-        on_disk = package_files(vp) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
-        total = sum(os.path.getsize(os.path.join(vp, rel)) for rel in on_disk)
+        on_disk = package_files(vp, seen=self.seen) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
+        total = sum(self.size(os.path.join(vp, rel)) for rel in on_disk)
         self.counts["files"] += len(on_disk)
         self.counts["bytes"] += total
         if len(on_disk) != cs.get("files"):
@@ -534,13 +571,13 @@ class Check:
             if not os.path.isfile(os.path.join(xp, name)):
                 self.err(os.path.join(xp, name), "an original extra.json names is missing")
         on_disk = sorted([n for n in ["extra.json", *originals] if os.path.isfile(os.path.join(xp, n))]
-                         + package_files(xp, EXTRA_DIRS))
+                         + package_files(xp, EXTRA_DIRS, seen=self.seen))
         for rel in sorted(set(on_disk) - set(listed)):
             self.err(os.path.join(xp, rel), "is a file of this extra that checksums.sha256 does not list")
         for rel in sorted(set(listed) - set(on_disk) - set(CHAIN) - set(originals)):
             self.err(f, f"lists {rel}, which is not a file of this extra")
         present = [rel for rel in listed if rel in set(on_disk)]
-        total = sum(os.path.getsize(os.path.join(xp, rel)) for rel in present)
+        total = sum(self.size(os.path.join(xp, rel)) for rel in present)
         self.counts["files"] += len(present)
         self.counts["bytes"] += total
         if cs is not None:
@@ -557,19 +594,14 @@ class Check:
         """A library is portable only when its files are its own: a hard link ties one to another
         path, where something else can change or delete it."""
         linked = []
-        for root, dirs, files in os.walk(d):
-            dirs[:] = sorted(x for x in dirs if not OS_ARTEFACTS.match(x) and not (root == d and x == "episodes"))
-            for name in sorted(files):
-                p = os.path.join(root, name)
-                try:
-                    if not OS_ARTEFACTS.match(name) and not os.path.islink(p) and os.stat(p).st_nlink > 1:
-                        rel = os.path.relpath(p, d)
-                        if self.shared_originals and SHARED_ORIGINAL.match(rel.replace(os.sep, "/")):
-                            self.shared += 1  # the old library's file too, until that library is gone
-                            continue
-                        linked.append(rel)
-                except OSError:
-                    continue
+        for p, st in scan(d, self.seen, skip_top=("episodes",)):
+            if stat.S_ISLNK(st.st_mode) or st.st_nlink < 2:
+                continue
+            rel = os.path.relpath(p, d)
+            if self.shared_originals and SHARED_ORIGINAL.match(rel.replace(os.sep, "/")):
+                self.shared += 1  # the old library's file too, until that library is gone
+                continue
+            linked.append(rel)
         if linked:
             self.err(d, f"{len(linked)} file(s) are hard links shared with another path, e.g. {linked[0]}")
 
@@ -582,7 +614,7 @@ class Check:
                 continue
             for shard in listdir(base):
                 sd = os.path.join(base, shard)
-                if not os.path.isdir(sd):
+                if not os.path.isdir(sd) or (self.shards is not None and shard not in self.shards):
                     continue
                 for iid in listdir(sd):
                     d = os.path.join(sd, iid)
@@ -597,11 +629,13 @@ class Check:
                             found += 1
         base = os.path.join(root, "people")
         for shard in (listdir(base) if os.path.isdir(base) else []):
+            if self.shards is not None and shard not in self.shards:
+                continue
             sd = os.path.join(base, shard)
             for pid in (listdir(sd) if os.path.isdir(sd) else []):
                 if os.path.isdir(os.path.join(sd, pid)):
                     self.person(os.path.join(sd, pid))
-        if not found:
+        if not found and self.shards is None:
             self.err(root, "no item folders under movies/ or series/")
 
 
@@ -616,8 +650,14 @@ def main():
     ap.add_argument("--no-pending", action="store_true",
                     help="a package whose checksums are pending is a problem, not a note: every one is filled")
     ap.add_argument("--quiet", action="store_true", help="print the summary only")
+    ap.add_argument("--shard", action="append", metavar="AA",
+                    help="only the items and people of this shard (the first two characters of an id; may be "
+                         "given more than once): a large library is checked a few shards at a time, side by side")
     args = ap.parse_args()
-    c = Check(args.checksums, shared_originals=args.shared_originals, no_pending=args.no_pending)
+    for s in args.shard or []:
+        if not re.fullmatch(r"[0-9a-f]{2}", s):
+            ap.error(f"--shard {s!r}: a shard is two hex characters, e.g. 0f")
+    c = Check(args.checksums, shared_originals=args.shared_originals, no_pending=args.no_pending, shards=args.shard)
     c.run(os.path.abspath(args.root))
     print("checked:", c.counts)
     if c.pending:
