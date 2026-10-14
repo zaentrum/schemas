@@ -3,7 +3,7 @@
 
 Usage:
   library-v2-rebuild.py LIBRARY [--out rows.json] [--compare CATALOG.json [--subset] [--arrivals-root DIR]]
-                        [--shard aa] [--text-language LANG] [--ignore-fields a,b,c]
+                        [--shard aa] [--text-language LANG] [--ignore-fields a,b,c] [--leave-out FILE]
 
 The database is the working copy and this tree is the record that can rebuild it. This reads the
 records, applies the item's events in the order they happened, and writes the rows a catalog would
@@ -1291,6 +1291,10 @@ def main():
     ap.add_argument("--subset", action="store_true",
                     help="the tree holds only some of the database's items: rows only the database "
                          "has are reported but are not a difference")
+    ap.add_argument("--leave-out", metavar="FILE",
+                    help="item ids, one a line, the database holds and the tree is not to: what a migration "
+                         "left out by design (music, disc images) or did not adopt. They are taken out of the "
+                         "export before the compare, and counted")
     args = ap.parse_args()
 
     r = Rebuild(os.path.abspath(args.root), args.text_language, shard=args.shard or None)
@@ -1317,9 +1321,18 @@ def main():
     ignore = {x.strip() for x in args.ignore_fields.split(",") if x.strip()} | set(BEHAVIOUR)
     with open(args.compare, encoding="utf-8") as f:
         export = json.load(f)
+    left_out = 0
+    if args.leave_out:
+        with open(args.leave_out, encoding="utf-8") as f:
+            leave = {l.strip() for l in f if l.strip() and not l.startswith("#")}
+        items = export.get("items") or []
+        export["items"] = [i for i in items if i.get("id") not in leave]
+        left_out = len(items) - len(export["items"])
     lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest,
                                 extras=r.extras, people_newest=r.people_newest, arrivals=args.arrivals_root)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
+    if args.leave_out:
+        print(f"  left out: {left_out} item(s) of the export that {args.leave_out} names")
     for line in lines:
         print(line)
     tail = f"; {orphans} orphan(s) on storage are safe to remove" if orphans else ""

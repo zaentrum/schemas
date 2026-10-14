@@ -2599,6 +2599,23 @@ def test_platform_beside_the_old(t):
                           "--ignore-fields", "id,path,hash", "--text-language", "und")
         t.ok("the rebuild agrees with the database the adopt left", code == 0
              and "the tree and the database agree" in ctext, ctext)
+        extra_row = json.loads(json.dumps(jload(fresh)))
+        extra_row["items"].append({"id": "0a0a0a0a-0000-4000-8000-000000000001", "type": "track",
+                                   "title": "A track the library does not hold", "playbackAssets": [],
+                                   "subtitleAssets": [], "artwork": [], "credits": []})
+        with_track = os.path.join(tmp, "after-with-track.json")
+        jwrite(with_track, extra_row)
+        code, ctext = run(REBUILD, root, "--compare", with_track, "--arrivals-root", os.path.join(root, ".work"),
+                          "--ignore-fields", "id,path,hash", "--text-language", "und")
+        t.ok("a row the database holds and the tree does not is a missing record", code != 0
+             and "missing record" in ctext, ctext)
+        leave = os.path.join(tmp, "left-out.txt")
+        with open(leave, "w") as f:
+            f.write("# music: not part of the library record\n0a0a0a0a-0000-4000-8000-000000000001\n")
+        code, ctext = run(REBUILD, root, "--compare", with_track, "--arrivals-root", os.path.join(root, ".work"),
+                          "--ignore-fields", "id,path,hash", "--text-language", "und", "--leave-out", leave)
+        t.ok("--leave-out takes the rows a migration left out away from the compare, and says how many",
+             code == 0 and "the tree and the database agree" in ctext and "left out: 1 item(s)" in ctext, ctext)
 
         # the chains are closed afterwards
         before = tree_files(root)
