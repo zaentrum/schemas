@@ -2616,6 +2616,17 @@ def test_platform_beside_the_old(t):
                           "--ignore-fields", "id,path,hash", "--text-language", "und", "--leave-out", leave)
         t.ok("--leave-out takes the rows a migration left out away from the compare, and says how many",
              code == 0 and "the tree and the database agree" in ctext and "left out: 1 item(s)" in ctext, ctext)
+        # a left-out row that credits a person nothing on storage credits: the person goes with it
+        extra_row["items"][-1]["people"] = [{"personId": "0b0b0b0b-0000-4000-8000-000000000002", "name": "Only Theirs",
+                                             "role": "cast", "order": 0}]
+        if isinstance(extra_row.get("people"), list):
+            extra_row["people"].append({"id": "0b0b0b0b-0000-4000-8000-000000000002", "name": "Only Theirs"})
+        jwrite(with_track, extra_row)
+        code, ctext = run(REBUILD, root, "--compare", with_track, "--arrivals-root", os.path.join(root, ".work"),
+                          "--ignore-fields", "id,path,hash", "--text-language", "und", "--leave-out", leave)
+        t.ok("and the people only those rows credit go with them", code == 0
+             and "the tree and the database agree" in ctext and "left out: 1 item(s)" in ctext
+             and ("1 person(s) only they credit" in ctext or not isinstance(extra_row.get("people"), list)), ctext)
 
         # the chains are closed afterwards
         before = tree_files(root)

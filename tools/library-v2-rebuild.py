@@ -1328,11 +1328,22 @@ def main():
         items = export.get("items") or []
         export["items"] = [i for i in items if i.get("id") not in leave]
         left_out = len(items) - len(export["items"])
+        # and the people only they credit: a person they share with an item the tree holds stays,
+        # and is compared where that item is
+        gone = {c.get("personId") for i in items if i.get("id") in leave for c in i.get("people") or []}
+        kept = {c.get("personId") for i in export["items"] for c in i.get("people") or []}
+        only_theirs = gone - kept - {None}
+        people_left_out = 0
+        if isinstance(export.get("people"), list):
+            before = len(export["people"])
+            export["people"] = [p for p in export["people"] if not isinstance(p, dict) or p.get("id") not in only_theirs]
+            people_left_out = before - len(export["people"])
     lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest,
                                 extras=r.extras, people_newest=r.people_newest, arrivals=args.arrivals_root)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     if args.leave_out:
-        print(f"  left out: {left_out} item(s) of the export that {args.leave_out} names")
+        print(f"  left out: {left_out} item(s) of the export that {args.leave_out} names"
+              + (f", and {people_left_out} person(s) only they credit" if people_left_out else ""))
     for line in lines:
         print(line)
     tail = f"; {orphans} orphan(s) on storage are safe to remove" if orphans else ""
