@@ -2599,6 +2599,28 @@ def test_platform_beside_the_old(t):
                           "--ignore-fields", "id,path,hash", "--text-language", "und")
         t.ok("the rebuild agrees with the database the adopt left", code == 0
              and "the tree and the database agree" in ctext, ctext)
+        # a subtitle row the database lacks: every such difference is written, as the summary shows five
+        no_sub = json.loads(json.dumps(jload(fresh)))
+        holder = next((r for r in no_sub["items"] if r.get("subtitleAssets")), None)
+        if holder:
+            dropped = holder["subtitleAssets"].pop(0)
+            jwrite(os.path.join(tmp, "after-no-sub.json"), no_sub)
+            diffs = os.path.join(tmp, "differences.jsonl")
+            code, ctext = run(REBUILD, root, "--compare", os.path.join(tmp, "after-no-sub.json"),
+                              "--arrivals-root", os.path.join(root, ".work"), "--ignore-fields", "id,path,hash",
+                              "--text-language", "und", "--differences", diffs)
+            got = [json.loads(l) for l in open(diffs, encoding="utf-8")] if os.path.isfile(diffs) else []
+            t.ok("--differences writes every field difference a line: a subtitle the database lacks is only on "
+                 "storage, with the row storage holds",
+                 code != 0 and len(got) == 1 and got[0]["field"] == "subtitleAssets" and got[0]["id"] == holder["id"]
+                 and got[0]["only"] == "storage" and got[0]["database"] is None
+                 and os.path.basename(got[0]["storage"]["path"]) == os.path.basename(dropped["path"])
+                 and got[0]["storage"]["language"] == dropped.get("language"), (ctext, got))
+            code, ctext = run(REBUILD, root, "--compare", fresh, "--arrivals-root", os.path.join(root, ".work"),
+                              "--ignore-fields", "id,path,hash", "--text-language", "und", "--differences", diffs)
+            t.ok("and where the two agree it is written empty", code == 0 and os.path.getsize(diffs) == 0, ctext)
+        else:
+            t.skip("--differences", "the fixture's adopted rows hold no subtitle")
         extra_row = json.loads(json.dumps(jload(fresh)))
         extra_row["items"].append({"id": "0a0a0a0a-0000-4000-8000-000000000001", "type": "track",
                                    "title": "A track the library does not hold", "playbackAssets": [],

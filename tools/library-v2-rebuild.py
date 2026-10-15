@@ -1155,11 +1155,12 @@ def outside_arrivals(row, arrivals):
 
 
 def compare(tree_rows, tree_people, export, ignore, subset=False, text_language="und", newest=None, extras=(),
-            people_newest=None, arrivals=()):
+            people_newest=None, arrivals=(), differences=None):
     """Both directions, field by field. Returns (lines, number of differences, number of orphans safe
     to remove). newest is the newest moment each item folder's records state, by item id, and
     people_newest each person folder's, by person id. extras are the tree's bonus material, which the
-    catalog has no table for yet: they are counted, never compared. Behaviour is never compared."""
+    catalog has no table for yet: they are counted, never compared. Behaviour is never compared.
+    differences, a path, gets every field difference (write_differences): the lines show five of each."""
     ignore = set(ignore) | set(BEHAVIOUR)
     tree = {r["id"]: normalise(r) for r in tree_rows}
     db = {r["id"]: normalise(outside_arrivals(r, arrivals)) for r in export.get("items") or []}
@@ -1226,7 +1227,30 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
             lines.append(f"      {iid}: storage {a!r} != database {b!r}" + (" — stale projection" if iid in went_stale else ""))
         if len(rows) > 5:
             lines.append(f"      … and {len(rows) - 5} more")
+    if differences:
+        write_differences(differences, fields)
     return lines, n, removable
+
+
+def write_differences(path, fields):
+    """Every field difference, one JSON object a line, for a tool to act on: the field, the row's id
+    (an item's, or a person's for people.*), only — "storage" or "database" when one side alone holds
+    an entry of a list or a member of a set, else null — and what storage and the database hold, null
+    for the side that holds nothing."""
+    with open(path, "w", encoding="utf-8") as f:
+        for key in sorted(fields):
+            for iid, a, b in fields[key]:
+                only = None
+                if a == "not on storage":                 # a set's member the database alone holds
+                    only, a, b = "database", None, b
+                elif a == "not in the database":          # one storage alone holds
+                    only, a, b = "storage", b, None
+                elif b == "missing":                      # a list's entry storage alone holds
+                    only, b = "storage", None
+                elif a == "missing":
+                    only, a = "database", None
+                f.write(json.dumps({"field": key, "id": iid, "only": only, "storage": a, "database": b},
+                                   ensure_ascii=False, default=str) + "\n")
 
 
 def diff_field(fields, iid, key, a, b, ignore, prefix=""):
@@ -1291,6 +1315,10 @@ def main():
     ap.add_argument("--subset", action="store_true",
                     help="the tree holds only some of the database's items: rows only the database "
                          "has are reported but are not a difference")
+    ap.add_argument("--differences", metavar="FILE",
+                    help="with --compare: write every field difference here, one JSON object a line — the "
+                         "field, the id, which side alone holds an entry (only), and both sides' values — where "
+                         "the summary shows five of each field")
     ap.add_argument("--leave-out", metavar="FILE",
                     help="item ids, one a line, the database holds and the tree is not to: what a migration "
                          "left out by design (music, disc images) or did not adopt. They are taken out of the "
@@ -1339,7 +1367,8 @@ def main():
             export["people"] = [p for p in export["people"] if not isinstance(p, dict) or p.get("id") not in only_theirs]
             people_left_out = before - len(export["people"])
     lines, n, orphans = compare(r.items, r.people, export, ignore, args.subset, args.text_language, r.newest,
-                                extras=r.extras, people_newest=r.people_newest, arrivals=args.arrivals_root)
+                                extras=r.extras, people_newest=r.people_newest, arrivals=args.arrivals_root,
+                                differences=args.differences)
     print(f"compared with {args.compare} (ignoring {', '.join(sorted(ignore)) or 'nothing'}):")
     if args.leave_out:
         print(f"  left out: {left_out} item(s) of the export that {args.leave_out} names"
