@@ -131,6 +131,22 @@ it false: which subtitle a viewer gets is behaviour — the player's rule, or a 
 chose and the database keeps — which no record holds; a package's default is only what its playlist
 says. A database rebuilt from the tree has lost the defaults people chose.
 
+A subtitle attached to a title after its package completed — a file in the subs/ of the version it
+was attached to, named by its bytes, attached-<sha256>.<language>[.forced][.sdh].vtt, which no
+record lists — is a subtitle row of its own, rebuilt from what its name and its folder say: its
+language, cased as a BCP 47 tag is (zh-Hans, pt-BR), its format, webvtt, whether it is for deaf and
+hard-of-hearing viewers (isSdh), the version it follows (versionId) and its hash (sha256), and never
+the default. What no record holds is the catalog's alone, and the row leaves it empty: how it was
+made (origin: source, provider, transcribed, translated or converted in the catalog, null here), the
+label it was given, who attached it and when (attachedBy, attachedAt). A database rebuilt from the
+tree tells an attached subtitle by its versionId and sha256, and has lost the rest. Every other
+subtitle row says what the catalog says of a title's own: isSdh false, and none of the others.
+--compare compares the attached rows apart, as attachedSubtitles — an export's row is one when its
+file is named and placed as one, or it has an origin — matched by the version and the file's name,
+in their format and language and, where the export carries them, isSdh, versionId and sha256; never
+in what no record holds. The other subtitle rows are compared as they were, the fields the catalog
+gained with attached subtitles only where the export carries them.
+
 --subset reports the rows only the database has without counting them, for a tree that was built
 from part of a catalog.
 
@@ -172,6 +188,18 @@ PERSON_FIELDS = ("name", "sortName", "alsoKnownAs", "birthDate", "deathDate", "b
 # A credit as an item row's people list holds it, under the export's names.
 CREDIT_FIELDS = ("personId", "name", "role", "job", "character", "order", "episodeCount")
 DAY_RE = re.compile(r"^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?")
+# A subtitle attached to a title after its package completed, in the subs/ of a version folder, named by
+# the hex sha256 of its bytes, its BCP 47 language in lower case and its flags (libv2_records.py
+# ATTACHED_SUBTITLE_RE).
+ATTACHED_NAME = re.compile(r"^attached-([0-9a-f]{64})\.([a-z0-9]+(?:-[a-z0-9]+)*)(\.forced)?(\.sdh)?\.vtt$")
+# What the catalog keeps of a subtitle attached to a title beside what every subtitle row has, under the
+# names an export gives them, and what it says of a title's own subtitle there: its package's, or a
+# file's beside its source.
+ATTACHED_FIELDS = ("isSdh", "origin", "versionId", "sha256", "attachedBy", "attachedAt")
+TITLES_OWN = {"isSdh": False, "origin": None, "versionId": None, "sha256": None, "attachedBy": None, "attachedAt": None}
+# What no record holds of an attached subtitle — how it was made, the label it was given, who attached
+# it and when — is the catalog's alone: the rebuild writes none of it, and --compare compares none of it.
+ATTACHED_UNRECORDED = ("label", "origin", "attachedBy", "attachedAt")
 
 
 def did(*parts):
@@ -185,6 +213,25 @@ def listdir(d):
 def load(p):
     with open(p, encoding="utf-8") as f:
         return json.load(f)
+
+
+def bcp47_cased(code):
+    """A BCP 47 tag an attached subtitle's name carries in lower case, cased as the catalog spells it:
+    the language in lower case, then a script of four letters in title case, a region of two letters in
+    capitals or of three digits, and any variant in lower case, each in that order — de, zh-Hans,
+    pt-BR, es-419. Its subtags are told apart by their form alone, so the casing is the catalog's."""
+    out, seen = [], 0  # seen: 1 after a script, 2 after a region, 3 in the variants
+    for i, part in enumerate(code.split("-")):
+        if i and seen < 1 and re.fullmatch(r"[a-z]{4}", part):
+            out.append(part.title())
+            seen = 1
+        elif i and seen < 2 and re.fullmatch(r"[a-z]{2}|[0-9]{3}", part):
+            out.append(part.upper())
+            seen = 2
+        else:
+            out.append(part)
+            seen = 3 if i else 0
+    return "-".join(out)
 
 
 def deletion_gate(sources, package):
@@ -642,7 +689,8 @@ class Rebuild:
         for v in versions:
             row["playbackAssets"] += self.assets(item, v, sources, v is primary, made_from)
             if v["package"] and not v["superseded"]:
-                row["subtitleAssets"] += self.subtitles(item, v, sources)
+                row["subtitleAssets"] += [dict(s, **TITLES_OWN) for s in self.subtitles(item, v, sources)]
+                row["subtitleAssets"] += self.attached(item, v)
         return row
 
     def assets(self, item, v, sources, is_primary, made_from=None):
@@ -724,6 +772,24 @@ class Rebuild:
                                 "language": x.get("language"), "label": None, "isDefault": False})
         return out
 
+    def attached(self, item, v):
+        """The rows of the subtitles attached to the title in the folder of the version v: each file
+        directly in its subs/ named as one is, rebuilt from that name and that folder — its language,
+        cased as the catalog spells a BCP 47 tag, WebVTT, whether it is SDH, the version it follows and
+        its hash — and never the default. Whatever no record holds stays empty: how it was made
+        (origin), the label it was given, who attached it and when."""
+        out = []
+        subs = os.path.join(v["dir"], "subs")
+        for name in (listdir(subs) if os.path.isdir(subs) else []):
+            m = ATTACHED_NAME.match(name)
+            if not m or not os.path.isfile(os.path.join(subs, name)):
+                continue
+            out.append({"id": did(item["itemId"], "subtitle", v["id"], name), "path": os.path.join(subs, name),
+                        "format": "webvtt", "language": bcp47_cased(m.group(2)), "label": None, "isDefault": False,
+                        "isSdh": bool(m.group(4)), "origin": None, "versionId": v["id"],
+                        "sha256": "sha256:" + m.group(1), "attachedBy": None, "attachedAt": None})
+        return out
+
     # -------------------------------------------------- bonus material
     def extra_rows(self, d, item, meta, events=()):
         """One row per finished extra beside a movie or series: what extra.json recorded, what the
@@ -781,9 +847,43 @@ class Rebuild:
 
 
 # ---------------------------------------------------------------- comparing with a database
+def path_parts(x):
+    return str(x.get("path") or "").replace("\\", "/").split("/")
+
+
+def attached_row(x):
+    """Whether a subtitle row is one of a subtitle attached to its title: its file is named as one,
+    directly in the subs/ of a version folder (versions/<versionId>/subs/), or — in an export that
+    carries it — it has an origin, which a title's own subtitle has not."""
+    p = path_parts(x)
+    return (len(p) >= 4 and p[-2] == "subs" and p[-4] == "versions" and bool(UUID_RE.match(p[-3]))
+            and bool(ATTACHED_NAME.match(p[-1]))) or bool(x.get("origin"))
+
+
+def attached_key(x):
+    """An attached subtitle's row by its file: the version folder it lies in, and the name its bytes
+    give it. Where the tree or the database mounts the library is no part of it."""
+    p = path_parts(x)
+    return (p[-3] if len(p) >= 3 else "", p[-1])
+
+
+def normalise_attached(x):
+    """An attached subtitle's row as it can be compared: its hash in the form the library writes one,
+    sha256:<hex>, whichever form the row holds, and the moment it was attached to the second."""
+    out = dict(x)
+    digest = str(out.get("sha256") or "").strip().lower()
+    digest = digest[len("sha256:"):] if digest.startswith("sha256:") else digest
+    if re.fullmatch(r"[0-9a-f]{64}", digest):
+        out["sha256"] = "sha256:" + digest
+    if "attachedAt" in out:
+        out["attachedAt"] = stamp(out["attachedAt"])
+    return out
+
+
 LIST_KEYS = {
     "playbackAssets": lambda x: x.get("kind"),
     "subtitleAssets": lambda x: (x.get("language"), os.path.basename(str(x.get("path") or ""))),
+    "attachedSubtitles": attached_key,
     # an image row is one kind of an image, so the bytes alone do not name it: a backdrop that is the
     # poster is two rows of one file
     "artwork": lambda x: (x.get("sha256"), x.get("kind")),
@@ -802,7 +902,12 @@ SET_FIELDS = ("genres", "tags")
 # them does not make every image or credit on storage differ. A tree from before them is compared in
 # all of them: the export's value against none, the database knowing more until it is projected again.
 CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath"),
-                        "people": ("job", "character", "order", "episodeCount")}
+                        "people": ("job", "character", "order", "episodeCount"),
+                        # what a subtitle row gained with attached subtitles (katalog-manager's migration 048)
+                        "subtitleAssets": ATTACHED_FIELDS, "attachedSubtitles": ATTACHED_FIELDS}
+# The fields of a list's entries --compare never compares, whatever --ignore-fields says: of an attached
+# subtitle, what no record holds.
+UNRECORDED_ENTRY_FIELDS = {"attachedSubtitles": ATTACHED_UNRECORDED}
 # The fields of an item row compared only when the export's row carries them, for the same reason:
 # items do not carry the first two yet, and coveredBy only once the catalog links covered episodes.
 CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt", "coveredBy")
@@ -892,6 +997,14 @@ def normalise(row):
         # lives nor the name it came with
         out["trailers"] = [dict(t, localPath="a local copy") if isinstance(t, dict) and t.get("localPath") else t
                            for t in row["trailers"]]
+    if isinstance(row.get("subtitleAssets"), list):
+        # a subtitle attached to the title is compared apart, in what its file's name and folder say:
+        # never as a row of the package's or the source's that one side lacks
+        subs = [x for x in row["subtitleAssets"] if isinstance(x, dict)]
+        attached = [normalise_attached(x) for x in subs if attached_row(x)]
+        if attached:
+            out["subtitleAssets"] = [x for x in subs if not attached_row(x)]
+            out["attachedSubtitles"] = attached
     return out
 
 
@@ -1284,10 +1397,10 @@ def diff_list(fields, iid, key, mine, theirs, ignore, prefix=""):
     for k in sorted(set(b) - set(a), key=str):
         fields.setdefault(prefix + key, []).append((iid, "missing", b[k]))
         n += 1
-    carried = CARRIED_ENTRY_FIELDS.get(key, ())
+    carried, never = CARRIED_ENTRY_FIELDS.get(key, ()), UNRECORDED_ENTRY_FIELDS.get(key, ())
     for k in sorted(set(a) & set(b), key=str):
         for f in sorted(set(a[k]) | set(b[k])):
-            if f in ignore or (f in carried and f not in b[k]):
+            if f in ignore or f in never or (f in carried and f not in b[k]):
                 continue
             if a[k].get(f) != b[k].get(f):
                 fields.setdefault(f"{prefix}{key}.{f}", []).append((iid, a[k].get(f), b[k].get(f)))

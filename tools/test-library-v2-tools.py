@@ -66,6 +66,8 @@ rule and checks the tool notices:
                  check holds its bytes to its name; the fill closes a pending chain beside it byte for
                  byte as it would without it, and one without as the packager wrote it, and refuses a
                  module that would count it; a file so named anywhere else is any other file
+  attached rows  the rebuild gives an attached subtitle a row of its own from its name and its folder,
+                 and --compare holds it apart from the package's rows, never in what no record holds
   v1 -> v2       the v1 example tree converts, and given the names the library gives its files by
                  library-v2-neutral-names.py the result passes validate-library-v2.py and the media
                  check, the texts and the packages survive, and a second run does nothing
@@ -5113,6 +5115,108 @@ def test_attached_subtitles(t):
              older != open(RECORDS, "rb").read() and code != 0 and "needs libv2_records.py 6 or later, found 5" in text, text)
 
 
+def test_attached_rows(t):
+    """The rebuild gives a subtitle attached after the package completed a subtitle row of its own, from
+    its name and its folder, and leaves empty what no record holds; --compare holds that row apart from
+    the package's, so it is never a difference of subtitleAssets, and never compares what no record holds."""
+    s = hashlib.sha256(b"x").hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        vp = subtitled(root)
+        iid, vid = os.path.basename(os.path.dirname(os.path.dirname(vp))), os.path.basename(vp)
+        hans = attach_subtitle(vp, "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n你好\n", "zh-hans", forced=True)
+        brazil = attach_subtitle(vp, "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n[Música]\n", "pt-br", sdh=True)
+        # the copy a version gets of the subtitles attached to the one before it of the same file: the one before
+        # is superseded, and its copy is no row
+        replaced = jload(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*", "events", "*-package-superseded",
+                                                "event.json"))[0])["versionId"]
+        copy = attach_subtitle(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*", "versions", replaced))[0])
+        rows, _ = rows_of(root)
+        mine = sorted((x for x in rows[iid]["subtitleAssets"] if x["sha256"]), key=lambda x: x["language"])
+        t.eq("each attached subtitle is a subtitle row of its own, from its name and its folder: its language cased as "
+             "the catalog spells it, WebVTT, SDH or not, the version it follows and its hash — never the default, and "
+             "nothing of what no record holds",
+             [{k: v for k, v in x.items() if k != "id"} for x in mine],
+             [{"path": brazil, "format": "webvtt", "language": "pt-BR", "label": None, "isDefault": False, "isSdh": True,
+               "origin": None, "versionId": vid, "sha256": "sha256:" + digest(brazil), "attachedBy": None,
+               "attachedAt": None},
+              {"path": hans, "format": "webvtt", "language": "zh-Hans", "label": None, "isDefault": False, "isSdh": False,
+               "origin": None, "versionId": vid, "sha256": "sha256:" + digest(hans), "attachedBy": None,
+               "attachedAt": None}])
+        own = [x for x in rows[iid]["subtitleAssets"] if not x["sha256"]]
+        t.ok("every other subtitle row is the title's own, as the catalog says of one: not SDH, and none of the rest",
+             own and all({k: x[k] for k in ("isSdh", "origin", "versionId", "sha256", "attachedBy", "attachedAt")}
+                         == {"isSdh": False, "origin": None, "versionId": None, "sha256": None, "attachedBy": None,
+                             "attachedAt": None} for x in own), own)
+        t.ok("and the copy a superseded version keeps is no row",
+             len(mine) == 2 and not any(x["path"] == copy for r in rows.values() for x in r["subtitleAssets"]))
+        t.eq("the casing is the catalog's whatever the tag",
+             [load_tool(REBUILD).bcp47_cased(c) for c in ("de", "zh-hans", "pt-br", "es-419", "sr-latn-rs", "de-ch-1996", "zh-hant-tw")],
+             ["de", "zh-Hans", "pt-BR", "es-419", "sr-Latn-RS", "de-CH-1996", "zh-Hant-TW"])
+
+        def compare(change, *extra):
+            export = {"exportedAt": "2026-10-20T12:00:00Z", "items": json.loads(json.dumps(list(rows.values()))),
+                      "deletedItems": []}
+            row = next(r for r in export["items"] if r["id"] == iid)
+            change(row)
+            path = os.path.join(tmp, "catalog.json")
+            jwrite(path, export)
+            return run(REBUILD, root, "--compare", path, "--text-language", "en", *extra)
+
+        def as_the_catalog_holds(row):
+            """The rows as the catalog keeps them: how each was made, its label, who attached it and when —
+            which no record holds — its hash as the column has it, and the library mounted elsewhere."""
+            for x in row["subtitleAssets"]:
+                x["path"] = "/var/lib/library/" + os.path.relpath(x["path"], root).replace(os.sep, "/")
+                if x["sha256"]:
+                    x.update(origin="transcribed", label="AI", attachedBy="sample-addon", attachedAt="2026-10-20T10:15:00.123+02:00",
+                             sha256=x["sha256"].split(":", 1)[1], id=str(uuid.uuid4()))
+
+        def todays_export(row):
+            """An export of a catalog whose export does not carry the fields of attached subtitles yet."""
+            for x in row["subtitleAssets"]:
+                for k in ("isSdh", "origin", "versionId", "sha256", "attachedBy", "attachedAt"):
+                    x.pop(k)
+
+        def without(name):
+            return lambda row: row.update(subtitleAssets=[x for x in row["subtitleAssets"] if os.path.basename(x["path"]) != name])
+
+        code, text = compare(lambda row: None)
+        t.ok("a tree and the rows it rebuilds to agree, attached subtitles and all", code == 0
+             and "the tree and the database agree" in text, text)
+        code, text = compare(as_the_catalog_holds)
+        t.ok("and agree with the catalog's rows of them: what no record holds is never compared, whatever it is",
+             code == 0 and "the tree and the database agree" in text, text)
+        code, text = compare(lambda row: (as_the_catalog_holds(row), todays_export(row)))
+        t.ok("and with an export that does not carry the fields of attached subtitles yet",
+             code == 0 and "the tree and the database agree" in text, text)
+        diffs = os.path.join(tmp, "differences.jsonl")
+        code, text = compare(without(os.path.basename(hans)), "--differences", diffs)
+        got = [json.loads(l) for l in open(diffs, encoding="utf-8")] if os.path.isfile(diffs) else []
+        t.ok("an attached subtitle the database has no row of is a difference of its own kind, never one of the "
+             "package's subtitles", code == 1 and "attachedSubtitles: 1 difference(s)" in text and "subtitleAssets" not in text
+             and [(d["field"], d["id"], d["only"], os.path.basename(d["storage"]["path"])) for d in got]
+             == [("attachedSubtitles", iid, "storage", os.path.basename(hans))], (text, got))
+        code, text = compare(lambda row: row["subtitleAssets"].append(
+            dict(next(x for x in row["subtitleAssets"] if x["sha256"]), path=os.path.join(vp, "subs", f"attached-{s}.fr.vtt"),
+                 language="fr", sha256="sha256:" + s)))
+        t.ok("and so is the database's row of an attached subtitle storage does not hold",
+             code == 1 and "attachedSubtitles: 1 difference(s)" in text and "subtitleAssets" not in text
+             and "storage 'missing'" in text, text)
+        code, text = compare(lambda row: next(x for x in row["subtitleAssets"] if x["sha256"]).update(sha256="sha256:" + s))
+        t.ok("a hash the database holds that is not the one the file's name gives is a difference of that field",
+             code == 1 and "attachedSubtitles.sha256: 1 difference(s)" in text, text)
+        code, text = compare(lambda row: next(x for x in row["subtitleAssets"] if x["language"] == "zh-Hans").update(language="zh-Hant"))
+        t.ok("and so is a language", code == 1 and "attachedSubtitles.language: 1 difference(s)" in text, text)
+        code, text = compare(lambda row: next(x for x in row["subtitleAssets"] if x["sha256"]).update(isSdh=None))
+        t.ok("and whether it is SDH, where the export carries it", code == 1 and "attachedSubtitles.isSdh: 1 difference(s)" in text, text)
+        code, text = compare(lambda row: next(x for x in row["subtitleAssets"] if not x["sha256"]).update(origin="provider"))
+        t.ok("a row of the title's own the database says was attached is no subtitle of the package's: the two are "
+             "compared apart, and differ", code == 1 and "attachedSubtitles: 1 difference(s)" in text
+             and "subtitleAssets: 1 difference(s)" in text, text)
+
+
 # ---------------------------------------------------------------- sweeping an extra that never finished
 X_BESIDE = "44444444-0000-4000-8000-00000000000e"         # an extra's package that never finished beside its original
 X_RECORDED = "55555555-0000-4000-8000-00000000000e"       # a packaged extra that wrote its record and kept no original
@@ -5746,6 +5850,7 @@ def main():
                         ("sweeping a version an event removed", test_sweep_removed_versions),
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("subtitles attached after the package completed", test_attached_subtitles),
+                        ("an attached subtitle's row, and the compare", test_attached_rows),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):
             continue
