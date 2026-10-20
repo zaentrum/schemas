@@ -238,6 +238,9 @@ movies/<aa>/<itemId>/
     checksums.sha256               version.json and every package file, sha256sum -c format
     package.json                   renditions, losses, and the hash of checksums.sha256
     .complete                      the hash of package.json: the version is finished
+    subs/attached-<sha256>.<lang>[.forced][.sdh].vtt
+                                   a subtitle attached after the package completed, named by its
+                                   bytes: no file of the package, and outside its chain
   events/<timestamp>-<eventId8>-<kind>/
     event.json                     a fact that arose later, written once
     checksums.sha256               covers event.json, written with it
@@ -416,6 +419,19 @@ purpose**: `metadata.json` and `person.json` are replaced whole, so a checksum w
 be wrong after the next, and every image is named by the hash of its own bytes, so its name is its
 check.
 
+**A subtitle attached later is no file of the package.** A subtitle made for a title after its
+package completed — from its audio, from another of its subtitles, or found elsewhere — is attached
+to the version that plays (katalog-manager's `POST /api/library/items/{id}/subtitles`): its file goes
+into that version's `subs/` beside the package's own, as `attached-<sha256>.<lang>[.forced][.sdh].vtt`,
+`<sha256>` the hex sha256 of its bytes and `<lang>` its BCP 47 tag in lower case (`de`, `zh-hans`),
+and a new version of the same file gets a copy. The package's records are never written again for it:
+`checksums.sha256` does not list it, and `package.json` neither counts nor names it, so a version's
+chain holds with it beside the package, pending or closed, and its name is its check, as an image's is
+— a full verification holds its bytes to the hash it names. How it was made, who attached it and when,
+no record holds: its row in the catalog does. A file so named anywhere else — deeper in `subs/`, in
+another folder of the package, in an extra — is any other file, and one the checksums list is a file
+of the chain.
+
 An extra is written whole, in one step, and keeps its original for as long as it exists — no event
 deletes part of one — so its checksums list the originals too, unlike a version's. A packaged extra
 closes the same chain a version does, `.complete` → `package.json` → `checksums.sha256` →
@@ -458,7 +474,9 @@ may accept less.
 
 Validate a tree (the schemas plus the rules that span files: ids match their folders, no media
 outside a version or extra folder, every write-once folder's checksums cover exactly its records and
-each version's chain holds, `package.json` exists exactly when `.complete` does — a version taken in
+each version's chain holds, a subtitle attached to a version later lies beside its package and
+outside the chain, its bytes with `--check-checksums` the ones its name says, `package.json` exists
+exactly when `.complete` does — a version taken in
 holds its original alone — images are named by their own hash, events reference records that exist —
 or a version a `version-removed` event of the same item removed, and its package — and a deletion
 accepts no more than the gate its records compute, episodes do not contradict their own numbering, a
@@ -635,6 +653,21 @@ file covers is a row with no playback rows of its own, linked to its holder (`co
 that covers it — its own projection decides only where nothing records the holder's file yet — and
 `--compare` compares the link where the export carries one.
 
+A subtitle attached to a title after its package completed is a subtitle row of its own, rebuilt from
+its file's name and folder: its language, cased as the catalog spells a BCP 47 tag (`zh-Hans`), its
+format, `webvtt`, whether it is SDH (`isSdh`), the version it follows (`versionId`) and its hash
+(`sha256`), never the default. What no record holds stays empty — how it was made (`origin`), the
+label it was given, who attached it and when (`attachedBy`, `attachedAt`) — so a database rebuilt from
+the tree tells an attached subtitle by its `versionId` and `sha256` and has lost the rest; every other
+subtitle row says what the catalog says of a title's own, `isSdh` false and none of the others. An
+export's subtitle row carries those fields under the same names (`sha256` as its hex hash or as
+`sha256:<hex>`). `--compare` compares the attached rows apart, as `attachedSubtitles` — an export's row
+is one when its file is named and placed as one, or it has an `origin` — matched by version and file
+name, in their format and language and, where the export carries them, `isSdh`, `versionId` and
+`sha256`, never in what no record holds: an attached subtitle is never a difference of
+`subtitleAssets`, and the other subtitle rows are compared as they were, the fields the catalog gained
+with attached subtitles only where the export carries them.
+
 Bonus material becomes rows of its own, under `extras` in the rows JSON: what `extra.json` records,
 the `order`, `hidden` and `label` the projection decided, and its original and package as playback
 rows, in the order a viewer sees them; an extra that never finished is left out with a note. The
@@ -716,7 +749,9 @@ leaves is the same. Afterwards `library-v2-fill-checksums.py <root> --apply` has
 packages folder by folder and closes each chain — `--until HH:MM` and `--max-bytes` keep the reading
 out of the hours the library is watched, `--jobs N` reads N files at a time (a package is thousands
 of small files, and on a share it is the wait for each that costs), `--items` narrows it, and a folder that no longer holds the
-files and the bytes its record counted is a conflict, reported and left as it was. Its journal,
+files and the bytes its record counted is a conflict, reported and left as it was — a subtitle
+attached to the version meanwhile is none of them: it is not counted, read or listed, and the folder
+is filled as it would be without it. Its journal,
 `.work/migration/<run>/checksums.jsonl`, lists each version it closed (`filled`): what the catalog
 may now call verified in full. While the old names are there, a library check takes
 `--shared-originals` — a version's original, and nothing else, may be a hard link shared with another
@@ -826,21 +861,24 @@ reason, and with `--apply` removes it:
 
 | What | Proved by |
 |---|---|
-| a deleted item's folder | the export's deletion log names the id as an item's, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, and the deletion is older than the grace |
+| a deleted item's folder | the export's deletion log names the id as an item's, the database does not hold it again, no record in the folder — episodes included — is newer than the deletion, the deletion is older than the grace, and no version in it holds a subtitle attached to its title |
 | a deleted person's folder | the export's deletion log names the id as a person's (`type: person`), the database does not hold them again — not in its people list, not credited by any of its items — nothing in the folder is newer than the deletion, the deletion is older than the grace, and no item record on storage still credits them: one that does keeps the folder until it is projected again (`--projections-only`), unless the same sweep removes that item's folder as a deleted item. It is checked last in the quarantine, against the credits on storage once every other target is settled |
-| an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, the item's or an episode's its file covers, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it, and one that holds its original and no package — taken in — is no garbage at all |
+| an unfinished version | no `.complete`, and either no `version.json` (nothing can have known it), or no original kept and nothing names it — not `metadata.json`, the item's or an episode's its file covers, not an event other than its removal, not the export; a version that keeps an original loses only the unfinished package beside it, and one that holds its original and no package — taken in — is no garbage at all, nor is one that holds a subtitle attached to its title |
 | an extra's unfinished package | package files (`hls/ subs/ trickplay/`, `package.json`) and no `.complete`, and then the same proof as a version's: the whole folder without `extra.json`, or with no original kept and nothing naming it — not `library.extras`, not another event, not the export — and beside a kept original only the package and the checksums over it. An extra that holds no package is never swept: it is finished by its checksums, or its writer's to finish |
-| a removed version's folder | a `version-removed` event names it and is older than the grace, and nothing names the version but its history — not `metadata.json`, the item's or an episode's its file covers, not the export: the whole folder, whatever it holds but an original. The catalog deletes it itself after the grace a superseded version keeps, once its original is retired; this collects one that delete missed, and leaves a folder that still holds an original, which may be the only copy |
+| a removed version's folder | a `version-removed` event names it and is older than the grace, and nothing names the version but its history — not `metadata.json`, the item's or an episode's its file covers, not the export: the whole folder, whatever it holds but an original or a subtitle attached to its title. The catalog deletes it itself after the grace a superseded version keeps, once its original is retired; this collects one that delete missed, and leaves a folder that still holds an original, which may be the only copy, or an attached subtitle, which no record holds |
 | a removed extra's folder | an `extra-removed` event names it and is older than the grace, and nothing else names the extra — not `library.extras`, not another event, not the export: the whole folder, whatever it holds |
 | a dropped image | named by the hash of its own bytes, in an item's `metadata/` or beside a `person.json`, and not listed by a projection that is itself older than the grace |
 
 Everything must be older than the grace period (`--grace 24h` by default), because a write in flight
 looks exactly like garbage: a record is written before its database row, and an image before the
 projection that lists it. It never touches anything referenced, anything younger than the grace,
-anything it cannot classify, or a person's folder the deletion log does not name as a person's, and
-it lists what it left alone and why. Without `--export`, or with a `deletedItems` that is `null`, no
-item or person folder is swept at all, and with a log none of whose entries carries a type — an
-export from before people were logged — no person's.
+anything it cannot classify, a person's folder the deletion log does not name as a person's, or a
+subtitle attached to a title after its package completed, which no record holds — in a version
+folder, `subs/attached-<sha256>.<lang>[.forced][.sdh].vtt`: a deleted item's folder, a removed
+version's or an unfinished one that holds one is left alone, and a target one was written into while
+it was quarantined is put back. It lists what it left alone and why. Without `--export`, or with a
+`deletedItems` that is `null`, no item or person folder is swept at all, and with a log none of whose
+entries carries a type — an export from before people were logged — no person's.
 
 `--apply` renames every target into a quarantine in the work tree, `.work/quarantine/<YYYYMMDDTHHMMSSZ>/`
 (`--quarantine` names another folder on the same share), with a `sweep.json` that says where each came
@@ -856,6 +894,29 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-20** — subtitles attached after the package completed. katalog-manager attaches a subtitle
+  to a title after its package completed (its migration 048): the file goes into the `subs/` of the
+  version that plays, as `attached-<sha256>.<lang>[.forced][.sdh].vtt`, named by the hash of its
+  bytes, and a new version of the same file gets a copy; `checksums.sha256` and `package.json` never
+  list it and are never written again for it. Every change of the schemas is text —
+  `package.schema.json` and `version.schema.json` say so — the `$id`s are the published ones, and
+  every record and tree written before validates as it is. `libv2_records.py` (6) gains
+  `ATTACHED_SUBTITLE_RE` and `attached_subtitle()`: `chain_problems()` leaves a version's attached
+  subtitle out of what it holds against the checksums — or, pending, against what the record counted
+  — and with `full` holds its bytes to its name; `fill_checksums()` neither reads nor lists one
+  (`package_files()` takes `outside`), so a folder with one is filled byte for byte as it would be
+  without it, and one without is filled as before; every record it writes is the one before.
+  `library-v2-fill-checksums.py` needs the module at 6. The validator (`--check-media`) and the media
+  check count attached subtitles apart from the package's files (`attached`), and with
+  `--check-checksums` and `--checksums` report one whose bytes are not its name's as a problem of its
+  own; a file so named anywhere else is as unexpected as before. The sweep never removes one: a
+  deleted item's folder, a removed version's or an unfinished one that holds one is left alone, and a
+  target one was written into while it was quarantined is put back. `library-v2-rebuild.py` gives
+  every subtitle row what the catalog keeps since that migration — `isSdh`, `origin`, `versionId`,
+  `sha256`, `attachedBy`, `attachedAt` — an attached subtitle's from its name and folder, leaving
+  empty what no record holds (`origin`, its label, `attachedBy`, `attachedAt`), and `--compare`
+  compares attached rows apart, as `attachedSubtitles`, never in what no record holds, and the new
+  fields of every other subtitle row only where the export carries them.
 - **2026-10-13** — a library adopted beside the one before it. `package.json`'s `checksums` may say
   `"pending": true` in place of `sha256`: a package adopted before anything hashed its files has no
   `checksums.sha256` yet, and its record counts the files that file will list and their bytes. The
