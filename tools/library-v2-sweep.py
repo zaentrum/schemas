@@ -61,8 +61,12 @@ Each is older than the grace period (24h by default, --grace 90m, 7d, 3600s or 0
 looks just like garbage: a record is written before its database row, and an image before the
 projection that lists it — and so is, for a deleted item or person, the deletion, and for a dropped
 image, the projection that dropped it. It never touches anything referenced, anything younger than
-the grace, anything it cannot classify, or a person's folder the deletion log does not name as a
-person's. Everything it leaves alone that looked like garbage is listed with the reason.
+the grace, anything it cannot classify, a person's folder the deletion log does not name as a
+person's, or a subtitle attached to a title after its package completed — a file named by its
+bytes, subs/attached-<sha256>.<lang>[.forced][.sdh].vtt, in a version folder, which no record holds:
+a deleted item's folder, a removed version's or an unfinished one that holds one is left alone, and a
+target one was written into while it was quarantined is put back. Everything it leaves alone that
+looked like garbage is listed with the reason.
 
 A dry run, the default, lists what it would remove and why. --apply first renames every target into
 a quarantine, <root>/.work/quarantine/<YYYYMMDDTHHMMSSZ>/ (--quarantine names another folder on the
@@ -89,6 +93,10 @@ ANY_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 IMAGE_NAME = re.compile(r"^([0-9a-f]{64})\.(jpg|png|webp)$")
 # The name the library gives an original in its version folder.
 ORIGINAL_NAME = re.compile(r"^original(-[0-9]+)?\.[a-z0-9]{1,8}$")
+# The name of a subtitle attached to a title after its package completed, in the subs/ of a version
+# folder: the hex sha256 of its bytes, its BCP 47 language in lower case and its flags. No record holds
+# it, and the sweep never removes one (libv2_records.py ATTACHED_SUBTITLE_RE).
+ATTACHED_NAME = re.compile(r"^attached-[0-9a-f]{64}\.[a-z0-9]+(-[a-z0-9]+)*(\.forced)?(\.sdh)?\.vtt$")
 PACKAGE_PARTS = ("hls", "subs", "trickplay", "trailers", "package.json", "checksums.sha256")
 RECORDS_TMP = ("version.json.tmp", "package.json.tmp", "checksums.sha256.tmp", ".complete.tmp")
 # What makes an extra a packaged one; beside them an unfinished package also leaves its checksums,
@@ -164,6 +172,18 @@ def size_of(p):
     if os.path.isfile(p) or os.path.islink(p):
         return os.lstat(p).st_size
     return sum(os.lstat(os.path.join(b, f)).st_size for b, _, fs in os.walk(p) for f in fs)
+
+
+def attached_under(p):
+    """The subtitles attached to a title after its package completed that lie under p — an item
+    folder, a version's or its subs/ — relative to p: each a file named as one (ATTACHED_NAME),
+    directly in the subs/ of a version folder, versions/<versionId>/subs/. The sweep removes none."""
+    out = []
+    for base, dirs, files in os.walk(p):
+        parts = os.path.normpath(base).split(os.sep)
+        if len(parts) >= 3 and parts[-1] == "subs" and parts[-3] == "versions" and UUID_RE.match(parts[-2]):
+            out += [os.path.relpath(os.path.join(base, f), p) for f in files if ATTACHED_NAME.match(f)]
+    return sorted(out)
 
 
 def human(n):
@@ -539,6 +559,11 @@ class Sweep:
         if young:
             self.leave(d, f"deleted, but written to within the grace period ({young})")
             return False
+        held = attached_under(d)
+        if held:
+            self.leave(d, f"deleted {entry['deletedAt']}, but it holds a subtitle attached to its title, {held[0]}: "
+                          f"the sweep never removes one")
+            return False
         self.target(d, "deleted item", f"deleted {entry['deletedAt']} by {entry.get('deletedBy') or 'unknown'}, "
                                        f"and nothing in it is newer")
         return True
@@ -616,6 +641,11 @@ class Sweep:
         kept = [n for n in originals if os.path.isfile(os.path.join(vp, n))]
         if kept and not any(n in PACKAGE_PARTS or n in RECORDS_TMP for n in entries):
             return  # taken in before anything packaged it: its record and its original, finished as they are
+        held = attached_under(vp)
+        if held:
+            self.leave(vp, f"an unfinished version holding a subtitle attached to its title, {held[0]}: the sweep "
+                           f"never removes one")
+            return
         young = self.young(vp)
         if young:
             self.leave(vp, f"an unfinished version written to within the grace period ({young})")
@@ -649,6 +679,11 @@ class Sweep:
         if held:
             self.leave(vp, f"a removed version, but its folder still holds its original {held[0]}: a version "
                            f"folder that holds an original is never removed")
+            return
+        held = attached_under(vp)
+        if held:
+            self.leave(vp, f"a removed version, but its folder holds a subtitle attached to its title, {held[0]}: "
+                           f"the sweep never removes one")
             return
         at = instant(ev.get("at"))
         if at is None:
@@ -928,6 +963,10 @@ class Apply:
         if t.get("left") or not os.path.lexists(held):
             return False
         why = self.s.still_garbage(t)
+        attached = [] if why else attached_under(held)
+        if attached:
+            # written into it after it was classified: an attach in flight, whose file no sweep removes
+            why = f"it holds a subtitle attached to its title, {attached[0]}, which the sweep never removes"
         if why:
             where = os.path.join(self.root, t["path"])
             if os.path.lexists(where):

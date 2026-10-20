@@ -59,7 +59,8 @@ rule and checks the tool notices:
                  grace, unclassifiable, or a person the log does not name as one is left alone, with
                  the reason; a deleted person goes once no item record on storage credits them, in
                  the same sweep as a deleted item that does; of an extra, only a package that never
-                 finished is ever garbage
+                 finished is ever garbage; a subtitle attached to a title is never removed, nor a
+                 folder that holds one
   attached       a subtitle attached after the package completed, named by its bytes in its version's
                  subs/, is no file of the package: the record module's chain holds with it and a full
                  check holds its bytes to its name; the fill closes a pending chain beside it byte for
@@ -4550,6 +4551,26 @@ def test_sweep(t):
     refused("an unfinished version written to within the grace",
             lambda r, e, w: touch(os.path.join(w["recorded"], "version.json")), "written to within the grace period",
             what="recorded")
+    # a subtitle attached to a title after its package completed is never garbage: no record holds it
+    refused("a deleted item's folder that holds a subtitle attached to its title",
+            lambda r, e, w: attach_subtitle(sorted(glob.glob(os.path.join(w["gone"], "versions", "*")))[0]),
+            "but it holds a subtitle attached to its title, versions/", age_after=True)
+    refused("an unfinished version holding a subtitle attached to its title",
+            lambda r, e, w: attach_subtitle(w["recorded"]), "holding a subtitle attached to its title, subs/attached-",
+            what="recorded", age_after=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, where = garbage(tmp, age=False)
+        kept_sub = attach_subtitle(where["beside"])
+        aged(root)
+        code, text = run(SWEEP, root, "--export", export)
+        t.ok("the sweep leaves alone an unfinished package beside an original whose subs/ holds a subtitle attached "
+             "to its title: none of the package's folders is swept",
+             code == 0 and not [p for p in swept(text, root) if p.startswith(where["beside"] + os.sep)]
+             and "holding a subtitle attached to its title" in text, text)
+        code, text = run(SWEEP, root, "--export", export, "--apply")
+        t.ok("and --apply removes the other garbage and none of it", code == 0 and "removed 6 target(s)" in text
+             and os.path.isfile(kept_sub) and os.path.isdir(os.path.join(where["beside"], "hls"))
+             and not os.path.exists(where["nothing wrote"]), text)
     refused("an image not named by the hash of its own bytes",
             lambda r, e, w: open(w["dropped image"], "ab").write(b"x"), "not named by the hash of its own bytes",
             what="dropped image", age_after=True)
@@ -4885,6 +4906,29 @@ def test_sweep_removed_versions(t):
                                               "wb").write(b"the only copy left"))
     kept("that still holds a file named as the library names an original", "still holds its original original-2.mkv",
          change=lambda root, export, vp: open(os.path.join(vp, "original-2.mkv"), "wb").write(b"an original"))
+    kept("that holds a subtitle attached to its title — the copy a new version of the same file got too",
+         "a removed version, but its folder holds a subtitle attached to its title, subs/attached-",
+         change=lambda root, export, vp: attach_subtitle(vp, language="zh-hans", forced=True))
+
+    # a subtitle attached while its folder sat in the quarantine: put back, never deleted
+    with tempfile.TemporaryDirectory() as tmp:
+        root, export, vp = removed_version(tmp)
+        sw = load_tool(SWEEP)
+        s = sw.Sweep(root, sw.References(root, export), 86400, datetime.datetime.now(datetime.timezone.utc))
+        s.run()
+        a = sw.Apply(s)
+        check = a.finish
+
+        def attached_meanwhile(q):
+            attach_subtitle(os.path.join(q, os.path.relpath(vp, root)))
+            check(q)
+        a.finish = attached_meanwhile
+        a.run(datetime.datetime.now(datetime.timezone.utc))
+        t.ok("a removed version's folder a subtitle was attached to while it was quarantined is put back, with it",
+             [x["path"] for x in s.targets] == [os.path.relpath(vp, root)] and os.path.isdir(vp)
+             and glob.glob(os.path.join(vp, "subs", "attached-*.de.vtt")) and a.removed == 0
+             and any("holds a subtitle attached to its title" in n for n in a.put_back) and no_quarantine(root),
+             (a.put_back, a.failed))
 
     # an episode another's file covers plays its holder's versions: its projection keeps one it names
     with tempfile.TemporaryDirectory() as tmp:
