@@ -9,7 +9,7 @@ A migration that could not read a store of many terabytes through while its serv
 stages its packages with --checksums pending (library-v2-from-catalog.py): each package.json counts
 its files and their bytes and names no hash, there is no checksums.sha256, and .complete names that
 package.json. The version plays as any other. This hashes such a package's files afterwards — every
-file under hls/ subs/ trickplay/ trailers/ and the version.json beside them — and closes the chain:
+file of it under hls/ subs/ trickplay/ trailers/ and the version.json beside them — and closes the chain:
 
   checksums.sha256   written, one '<hex>  <path>' line per file
   package.json       written again, its checksums naming that file's hash in place of "pending": true,
@@ -19,6 +19,11 @@ file under hls/ subs/ trickplay/ trailers/ and the version.json beside them — 
 in that order, each put in place in one step. Before a folder is touched it is held against its
 record: it must hold exactly the files and the bytes the record counted, and .complete must name the
 package.json. A folder that does not is a conflict, reported and left as it was.
+
+A subtitle attached to the version after its package completed, named by the hash of its bytes as
+subs/attached-<sha256>.<lang>[.forced][.sdh].vtt, is no file of the package, and nothing counted it:
+it is not held against the record, not read, and not listed in the checksums the fill writes. A
+folder with one is filled as it would be without it, byte for byte, and never a conflict for it.
 
 A dry run, the default, lists every pending folder with what it would read, and reads nothing.
 --apply fills them, folder by folder, journaled under <root>/.work/migration/<run>/ — the run is
@@ -53,8 +58,9 @@ except ImportError:
     if "LIBV2_RECORDS" not in globals():
         sys.exit("library-v2-fill-checksums.py needs libv2_records.py: run it from tools/, or pipe the two "
                  "together, cat tools/libv2_records.py tools/library-v2-fill-checksums.py | python3 - …")
-if LIBV2_RECORDS < 5:
-    sys.exit(f"library-v2-fill-checksums.py needs libv2_records.py 5 or later, found {LIBV2_RECORDS}")
+if LIBV2_RECORDS < 6:
+    sys.exit(f"library-v2-fill-checksums.py needs libv2_records.py 6 or later, found {LIBV2_RECORDS}: "
+             f"one before it holds an attached subtitle against the record, as a file it did not count")
 
 SUMS = "checksums.sha256"
 

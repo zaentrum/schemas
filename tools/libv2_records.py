@@ -39,6 +39,11 @@ counts the files and their bytes and names no hash, no checksums.sha256 is writt
 names that package.json. fill_checksums() closes the chain later: it hashes every file, and returns
 the checksums file with the package.json and the .complete that name it, to be written in that order.
 
+A subtitle attached to a version after its package completed (ATTACHED_SUBTITLE_RE) is written by
+none of these writers and named by none of these records: it is no file of the package, so
+chain_problems() and fill_checksums() leave it out of the chain, and a full check holds its bytes to
+its name.
+
 The original a version is established with is no link of that chain — its source record's fixity
 covers it, and it is deleted later — and goes in under library_original_name() once the rest is
 built: renamed last into the staged folder, which then goes into place whole. A version taken in
@@ -63,8 +68,11 @@ import copy, datetime, hashlib, json, os, re, shutil, subprocess, uuid
 # covers the episodes its file holds as the database linked them, and its naming reads a file of
 # several episodes as the catalog's scanner does, from the first to the last. 4: a package's checksums
 # can be pending (package_listing, checksums and package_record with pending, fill_checksums), and
-# chain_problems() reads such a chain.
-LIBV2_RECORDS = 5
+# chain_problems() reads such a chain. 5: package_files() and fill_checksums() read several files at a
+# time (jobs). 6: a subtitle attached to a version after its package completed is no file of the
+# package (attached_subtitle): chain_problems() and fill_checksums() leave it out of the chain, and a
+# full check holds its bytes to its name. Every record 5 and 6 write is the one before.
+LIBV2_RECORDS = 6
 
 NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://zaentrum.github.io/schemas/library")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
@@ -81,6 +89,15 @@ FFPROBE_ARGS = ("-v", "quiet", "-print_format", "json", "-show_format", "-show_s
 # came with it (subtitle_copy_name): nothing of the name either arrived under, and only [a-z0-9.-].
 ORIGINAL_NAME_RE = re.compile(r"^original(-[0-9]+)?\.[a-z0-9]{1,8}$")
 SUBTITLE_COPY_RE = re.compile(r"^subtitle-[0-9]+\.[a-z]{2,8}(\.forced)?(\.sdh)?\.[a-z0-9]{1,8}$")
+# A subtitle attached to a title after its package completed — made from its audio or from another of
+# its subtitles, or found elsewhere — lies in the subs/ of the version it was attached to, beside the
+# package's own, named by its bytes: subs/attached-<sha256>.<language>[.forced][.sdh].vtt, <sha256> the
+# hex sha256 of the file and <language> its BCP 47 tag in lower case. katalog-manager writes it, and a
+# new version of the same file gets a copy. It is no file of the package: package.json and the
+# checksums were written when the package completed, and nothing rewrites them for it, so its name is
+# its check. Only a version folder holds one, directly in its subs/; the name anywhere else is any
+# other file's.
+ATTACHED_SUBTITLE_RE = re.compile(r"^subs/attached-([0-9a-f]{64})\.[a-z0-9]+(-[a-z0-9]+)*(\.forced)?(\.sdh)?\.vtt$")
 # The values HLS gives VIDEO-RANGE, as a video rendition's videoRange keeps them.
 VIDEO_RANGES = ("SDR", "PQ", "HLG")
 
@@ -1094,11 +1111,13 @@ def peak_bandwidth(folder, master="hls/master.m3u8"):
     return None
 
 
-def package_files(folder, dirs=PACKAGE_DIRS, jobs=1):
+def package_files(folder, dirs=PACKAGE_DIRS, jobs=1, outside=None):
     """Every file of the package in folder, as [(path relative to folder, hex sha256, size)]: the
     rendition, subtitle, trickplay and trailer folders, never the records beside them. With jobs
     above one that many files are read at a time: a package is thousands of small files, and on a
-    share the wait for each, not the bytes, is what reading it costs."""
+    share the wait for each, not the bytes, is what reading it costs. outside, when given, tells by
+    its path a file in those folders that is no file of the package — attached_subtitle does — which
+    is neither listed nor read."""
     found = []
     for sub in dirs:
         base = os.path.join(folder, sub)
@@ -1106,6 +1125,8 @@ def package_files(folder, dirs=PACKAGE_DIRS, jobs=1):
             continue
         for rel in walk_files(base):
             found.append((os.path.join(sub, rel).replace(os.sep, "/"), os.path.join(base, rel)))
+    if outside is not None:
+        found = [entry for entry in found if not outside(entry[0])]
 
     def one(entry):
         rel, p = entry
@@ -1272,13 +1293,23 @@ def read_sums(path):
     return entries, bad
 
 
+def attached_subtitle(rel):
+    """The hex sha256 an attached subtitle's name gives its bytes, when rel — a path in a version
+    folder, relative to it — is the file of one (ATTACHED_SUBTITLE_RE); None for every other path."""
+    m = ATTACHED_SUBTITLE_RE.match(rel.replace(os.sep, "/"))
+    return m.group(1) if m else None
+
+
 def chain_problems(folder, record="version.json", dirs=PACKAGE_DIRS, kept=(), full=False):
     """What is wrong with the chain of a version or an extra folder: .complete names package.json,
     package.json names checksums.sha256, which lists exactly the record, the originals kept beside it
     (kept) and every package file, of the count and total size package.json records, and the
     record's digest is the one listed. With full, every listed file is hashed too. An empty list is a
-    chain that holds."""
+    chain that holds. A version's attached subtitle (attached_subtitle) is no file of its package:
+    unless the checksums list it, the chain holds without it, and full holds its bytes to the hash its
+    name gives them."""
     out = []
+    version = record == "version.json"
     mark, pkg_path, sums_path = (os.path.join(folder, n) for n in (".complete", "package.json", SUMS))
     if not os.path.isfile(mark) or not os.path.isfile(pkg_path):
         return ["no package.json and .complete: the package never finished"]
@@ -1293,25 +1324,30 @@ def chain_problems(folder, record="version.json", dirs=PACKAGE_DIRS, kept=(), fu
         return out + [f"package.json cannot be read: {e}"]
     if cs.get("pending") is True:
         # the chain is not closed yet: nothing was hashed, so there is no file to name, and what can
-        # be held against the record is what it counted
+        # be held against the record is what it counted — the package's files, never an attached
+        # subtitle, which nothing counted
         if os.path.isfile(sums_path):
             out.append(f"{SUMS} is here while package.json says its checksums are pending")
-        present = [record] + [rel for rel, _, _ in _listing(folder, dirs)]
+        found = [rel for rel, _, _ in _listing(folder, dirs)]
+        attached = [rel for rel in found if version and attached_subtitle(rel)]
+        present = [record] + [rel for rel in found if rel not in attached]
         if len(present) != cs.get("files"):
             out.append(f"the folder holds {len(present)} files, package.json counted {cs.get('files')}")
         total = sum(os.path.getsize(os.path.join(folder, rel)) for rel in present
                     if os.path.isfile(os.path.join(folder, rel)))
         if total != cs.get("bytes"):
             out.append(f"the folder's files total {total} bytes, package.json counted {cs.get('bytes')}")
-        return out
+        return out + (_attached_problems(folder, attached) if full else [])
     if not os.path.isfile(sums_path):
         return out + [f"{SUMS} is missing"]
     if sha_file(sums_path) != cs.get("sha256"):
         out.append(f"{SUMS} is not the one package.json names")
     listed, bad = read_sums(sums_path)
     out += [f"{SUMS} holds a line that is not one: {line[:80]!r}" for line in bad[:3]]
+    found = {rel for rel, _, _ in _listing(folder, dirs)}
+    attached = sorted(rel for rel in found if version and rel not in listed and attached_subtitle(rel))
     present = sorted({record} | {n for n in kept if os.path.isfile(os.path.join(folder, n))}
-                     | {rel for rel, _, _ in _listing(folder, dirs)})
+                     | (found - set(attached)))
     for rel in sorted(set(present) - set(listed)):
         out.append(f"{rel} is not listed in {SUMS}")
     for rel in sorted(set(listed) - set(present)):
@@ -1329,6 +1365,18 @@ def chain_problems(folder, record="version.json", dirs=PACKAGE_DIRS, kept=(), fu
         for rel in sorted(set(listed) & set(present) - {record}):
             if sha_file(os.path.join(folder, rel)).split(":", 1)[1] != listed[rel]:
                 out.append(f"{rel} does not match its checksum")
+        out += _attached_problems(folder, attached)
+    return out
+
+
+def _attached_problems(folder, attached):
+    """Each attached subtitle of attached, paths relative to folder, whose bytes are not the ones its
+    name says."""
+    out = []
+    for rel in attached:
+        digest = sha_file(os.path.join(folder, rel))
+        if digest.split(":", 1)[1] != attached_subtitle(rel):
+            out.append(f"{rel} is an attached subtitle whose bytes hash to {digest}, not to the one its name says")
     return out
 
 
@@ -1348,14 +1396,17 @@ def fill_checksums(folder, record="version.json", dirs=PACKAGE_DIRS, jobs=1):
     (checksums.sha256 bytes, package.json bytes, .complete bytes) — to be written in that order, each
     in one step. The package record changes in its checksums alone. None when the folder's checksums
     are not pending, or when what it holds is no longer what the record counted: then nothing may be
-    written, and chain_problems() says what is wrong. jobs is how many files are read at a time."""
+    written, and chain_problems() says what is wrong. jobs is how many files are read at a time. An
+    attached subtitle beside the package (attached_subtitle) is none of its files: it is neither read
+    nor listed, and the chain closes as it would without it."""
     pkg_path = os.path.join(folder, "package.json")
     if not checksums_pending(folder) or chain_problems(folder, record, dirs):
         return None
     with open(pkg_path, encoding="utf-8") as f:
         package = json.load(f)
     with open(os.path.join(folder, record), "rb") as f:
-        listed = package_files(folder, dirs, jobs) + [record_entry(record, f.read())]
+        listed = package_files(folder, dirs, jobs, outside=attached_subtitle if record == "version.json" else None) \
+            + [record_entry(record, f.read())]
     data, sums = checksums(listed)
     if (sums["files"], sums["bytes"]) != (package["checksums"].get("files"), package["checksums"].get("bytes")):
         return None  # a file changed between the count and the hash

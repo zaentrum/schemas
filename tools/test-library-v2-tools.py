@@ -60,6 +60,11 @@ rule and checks the tool notices:
                  the reason; a deleted person goes once no item record on storage credits them, in
                  the same sweep as a deleted item that does; of an extra, only a package that never
                  finished is ever garbage
+  attached       a subtitle attached after the package completed, named by its bytes in its version's
+                 subs/, is no file of the package: the record module's chain holds with it and a full
+                 check holds its bytes to its name; the fill closes a pending chain beside it byte for
+                 byte as it would without it, and one without as the packager wrote it, and refuses a
+                 module that would count it; a file so named anywhere else is any other file
   v1 -> v2       the v1 example tree converts, and given the names the library gives its files by
                  library-v2-neutral-names.py the result passes validate-library-v2.py and the media
                  check, the texts and the packages survive, and a second run does nothing
@@ -4910,6 +4915,160 @@ def test_sweep_removed_versions(t):
              swept(text, root), [os.path.join(holder, "versions", old)])
 
 
+# ---------------------------------------------------------------- subtitles attached after the package completed
+def subtitled(root):
+    """The version folder of the example episode whose package plays and has subtitles of its own: the
+    one a subtitle is attached to."""
+    for vp in sorted(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*", "versions", "*"))):
+        d = os.path.dirname(os.path.dirname(vp))
+        plays = jload(os.path.join(d, "metadata.json"))["library"].get("primaryVersionId") == os.path.basename(vp)
+        if plays and os.path.isfile(os.path.join(vp, "package.json")) and jload(os.path.join(vp, "package.json")).get("subtitles"):
+            return vp
+    raise AssertionError("no episode plays a package with subtitles")
+
+
+def chain_bytes(root):
+    """The links of every version's chain under root, by the version folder: what a fill writes."""
+    out = {}
+    for p in sorted(glob.glob(os.path.join(root, "**", "versions", "*", ".complete"), recursive=True)):
+        vp = os.path.dirname(p)
+        out[os.path.relpath(vp, root)] = {n: open(os.path.join(vp, n), "rb").read() if os.path.isfile(os.path.join(vp, n))
+                                          else None for n in ("checksums.sha256", "package.json", ".complete")}
+    return out
+
+
+def run_fill_piped(module, *args):
+    """library-v2-fill-checksums.py piped behind the record module given (its bytes), from a folder that
+    holds no copy of the module: the module it runs with is that one."""
+    body = module + open(os.path.join(TOOLS, "library-v2-fill-checksums.py"), "rb").read()
+    with tempfile.TemporaryDirectory() as nowhere:
+        r = subprocess.run([sys.executable, "-", *[str(a) for a in args]], input=body, capture_output=True, cwd=nowhere)
+    return r.returncode, (r.stdout + r.stderr).decode("utf-8", "replace")
+
+
+def test_attached_subtitles(t):
+    """A subtitle attached to a title after its package completed lies in the subs/ of its version, named
+    by the hash of its bytes, and no record lists it. The record module leaves it out of the chain, and a
+    full check holds its bytes to its name; library-v2-fill-checksums.py fills a pending folder with one
+    byte for byte as it would without it, and one without as the packager wrote it."""
+    rec = load_tool(RECORDS)
+    s = hashlib.sha256(b"x").hexdigest()
+
+    # ---- the name, read as katalog-manager writes it
+    t.eq("the record module tells an attached subtitle by its name and its place, and gives back the hash it names",
+         [rec.attached_subtitle(p) for p in (f"subs/attached-{s}.de.vtt", f"subs/attached-{s}.zh-hans.forced.vtt",
+                                             f"subs/attached-{s}.en.forced.sdh.vtt", f"subs/attached-{s}.pt-br.sdh.vtt")],
+         [s] * 4)
+    t.eq("and nothing else is one: no hash or a short one, no language, another format, a language in capitals, "
+         "another name, deeper in subs/, another folder, the version folder itself",
+         [rec.attached_subtitle(p) for p in ("subs/0.vtt", "subs/attached-abc.de.vtt", f"subs/attached-{s}.vtt",
+                                             f"subs/attached-{s}.de.srt", f"subs/attached-{s}.DE.vtt",
+                                             f"subs/x-attached-{s}.de.vtt", f"subs/more/attached-{s}.de.vtt",
+                                             f"hls/attached-{s}.de.vtt", f"attached-{s}.de.vtt")],
+         [None] * 9)
+
+    # ---- the chain: it holds with one beside the package, and a full check holds its bytes to its name
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        vp = subtitled(root)
+        sub = attach_subtitle(vp)
+        t.eq("a closed chain holds with an attached subtitle beside the package, in full too",
+             (rec.chain_problems(vp), rec.chain_problems(vp, full=True)), ([], []))
+        with open(sub, "ab") as f:
+            f.write(b"Guten Abend\n")
+        rel = os.path.relpath(sub, vp)
+        t.ok("bytes that are not its name's: the chain holds, and the full check says so, as a problem of its own",
+             rec.chain_problems(vp) == []
+             and rec.chain_problems(vp, full=True) == [f"{rel} is an attached subtitle whose bytes hash to "
+                                                       f"sha256:{digest(sub)}, not to the one its name says"],
+             rec.chain_problems(vp, full=True))
+        os.unlink(sub)
+        stray = os.path.join(vp, "subs", "attached-abc.de.vtt")
+        with open(stray, "w") as f:
+            f.write(SUBTITLE_TEXT)
+        t.ok("a file in subs/ named as none is a file the checksums do not list, as before",
+             rec.chain_problems(vp) == ["subs/attached-abc.de.vtt is not listed in checksums.sha256"], rec.chain_problems(vp))
+        os.unlink(stray)
+        relist(vp, sorted(listing(vp) + [os.path.relpath(attach_subtitle(vp), vp)]))
+        t.eq("one the checksums list, as a fill before the module knew them could have hashed one in, is a file of the "
+             "chain", rec.chain_problems(vp, full=True), [])
+        xp = extra_of(root, "featurette")
+        attach_subtitle(xp)
+        t.ok("an extra holds none: a file so named in an extra's package is one its checksums do not list",
+             any("subs/attached-" in p and "is not listed in checksums.sha256" in p for p in
+                 rec.chain_problems(xp, "extra.json", rec.EXTRA_DIRS, kept=jload(os.path.join(xp, "extra.json"))["originalFiles"])))
+        pending = next(p for p in sorted(glob.glob(os.path.join(root, "movies", "*", "*", "versions", "*"))))
+        as_pending(pending)
+        sub = attach_subtitle(pending)
+        t.eq("a pending chain holds with one beside the package: what its record counted is the package's files",
+             (rec.chain_problems(pending), rec.chain_problems(pending, full=True)), ([], []))
+        with open(sub, "ab") as f:
+            f.write(b"x")
+        t.ok("and in full its bytes are held to its name there too",
+             rec.chain_problems(pending) == [] and len(rec.chain_problems(pending, full=True)) == 1
+             and "is an attached subtitle whose bytes hash to" in rec.chain_problems(pending, full=True)[0])
+
+    # ---- the fill: a folder with attached subtitles is filled as it would be without them, and one without
+    # as the packager wrote it
+    with tempfile.TemporaryDirectory() as tmp:
+        plain, with_subs = os.path.join(tmp, "plain"), os.path.join(tmp, "attached")
+        for root in (plain, with_subs):
+            shutil.copytree(EXAMPLES, root)
+        written = chain_bytes(plain)
+        versions = sorted(written)
+        for root in (plain, with_subs):
+            for rel in versions:
+                as_pending(os.path.join(root, rel))
+        attached = []
+        for i, rel in enumerate(versions):
+            attached.append(attach_subtitle(os.path.join(with_subs, rel)))
+            if i % 2:
+                attached += [attach_subtitle(os.path.join(with_subs, rel), "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n[Music]\n",
+                                             "zh-hans", forced=True, sdh=True),
+                             attach_subtitle(os.path.join(with_subs, rel), language="pt-br", sdh=True)]
+        kept_subs = {p: (open(p, "rb").read(), os.stat(p).st_mtime_ns) for p in attached}
+        dry_plain, dry_with = run(os.path.join(TOOLS, "library-v2-fill-checksums.py"), plain), \
+            run(os.path.join(TOOLS, "library-v2-fill-checksums.py"), with_subs)
+        t.ok("a dry run lists the same packages pending with the same files and bytes to read, attached subtitles or not",
+             dry_plain[0] == dry_with[0] == 0 and dry_plain[1] == dry_with[1].replace(with_subs, plain)
+             and f"{len(versions)} package(s) with their checksums pending" in dry_with[1], (dry_plain, dry_with))
+        code, text = run(os.path.join(TOOLS, "library-v2-fill-checksums.py"), plain, "--apply")
+        t.ok("a fill of pending folders without attached subtitles closes every chain as the packager wrote it, byte "
+             "for byte: checksums.sha256, package.json and .complete",
+             code == 0 and f"filled {len(versions)} of {len(versions)}" in text and "0 conflict(s)" in text
+             and chain_bytes(plain) == written, text)
+        code, text = run(os.path.join(TOOLS, "library-v2-fill-checksums.py"), with_subs, "--apply", "--jobs", "4")
+        t.ok("and of folders with them, four files at a time, the same bytes: none is read, listed or a conflict",
+             code == 0 and f"filled {len(versions)} of {len(versions)}" in text and "0 conflict(s)" in text
+             and chain_bytes(with_subs) == written, text)
+        t.ok("every attached subtitle is where it was, as it was",
+             all(os.path.isfile(p) and (open(p, "rb").read(), os.stat(p).st_mtime_ns) == kept_subs[p] for p in attached))
+        journal = lambda root: [(e["op"], e["dir"], e.get("files"), e.get("bytes")) for e in
+                                (json.loads(l) for l in open(os.path.join(root, ".work", "migration", "fill-checksums",
+                                                                          "checksums.jsonl"), encoding="utf-8"))]
+        t.eq("and the journal says the same of both: what is verified in full now counts no attached subtitle",
+             journal(with_subs), journal(plain))
+        t.ok("the chains hold, the attached subtitles' bytes their names'",
+             all(rec.chain_problems(os.path.join(with_subs, rel), full=True) == [] for rel in versions))
+        code, mtext = run(MEDIA_CHECK, "--checksums", "--no-pending", with_subs)
+        t.ok("the media check finds every chain closed, and counts the attached subtitles apart",
+             code == 0 and mtext.strip().endswith("OK") and f"'attached': {len(attached)}" in mtext, mtext)
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", "--no-pending", with_subs)
+            t.ok("and the validator, every byte the one it lists or its name says",
+                 code == 0 and vtext.strip().endswith("OK") and f"'attached': {len(attached)}" in vtext, vtext)
+        else:
+            t.skip("and the validator, every byte the one it lists or its name says", "jsonschema is not importable here")
+        after = tree_files(with_subs)
+        code, text = run(os.path.join(TOOLS, "library-v2-fill-checksums.py"), with_subs, "--apply")
+        t.ok("a fill after it changes nothing", code == 0 and "filled 0 of 0" in text and tree_files(with_subs) == after, text)
+        older = open(RECORDS, "rb").read().replace(b"\nLIBV2_RECORDS = 6\n", b"\nLIBV2_RECORDS = 5\n")
+        code, text = run_fill_piped(older, plain)
+        t.ok("the fill refuses a record module before 6, which would hold an attached subtitle against the record",
+             older != open(RECORDS, "rb").read() and code != 0 and "needs libv2_records.py 6 or later, found 5" in text, text)
+
+
 # ---------------------------------------------------------------- sweeping an extra that never finished
 X_BESIDE = "44444444-0000-4000-8000-00000000000e"         # an extra's package that never finished beside its original
 X_RECORDED = "55555555-0000-4000-8000-00000000000e"       # a packaged extra that wrote its record and kept no original
@@ -5542,6 +5701,7 @@ def main():
                         ("neutral names for a tree from before", test_neutral_names), ("sweeping garbage", test_sweep),
                         ("sweeping a version an event removed", test_sweep_removed_versions),
                         ("sweeping an extra that never finished", test_sweep_extras),
+                        ("subtitles attached after the package completed", test_attached_subtitles),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):
             continue
