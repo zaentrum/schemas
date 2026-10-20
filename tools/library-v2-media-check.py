@@ -22,7 +22,11 @@ What it checks, for every item folder:
     matches the count and the total size package.json recorded (--checksums also hashes every
     package file). A package a migration adopted with its checksums pending has no checksums file
     yet: its folder holds the files and the bytes its record counted, and it is a note, counted —
-    a problem with --no-pending, once a migration says every one is filled;
+    a problem with --no-pending, once a migration says every one is filled. A subtitle attached to
+    the version after its package completed, named by its bytes as
+    subs/attached-<sha256>.<lang>[.forced][.sdh].vtt, is no file of the package and none the
+    checksums list or the record counted: it is counted apart (attached), and --checksums holds its
+    bytes to the hash its name gives them, a problem of its own when they are not;
   * every file a record names is there: the probe and the sidecars of each source, every image
     metadata.json lists, each version's originals, and each package's rendition folders — its 5.1
     companions' too — subtitles and their HLS renditions, master playlist and trickplay sheet;
@@ -64,7 +68,11 @@ CHAIN = (".complete", "package.json", SUMS)
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")
 COMPLETE = re.compile(r"^sha256:[0-9a-f]{64}$")
 EVENT_FOLDER = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}-[a-z-]+$")
-UPGRADE = "library-v2-upgrade.py upgrades a tree from before 2026-10-02 (b) in place"
+# A subtitle attached to a version after its package completed, relative to the version folder: in its
+# subs/, named by the hex sha256 of its bytes, its BCP 47 language in lower case and its flags — no file
+# of the package, and its name is its check (libv2_records.py ATTACHED_SUBTITLE_RE).
+ATTACHED_SUBTITLE = re.compile(r"^subs/attached-([0-9a-f]{64})\.[a-z0-9]+(-[a-z0-9]+)*(\.forced)?(\.sdh)?\.vtt$")
+UPGRADE ="library-v2-upgrade.py upgrades a tree from before 2026-10-02 (b) in place"
 
 
 def listdir(d):
@@ -162,7 +170,7 @@ class Check:
         self.problems = []
         self.notes = []
         self.counts = {"items": 0, "people": 0, "versions": 0, "packages": 0, "originals": 0, "deleted": 0,
-                       "images": 0, "extras": 0, "files": 0, "bytes": 0}
+                       "images": 0, "extras": 0, "files": 0, "bytes": 0, "attached": 0}
 
     def err(self, where, msg):
         self.problems.append(f"{where}: {msg}")
@@ -442,7 +450,9 @@ class Check:
             self.err(f, f"does not list version.json, the record its package was made for ({UPGRADE})")
         elif os.path.isfile(vj) and sha_file(vj).split(":", 1)[1] != listed["version.json"]:
             self.err(vj, f"does not match the checksum {SUMS} recorded for it: changed after the package completed")
-        on_disk = package_files(vp, seen=self.seen) + (["version.json"] if os.path.isfile(vj) else [])
+        files, attached = self.beside(package_files(vp, seen=self.seen), listed)
+        self.attached_subtitles(vp, attached)
+        on_disk = files + (["version.json"] if os.path.isfile(vj) else [])
         for rel in sorted(set(on_disk) - set(listed)):
             self.err(os.path.join(vp, rel), "is a file of this package that checksums.sha256 does not list")
         for rel in sorted(set(listed) - set(on_disk) - set(CHAIN)):
@@ -470,7 +480,9 @@ class Check:
         if self.no_pending:
             self.err(vp, "its checksums are pending: no file of this package was ever hashed "
                          "(library-v2-fill-checksums.py closes the chain)")
-        on_disk = package_files(vp, seen=self.seen) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
+        files, attached = self.beside(package_files(vp, seen=self.seen), {})
+        self.attached_subtitles(vp, attached)
+        on_disk = files + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
         total = sum(self.size(os.path.join(vp, rel)) for rel in on_disk)
         self.counts["files"] += len(on_disk)
         self.counts["bytes"] += total
@@ -478,6 +490,25 @@ class Check:
             self.err(vp, f"the package holds {len(on_disk)} files, package.json counted {cs.get('files')}")
         elif total != cs.get("bytes"):
             self.err(vp, f"the package's files total {total} bytes, package.json counted {cs.get('bytes')}")
+
+    def beside(self, files, listed):
+        """files, the package's in a version folder, without the subtitles attached to the version after
+        its package completed, and those apart: each in subs/, named as one is, and not listed (listed:
+        the checksums, {} while they are pending) — one the checksums list is a file of the chain."""
+        attached = [rel for rel in files if rel not in listed and ATTACHED_SUBTITLE.match(rel.replace(os.sep, "/"))]
+        return [rel for rel in files if rel not in attached], attached
+
+    def attached_subtitles(self, vp, attached):
+        """The subtitles attached to the version in vp: counted, and with --checksums each one's bytes
+        held to the hash its name gives them — a problem of its own, since no checksum covers them."""
+        self.counts["attached"] += len(attached)
+        if not self.hash_everything:
+            return
+        for rel in attached:
+            digest = sha_file(os.path.join(vp, rel))
+            if digest.split(":", 1)[1] != ATTACHED_SUBTITLE.match(rel.replace(os.sep, "/")).group(1):
+                self.err(os.path.join(vp, rel), f"an attached subtitle whose bytes hash to {digest}, not to the one its "
+                                                f"name says: changed since it was attached, or named for other bytes")
 
     # -------------------------------------------------- bonus material
     def extras(self, d, kind, retired=()):

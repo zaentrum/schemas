@@ -341,6 +341,37 @@ def pending(vp):
     close(vp)
 
 
+SUBTITLE_TEXT = "WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nGuten Tag\n"
+
+
+def attach(folder, text=SUBTITLE_TEXT, language="de", forced=False, sdh=False, where="subs"):
+    """A subtitle attached after the package in folder completed, as katalog-manager writes one: in
+    the version's subs/ (where, relative to folder, puts it elsewhere), named by the hash of its bytes,
+    its language and its flags, and listed by nothing. Returns its path."""
+    data = text.encode("utf-8")
+    name = f"attached-{hashlib.sha256(data).hexdigest()}.{language}" + (".forced" if forced else "") \
+        + (".sdh" if sdh else "") + ".vtt"
+    path = os.path.join(folder, where, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
+
+
+def attached_changed(folder):
+    """An attached subtitle whose bytes changed since it was attached: its name says other bytes."""
+    with open(attach(folder), "ab") as f:
+        f.write(b"Guten Abend\n")
+
+
+def stray(folder, rel, text=SUBTITLE_TEXT):
+    """A file at rel in folder that nothing names, its folders made as needed."""
+    path = os.path.join(folder, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+
+
 def pending_extra(root):
     """The trailer's package said to be pending, which only a version's may be."""
     xp = next(x for x in (featurette(root), trailer(root), bts(root)) if os.path.isfile(pkg(x)))
@@ -808,6 +839,20 @@ CASES = [
     ("a pending package that holds another file than its record counted", False, lambda r: (pending(kept(r)), open(os.path.join(kept(r), "hls", "v0", "seg-0001.m4s"), "wb").write(b"x")), "the record counted", ["--check-media"]),
     ("a pending package whose file is of another size", False, lambda r: (pending(version_of(episode(r, 1), True)), open(os.path.join(version_of(episode(r, 1), True), "subs", "1.vtt"), "ab").write(b"x")), "bytes, the record counted", ["--check-media"]),
     ("an extra whose checksums are pending", False, pending_extra, "checksums are never pending", []),
+    # ---- a subtitle attached to a version after its package completed: no file of the package
+    ("a subtitle attached after the package completed, outside the checksums", True, lambda r: attach(gone(r)), "'attached': 1", ["--check-checksums"]),
+    ("attached subtitles forced, SDH, of a script and of a region, beside the package's own", True, lambda r: (attach(version_of(episode(r, 1), True), language="zh-hans", forced=True), attach(version_of(episode(r, 1), True), "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n[Music]\n", "pt-br", sdh=True), attach(version_of(episode(r, 1), True), "WEBVTT\n\n00:00:03.000 --> 00:00:04.000\nHello\n", "en", True, True)), "'attached': 3", ["--check-checksums"]),
+    ("an attached subtitle beside a package whose checksums are pending", True, lambda r: (pending(kept(r)), attach(kept(r))), "1 package(s) with their checksums pending", ["--check-checksums"]),
+    ("an attached subtitle whose bytes are not the ones its name says", False, lambda r: attached_changed(gone(r)), "an attached subtitle whose bytes hash to", ["--check-checksums"]),
+    ("an attached subtitle whose bytes are not its name's, beside a pending package", False, lambda r: (pending(kept(r)), attached_changed(kept(r))), "an attached subtitle whose bytes hash to", ["--check-checksums"]),
+    ("an attached subtitle whose bytes are not its name's, nothing hashed", True, lambda r: attached_changed(gone(r)), "'attached': 1", ["--check-media"]),
+    ("an attached subtitle its checksums list, as a fill hashed it in", True, lambda r: (attach(gone(r)), rechecksum(gone(r))), "'attached': 0", ["--check-checksums"]),
+    ("a file in subs/ named as no attached subtitle is", False, lambda r: stray(gone(r), "subs/attached-abc.de.vtt"), "subs/attached-abc.de.vtt is not in checksums.sha256", ["--check-media"]),
+    ("an attached subtitle's name with its language in capitals", False, lambda r: attach(gone(r), language="DE"), ".DE.vtt is not in checksums.sha256", ["--check-media"]),
+    ("an attached subtitle's name deeper in subs/", False, lambda r: attach(gone(r), where="subs/more"), "is not in checksums.sha256", ["--check-media"]),
+    ("an attached subtitle's name in another folder of the package", False, lambda r: attach(gone(r), where="hls"), "package file hls/attached-", ["--check-media"]),
+    ("a file in subs/ named as no attached subtitle is, beside a pending package", False, lambda r: (pending(kept(r)), stray(kept(r), "subs/attached-abc.de.vtt")), "the record counted", ["--check-media"]),
+    ("an attached subtitle's name in an extra's package", False, lambda r: attach(trailer(r)), "an extra's checksums cover extra.json and every file beside it", []),
     ("an original the library before still names, with --shared-originals", True, lambda r: os.link(os.path.join(kept(r), originals(kept(r))[0]), os.path.join(r, "..", "outside-link")), "1 original(s) shared with another path", ["--check-media", "--shared-originals"]),
     ("an original the library before still names", False, lambda r: os.link(os.path.join(kept(r), originals(kept(r))[0]), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media"]),
     ("a package file shared with another path, whatever --shared-originals allows", False, lambda r: os.link(os.path.join(kept(r), "hls", "v0", ".keep"), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media", "--shared-originals"]),

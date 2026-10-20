@@ -203,6 +203,36 @@ def close(vp):
         f.write("sha256:" + digest(os.path.join(vp, "package.json")) + "\n")
 
 
+SUBTITLE_TEXT = "WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nGuten Tag\n"
+
+
+def attach_subtitle(folder, text=SUBTITLE_TEXT, language="de", forced=False, sdh=False, where="subs"):
+    """A subtitle attached after the package in the version folder completed, as katalog-manager writes
+    one: in its subs/ (where, relative to folder, puts it elsewhere), named by the hash of its bytes,
+    its language and its flags, and listed by nothing. Returns its path."""
+    data = text.encode("utf-8")
+    name = f"attached-{hashlib.sha256(data).hexdigest()}.{language}" + (".forced" if forced else "") \
+        + (".sdh" if sdh else "") + ".vtt"
+    path = os.path.join(folder, where, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
+
+
+def as_pending(vp):
+    """The version folder as a migration adopts one whose files it did not read: no checksums.sha256, a
+    package.json that counts the files and the bytes the checksums listed and says they are pending, and
+    .complete over that record."""
+    os.unlink(os.path.join(vp, "checksums.sha256"))
+    p = os.path.join(vp, "package.json")
+    doc = jload(p)
+    doc["checksums"] = {k: v for k, v in doc["checksums"].items() if k != "sha256"} | {"pending": True}
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    close(vp)
+
+
 def write_event(item_dir, doc):
     """events/<stamp>-<eventId8>-<kind>/: the event and the checksums written with it."""
     stamp = doc["at"].replace("-", "").replace(":", "")
@@ -5297,6 +5327,43 @@ def test_media_check(t):
     case("a portrait that is a hard link to another path", False,
          lambda r: os.link(glob.glob(os.path.join(r, "people", "*", "*", "*.jpg"))[0],
                            os.path.join(os.path.dirname(r), "elsewhere")), "hard links")
+
+    # ---- a subtitle attached after the package completed: no file of the package, its name its check
+    def attached_changed(vp):
+        with open(attach_subtitle(vp), "ab") as f:
+            f.write(b"Guten Abend\n")
+
+    def pending_with(vp, change):
+        as_pending(vp)
+        change(vp)
+
+    def listed_in_chain(vp):
+        """An attached subtitle the checksums list, as a fill before the module knew them could have
+        hashed one in: a file of the chain from then on."""
+        relist(vp, sorted(listing(vp) + [os.path.relpath(attach_subtitle(vp), vp)]))
+
+    case("a subtitle attached after the package completed, outside the checksums, its bytes its name's", True,
+         lambda r: attach_subtitle(package_version(r)), "'attached': 1", ("--checksums",))
+    case("attached subtitles beside a package whose checksums are pending", True,
+         lambda r: pending_with(package_version(r), lambda vp: (attach_subtitle(vp), attach_subtitle(vp, language="en", sdh=True))),
+         "'attached': 2", ("--checksums",))
+    case("an attached subtitle whose bytes are not the ones its name says", False,
+         lambda r: attached_changed(package_version(r)), "an attached subtitle whose bytes hash to", ("--checksums",))
+    case("an attached subtitle whose bytes are not its name's, beside a pending package", False,
+         lambda r: pending_with(package_version(r), attached_changed), "an attached subtitle whose bytes hash to",
+         ("--checksums",))
+    case("an attached subtitle whose bytes are not its name's, nothing hashed", True,
+         lambda r: attached_changed(package_version(r)), "'attached': 1")
+    case("an attached subtitle its checksums list, as a fill hashed it in", True,
+         lambda r: listed_in_chain(package_version(r)), "'attached': 0", ("--checksums",))
+    case("a file in subs/ named as no attached subtitle is", False,
+         lambda r: open(os.path.join(package_version(r), "subs", "attached-abc.de.vtt"), "w").write(SUBTITLE_TEXT),
+         "subs/attached-abc.de.vtt: is a file of this package that checksums.sha256 does not list")
+    case("an attached subtitle's name in another folder of the package", False,
+         lambda r: attach_subtitle(package_version(r), where="trickplay"), "checksums.sha256 does not list")
+    case("a file in subs/ named as no attached subtitle is, beside a pending package", False,
+         lambda r: pending_with(package_version(r), lambda vp: open(os.path.join(vp, "subs", "notes.vtt"), "w").write("x")),
+         "package.json counted")
 
     # ---- bonus material: finished or saying it is not, its files there and every one of them covered
     def featurette(root):

@@ -99,11 +99,14 @@ with the bytes beside them, never about a document being up to date.
                companion, subtitle, subtitle HLS rendition, master playlist and trickplay sheet a
                package names exists and the cues cover the duration;
                checksums.sha256 lists exactly version.json and the package's files, with their total
-               size (pending, the folder holds the files and the bytes the record counted), and an
-               extra's lists files of that total; an extra's every original has the size and qh1
-               extra.json records
-  --check-checksums  also hash every package file and every file an extra's checksums list, and
-               an extra's originals against the sha256 extra.json records (implies --check-media)
+               size (pending, the folder holds the files and the bytes the record counted) — a
+               subtitle attached to the version after its package completed, named by its bytes as
+               subs/attached-<sha256>.<lang>[.forced][.sdh].vtt, is no file of the package, and is
+               counted (attached) — and an extra's lists files of that total; an extra's every
+               original has the size and qh1 extra.json records
+  --check-checksums  also hash every package file and every file an extra's checksums list, an
+               extra's originals against the sha256 extra.json records, and each attached subtitle
+               against the hash its name gives it (implies --check-media)
 
 The schemas are loaded from the library/v2 folder next to this tool by default; pass
 --schemas https://zaentrum.github.io/schemas/library/v2 to use the published copies.
@@ -154,7 +157,12 @@ SWEEP = "library-v2-sweep.py collects it once it is older than the grace period"
 # nothing of the name either arrived under, and only [a-z0-9.-]. libv2_records.py makes them.
 ORIGINAL_NAME = re.compile(r"^original(-[0-9]+)?\.[a-z0-9]{1,8}$")
 SUBTITLE_COPY = re.compile(r"^subtitle-[0-9]+\.[a-z]{2,8}(\.forced)?(\.sdh)?\.[a-z0-9]{1,8}$")
-NEUTRAL = "library-v2-neutral-names.py gives a tree written before 2026-10-08 the names the library gives its files"
+# A subtitle attached to a version after its package completed, relative to the version folder: in its
+# subs/, named by the hex sha256 of its bytes, its BCP 47 language in lower case and its flags. It is no
+# file of the package, and its checksums do not list it: its name is its check. libv2_records.py
+# (ATTACHED_SUBTITLE_RE) and katalog-manager, which writes it, read the name the same way.
+ATTACHED_SUBTITLE = re.compile(r"^subs/attached-([0-9a-f]{64})\.[a-z0-9]+(-[a-z0-9]+)*(\.forced)?(\.sdh)?\.vtt$")
+NEUTRAL ="library-v2-neutral-names.py gives a tree written before 2026-10-08 the names the library gives its files"
 ID_KEYS = {"schema", "itemId", "seriesId", "sourceId", "versionId", "packageId", "eventId", "personId", "file",
            "path", "dir", "vttPath", "manifestPath", "originalFile", "name", "language", "type", "kind",
            "tmdbMovie", "tmdbTv", "tmdbSeason", "tmdbEpisode", "tmdbCollection", "imdb", "tvdb", "tmdbPerson",
@@ -381,7 +389,7 @@ class Checker:
         self.root_dir = None
         self.only_shards = None  # --shard: the shards to look at; None, every one
         self.counts = {"movie": 0, "series": 0, "episode": 0, "people": 0, "versions": 0, "packages": 0,
-                       "sources": 0, "images": 0, "events": 0, "extras": 0}
+                       "sources": 0, "images": 0, "events": 0, "extras": 0, "attached": 0}
 
     def err(self, where, msg):
         self.errors.append(f"{where}: {msg}")
@@ -1032,15 +1040,19 @@ class Checker:
         cs = pkg["checksums"]
         if cs.get("pending"):
             # nothing to hash against yet: the folder holds the files and the bytes the record counted
-            on_disk = package_files(vp) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
+            files, attached = self.beside(vp, package_files(vp), {})
+            on_disk = files + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
             total = sum(os.path.getsize(os.path.join(vp, rel)) for rel in on_disk)
             if len(on_disk) != cs["files"]:
                 self.err(where, f"the package holds {len(on_disk)} files, the record counted {cs['files']}")
             elif total != cs["bytes"]:
                 self.err(where, f"the package's files total {total} bytes, the record counted {cs['bytes']}")
+            self.attached_subtitles(vp, attached)
         elif os.path.isfile(os.path.join(vp, cs["file"])):
             listed = read_checksums(os.path.join(vp, cs["file"]))
-            on_disk = package_files(vp) + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
+            files, attached = self.beside(vp, package_files(vp), listed)
+            self.attached_subtitles(vp, attached)
+            on_disk = files + (["version.json"] if os.path.isfile(os.path.join(vp, "version.json")) else [])
             for rel in sorted(set(on_disk) - set(listed)):
                 self.err(where, f"package file {rel} is not in {cs['file']}")
             for rel in sorted(set(listed) - set(on_disk) - set(CHAIN)):
@@ -1053,6 +1065,26 @@ class Checker:
                 for rel in present:
                     if sha_file(os.path.join(vp, rel)).split(":", 1)[1] != listed[rel]:
                         self.err(where, f"{rel} does not match its checksum")
+
+    def beside(self, vp, files, listed):
+        """The files of the package in vp, files without the subtitles attached to the version after its
+        package completed, and those apart: each in subs/, named as one is, and not listed (listed: the
+        checksums, {} while they are pending) — one the checksums list is a file of the chain."""
+        attached = [rel for rel in files if rel not in listed and ATTACHED_SUBTITLE.match(rel.replace(os.sep, "/"))]
+        return [rel for rel in files if rel not in attached], attached
+
+    def attached_subtitles(self, vp, attached):
+        """The subtitles attached to the version in vp: no file of its package, counted, and with
+        --check-checksums each one's bytes held to the hash its name gives them — a problem of its own,
+        since no checksum covers them."""
+        self.counts["attached"] += len(attached)
+        if not self.check_checksums:
+            return
+        for rel in attached:
+            digest = sha_file(os.path.join(vp, rel))
+            if digest.split(":", 1)[1] != ATTACHED_SUBTITLE.match(rel.replace(os.sep, "/")).group(1):
+                self.err(os.path.join(vp, rel), f"an attached subtitle whose bytes hash to {digest}, not to the one its "
+                                                f"name says: changed since it was attached, or named for other bytes")
 
     def playable(self, vp, pkg):
         """Every rendition folder — the 5.1 companions' too — subtitle, subtitle HLS rendition, master
