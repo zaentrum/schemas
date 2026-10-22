@@ -36,6 +36,11 @@
       "$comment": "Bonus material sits beside its movie or series, never on an episode.",
       "if": { "properties": { "type": { "const": "episode" } }, "required": ["type"] },
       "then": { "properties": { "library": { "not": { "required": ["extras"] } } } }
+    },
+    {
+      "$comment": "A series has no timeline of its own: its episodes have the marks.",
+      "if": { "properties": { "type": { "const": "series" } }, "required": ["type"] },
+      "then": { "not": { "required": ["marks"] } }
     }
   ],
   "unevaluatedProperties": false,
@@ -256,6 +261,47 @@
               "order": { "type": "integer", "minimum": 0 },
               "hidden": { "type": "boolean" },
               "label": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+
+    "marks": {
+      "type": "object",
+      "description": "Movie and episode only: the marks on the item's timeline as the database holds them now — its chapters, each with the ordinal the database gives it, and the intro, recap and credits ranges, each with the detector that found it. They are the marks of the version that plays (library.primaryVersionId), found on its original; a detector run again, or a person, changes them after that version was written, and its version.json keeps the marks it was established with, written once. A rebuild restores the database's marks from here, and from the version that plays only for a projection that has none, one written before 2026-10-22. Empty lists are a database that holds no marks for the item.",
+      "required": ["chapters", "segments"],
+      "additionalProperties": false,
+      "properties": {
+        "chapters": {
+          "type": "array",
+          "description": "In the order of the timeline: by start, then by end.",
+          "items": {
+            "type": "object",
+            "required": ["startMs", "endMs", "title", "ordinal"],
+            "additionalProperties": false,
+            "properties": {
+              "startMs": { "type": "integer", "minimum": 0 },
+              "endMs": { "type": "integer", "minimum": 0 },
+              "title": { "type": ["string", "null"] },
+              "ordinal": { "type": ["integer", "null"] }
+            }
+          }
+        },
+        "segments": {
+          "type": "array",
+          "description": "By start, then by end, kind and detector; as version.json keeps them.",
+          "items": {
+            "type": "object",
+            "required": ["kind", "startMs", "endMs", "detector", "confidence", "label"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "enum": ["intro", "recap", "credits", "preview", "commercial", "other"] },
+              "startMs": { "type": "integer", "minimum": 0 },
+              "endMs": { "type": "integer", "minimum": 0 },
+              "detector": { "type": ["string", "null"] },
+              "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+              "label": { "type": ["string", "null"] }
             }
           }
         }

@@ -303,6 +303,26 @@ def link_of(t):
     return site, key
 
 
+def marks_of(row):
+    """A movie's or an episode's marks as the database holds them now, which metadata.json projects:
+    its chapters, each with the ordinal the database gives it, and the ranges its detectors found, as a
+    version keeps them (segments()) but for their ends, which are the database's — each list in the
+    order of the timeline, whatever order the export lists them in."""
+    def whole_or_none(v):
+        return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == int(v) else None
+    # the end the database holds, as it holds it: a version's record, which ends a mark without one where
+    # it starts, is the version's
+    chapters = [{"startMs": int(c["startMs"]), "endMs": int(c["startMs"] if c.get("endMs") is None else c["endMs"]),
+                 "title": text(c.get("title")), "ordinal": whole_or_none(c.get("ordinal"))}
+                for c in row.get("chapters") or [] if isinstance(c, dict) and c.get("startMs") is not None]
+    chapters.sort(key=lambda c: (c["startMs"], c["endMs"], c["ordinal"] is None, c["ordinal"] or 0, c["title"] or ""))
+    held = [s for s in row.get("segments") or [] if isinstance(s, dict) and s.get("startMs") is not None]
+    ranges = [dict(r, endMs=int(s["startMs"] if s.get("endMs") is None else s["endMs"]))
+              for r, s in zip(segments(held), held)]
+    ranges.sort(key=lambda s: (s["startMs"], s["endMs"], s["kind"], s["detector"] or "", s["label"] or ""))
+    return {"chapters": chapters, "segments": ranges}
+
+
 def credit_order(c):
     """Where a credit stands in a projection: by role — the ones a reader knows in the order it lists
     them, any other after them, alphabetically — then by billing order, a credit without one last,
@@ -546,6 +566,9 @@ class Build:
         doc["library"] = library
         doc["images"] = self.images(row, d)
         doc["videos"] = self.videos(row)
+        if row["type"] in ("movie", "episode"):
+            # the marks follow the database: the version keeps the ones it was established with
+            doc["marks"] = marks_of(row)
         doc["curation"] = {"metadataLocked": bool(row.get("metadataLocked")), "lockedFields": [], "notes": None}
         origins = {}
         for field, value in (("titles.primary", doc["titles"]["primary"]), ("titles.sort", doc["titles"]["sort"]),

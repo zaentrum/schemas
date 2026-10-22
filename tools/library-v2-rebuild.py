@@ -121,6 +121,13 @@ downloaded trailer moved into its extra's folder, under the name the library giv
 whether the link has a local copy can be compared, and neither where it lives nor the name it came
 with.
 
+An item's chapters and segments are the database's as its projection holds them (metadata.json
+marks), which follow every change of them; a projection written before it held them leaves the marks
+of the version that plays, the ones it was made with. A text is compared as a record keeps it: on one
+line where it is a line (a title, a name, a label, a chapter's title), without the whitespace around
+it, none when nothing is left — the writers of records keep it so — so " Chapter 1" and "Chapter 1"
+are one text, and an empty trailer title is none.
+
 A person's tmdbFetchedAt and tmdbChangedAt are never compared either: when the catalog last asked its
 source about a person, and the day of the change it last saw there, move every time it asks, and a
 person no value of whom changed is not projected again — the row's modifiedAt does not move. A
@@ -673,14 +680,22 @@ class Rebuild:
                          for v in meta.get("videos") or []],
             "artwork": [artwork_row(i, os.path.join("metadata", i["file"])) for i in meta.get("images") or []],
         }
-        if primary:
+        # The marks are the database's as the projection holds them, which follow every change of them; a
+        # projection written before it held them leaves the marks the version that plays was made with.
+        marks = meta.get("marks") if isinstance(meta.get("marks"), dict) else None
+        if marks is not None:
+            for c in marks.get("chapters") or []:
+                row["chapters"].append({"startMs": c["startMs"], "endMs": c["endMs"], "title": c.get("title"),
+                                        "ordinal": c.get("ordinal")})
+        elif primary:
             for i, c in enumerate(primary["version"].get("chapters") or []):
                 row["chapters"].append({"startMs": c["startMs"], "endMs": c["endMs"], "title": c.get("title"),
                                         "ordinal": i + 1})
-            for s in primary["version"].get("segments") or []:
-                row["segments"].append({"kind": s["kind"], "startMs": s["startMs"], "endMs": s["endMs"],
-                                        "source": s.get("detector"), "confidence": s.get("confidence"),
-                                        "label": s.get("label")})
+        for s in (marks.get("segments") or [] if marks is not None
+                  else primary["version"].get("segments") or [] if primary else []):
+            row["segments"].append({"kind": s["kind"], "startMs": s["startMs"], "endMs": s["endMs"],
+                                    "source": s.get("detector"), "confidence": s.get("confidence"),
+                                    "label": s.get("label")})
         # The title's file is the original the version that plays was made from, in whichever version
         # folder it is kept: a package made again goes to a folder of its own, and the original stays in
         # the folder of the version before it until it is retired.
@@ -978,19 +993,60 @@ def normalise_artwork(a):
     return out
 
 
+def one_line(v):
+    """A text as a record keeps one that is a line — a title, a name, a label: on one line, without the
+    whitespace around it, none when nothing is left; anything else as it is."""
+    if not isinstance(v, str):
+        return v
+    return v.replace("\r", " ").replace("\n", " ").strip() or None
+
+
+def paragraphs(v):
+    """A text as a record keeps a longer one — an overview, a tagline, a biography: without the
+    whitespace around it, none when nothing is left; anything else as it is."""
+    if not isinstance(v, str):
+        return v
+    return v.strip() or None
+
+
+# The texts of a row, and of its lists' entries, compared as a record keeps them: its writers take the
+# whitespace around a text and a line break out of one that is a line, and keep no empty one, so the
+# forms of one text that a database may hold — "Chapter 1" and " Chapter 1", an overview and the same
+# overview followed by a tab — are one text, and an empty title is none.
+ONE_LINE_FIELDS = ("title", "sortTitle", "name", "sortName", "birthPlace", "knownForDepartment")
+PARAGRAPH_FIELDS = ("description", "tagline")
+ENTRY_TEXTS = {"people": ("name", "job", "character"), "chapters": ("title",), "segments": ("source", "label"),
+               "subtitleAssets": ("label",), "trailers": ("title",)}
+
+
+def text_form(out):
+    """out, a row or a person, with its texts as a record keeps them (one_line, paragraphs)."""
+    for key in ONE_LINE_FIELDS:
+        if key in out:
+            out[key] = one_line(out[key])
+    for key in PARAGRAPH_FIELDS:
+        if key in out:
+            out[key] = paragraphs(out[key])
+    if isinstance(out.get("alsoKnownAs"), list):
+        out["alsoKnownAs"] = [one_line(x) for x in out["alsoKnownAs"]]
+    if isinstance(out.get("biography"), dict):
+        out["biography"] = {k: paragraphs(v) for k, v in out["biography"].items()}
+    for key, fields in ENTRY_TEXTS.items():
+        if isinstance(out.get(key), list):
+            out[key] = [dict(e, **{f: one_line(e[f]) for f in fields if f in e}) if isinstance(e, dict) else e
+                        for e in out[key]]
+    return out
+
+
 def normalise(row):
     """A catalog row as it can be compared: the artwork reduced to its hash, its freshness in one form,
-    an empty tagline or description none, nothing else changed."""
+    its texts as a record keeps them (text_form), nothing else changed."""
     out = dict(row)
     out["artwork"] = [normalise_artwork(a) for a in row.get("artwork") or [] if isinstance(a, dict)]
     if "tmdbFetchedAt" in out:
         out["tmdbFetchedAt"] = stamp(out["tmdbFetchedAt"])
     if "tmdbChangedAt" in out:
         out["tmdbChangedAt"] = day(out["tmdbChangedAt"])
-    # no tagline is no tagline, however a row says it: a record keeps none for an empty one
-    for key in ("tagline", "description"):
-        if out.get(key) == "":
-            out[key] = None
     if isinstance(row.get("trailers"), list):
         # a downloaded trailer moved into its extra's folder, under the name the library gives an
         # original, so of its local copy only whether there is one can be compared: neither where it
@@ -1005,7 +1061,9 @@ def normalise(row):
         if attached:
             out["subtitleAssets"] = [x for x in subs if not attached_row(x)]
             out["attachedSubtitles"] = attached
-    return out
+    # no tagline is no tagline, however a row says it: a record keeps none for an empty one, and no
+    # whitespace around one
+    return text_form(out)
 
 
 def instant(value):
@@ -1192,7 +1250,7 @@ def normalise_person(p, text_language):
         elif key in ("birthDate", "deathDate", "tmdbChangedAt"):
             v = day(v)
         out[key] = v
-    return out
+    return text_form(out)
 
 
 def database_people(export, text_language):
@@ -1205,7 +1263,7 @@ def database_people(export, text_language):
     for row in export.get("items") or []:
         for c in row.get("people") or []:
             if c.get("personId") and c["personId"] not in out:
-                out[c["personId"]] = {"id": c["personId"], "name": c.get("name")}
+                out[c["personId"]] = text_form({"id": c["personId"], "name": c.get("name")})
     return out
 
 

@@ -835,7 +835,11 @@ every person both sides hold by it: the projection's `databaseUpdatedAt` against
 | projection ahead of the database | The projection reflects a later state of the row than the export holds: an export older than the tree, or a database restored from before it. | yes |
 
 The field differences of a stale projection are listed as well, marked as its, so a verification can
-tell the rows that only need projecting again from the current ones that really disagree. A
+tell the rows that only need projecting again from the current ones that really disagree. A text is
+compared as a record keeps it — on one line where it is a line, without the whitespace around it,
+none when empty — and an item's chapters and ranges are the projection's `marks` where it has them,
+the version's otherwise: a change of them that the row's `modifiedAt` does not say reads as a field
+difference until the item is projected again. A
 projection that does not say which state it reflects — one written before 2026-10-02 (f) — is
 counted as of unknown freshness and fails nothing, a row the export gives no `modifiedAt` is not
 judged, and `--ignore-fields modifiedAt` judges none. The fields that came with freshness — an item
@@ -893,6 +897,22 @@ package that never finished, a version's or an extra's, and an extra its writer 
 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
+
+- **2026-10-22** — the marks follow the database. A movie's or an episode's `metadata.json` carries
+  `marks`: its chapters, each with the ordinal the database gives it, and its intro, recap and
+  credits ranges, each with its detector, as the database holds them, in the order of the timeline.
+  A version's `version.json` keeps the marks the version was made with, written once; a detector run
+  again, or a person, changes them after that, and only a projection can follow. The field is new and
+  optional — every record and tree written before validates as it is, a series carries none, and the
+  `$id`s are the published ones. `library-v2-from-catalog.py` writes it from the export's `chapters`
+  and `segments` (`marks_of()`), and `library-v2-rebuild.py` restores the database's marks from it,
+  and from the version that plays only for a projection that has none, so `--projections-only`
+  writes a change of them into a tree. `--compare` compares a text as a record keeps it: the writers
+  of records take the whitespace around a text and a line break out of one that is a line, and keep
+  no empty one, so a database's " Chapter 1", an overview followed by a tab, a label or a credited
+  name with a space after it and a trailer's empty title agree with the tree made from them
+  (`one_line()`, `paragraphs()`); a text that is another still differs. `libv2_records.py` is
+  unchanged.
 
 - **2026-10-20** — subtitles attached after the package completed. katalog-manager attaches a subtitle
   to a title after its package completed (its migration 048): the file goes into the `subs/` of the

@@ -3913,6 +3913,125 @@ def test_projections_only(t):
 
 
 # ---------------------------------------------------------------- upgrading a tree in place
+def test_marks(t):
+    """metadata.json holds a movie's or an episode's marks as the database holds them — its chapters with
+    their ordinals, its detected ranges as a version keeps them — and the rebuild takes them from there,
+    so a change of them after the version was written follows the database at the next projection: the
+    version's version.json, written once, keeps the marks it was made with. A projection from before it
+    held marks leaves the rebuild the version's."""
+    ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"))
+        e = jload(export)
+        # chapters out of order, with a gap in their ordinals and one without; ranges out of order
+        e["items"][0]["chapters"] = [{"startMs": 300000, "endMs": 600000, "title": "Two", "ordinal": 3},
+                                     {"startMs": 100000, "endMs": 300000, "title": "One", "ordinal": 1},
+                                     {"startMs": 0, "endMs": 100000, "title": None, "ordinal": None}]
+        e["items"][0]["segments"] = [{"kind": "credits", "startMs": 580000, "endMs": 600000, "source": "blackframe",
+                                      "confidence": 0.8, "label": "black 20.0s"},
+                                     {"kind": "intro", "startMs": 0, "endMs": 30000, "source": "chromaprint",
+                                      "confidence": 0.99, "label": "chromaprint x4"}]
+        jwrite(export, e)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        d = os.path.join(out, "movies", iid[:2], iid)
+        meta = jload(os.path.join(d, "metadata.json"))
+        t.eq("metadata.json holds the film's marks as the database holds them, in the order of the timeline: the "
+             "chapters each with its ordinal, a gap in them and none kept as they are; the ranges as a version keeps them",
+             meta.get("marks"),
+             {"chapters": [{"startMs": 0, "endMs": 100000, "title": None, "ordinal": None},
+                           {"startMs": 100000, "endMs": 300000, "title": "One", "ordinal": 1},
+                           {"startMs": 300000, "endMs": 600000, "title": "Two", "ordinal": 3}],
+              "segments": [{"kind": "intro", "startMs": 0, "endMs": 30000, "detector": "chromaprint", "confidence": 0.99,
+                            "label": "chromaprint x4"},
+                           {"kind": "credits", "startMs": 580000, "endMs": 600000, "detector": "blackframe",
+                            "confidence": 0.8, "label": "black 20.0s"}]})
+        t.eq("it follows the videos, before the curation", list(meta)[list(meta).index("videos") + 1], "marks")
+        version = glob.glob(os.path.join(d, "versions", "*", "version.json"))[0]
+        written = open(version, "rb").read()
+        if have_jsonschema():
+            code, vtext = run(VALIDATOR, "--check-checksums", out)
+            t.ok("the validator accepts it", code == 0 and vtext.strip().endswith("OK"), vtext)
+        else:
+            t.skip("the validator accepts it", "jsonschema is not importable here")
+        rows, _ = rows_of(out, "--text-language", "und")
+        t.eq("the rebuild gives the chapters back with the ordinals the database gave them",
+             [(c["startMs"], c["ordinal"]) for c in rows[iid]["chapters"]], [(0, None), (100000, 1), (300000, 3)])
+        code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("and --compare of the film is clean", code == 0 and "the tree and the database agree" in ctext, ctext)
+
+        # ---- a detector runs again after the version was written: the database's ranges are others,
+        # and the row's modifiedAt does not say so
+        e["items"][0]["segments"] = [{"kind": "intro", "startMs": 3996, "endMs": 19063, "source": "silence",
+                                      "confidence": 0.4, "label": "silence 15.1s"},
+                                     {"kind": "credits", "startMs": 575258, "endMs": 600000, "source": "tidb",
+                                      "confidence": 0.99, "label": "black 24.7s"}]
+        changed = os.path.join(tmp, "changed.json")
+        jwrite(changed, e)
+        code, ctext = run(REBUILD, out, "--compare", changed, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("--compare reports the ranges the tree does not carry yet", code == 1 and "segments: 4 difference(s)" in ctext,
+             ctext)
+        code, text = run(FROM_CATALOG, "--export", changed, "--out", out, "--projections-only")
+        code, ctext = run(REBUILD, out, "--compare", changed, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("projected again, the tree carries them and agrees with the database",
+             code == 0 and "the tree and the database agree" in ctext, ctext)
+        t.eq("and the version's record keeps the marks it was made with, byte for byte", open(version, "rb").read(),
+             written)
+
+        # ---- a projection from before it held marks: the version's are the rebuild's
+        mp = os.path.join(d, "metadata.json")
+        jwrite(mp, {k: v for k, v in jload(mp).items() if k != "marks"})
+        code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("a projection without marks leaves the rebuild the marks of the version that plays: the ones it was made "
+             "with, against which the export it was made from agrees but for the ordinal the version does not keep",
+             code == 1 and "chapters.ordinal: 2 difference(s)" in ctext and "segments:" not in ctext, ctext)
+        code, ctext = run(REBUILD, out, "--compare", changed, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("and against the changed export it reports the ranges again", code == 1 and "segments: 4 difference(s)" in ctext,
+             ctext)
+
+
+def test_text_form(t):
+    """--compare compares a text as a record keeps it: a writer of records takes the whitespace around a
+    text and a line break out of one that is a line, and keeps no empty one, so a database that holds a
+    description followed by a tab, a chapter title after a space, a range's label, a subtitle's label or a
+    credited name with a space after it, or a trailer's empty title, agrees with the tree made from it;
+    a text that is another still differs."""
+    ignore = "id,path,hash,codec,resolution,bitrateKbps,durationMs,sizeBytes"
+    with tempfile.TemporaryDirectory() as tmp:
+        export, media, packages, iid, _ = fake_export(os.path.join(tmp, "share"))
+        e = jload(export)
+        row = e["items"][0]
+        row["description"] += "\t"
+        row["tagline"] = " " + row["tagline"] + "\n\n"
+        row["title"] += " "
+        row["chapters"][0]["title"] = " One"
+        row["segments"][0]["label"] = "black 20.0s "
+        row["subtitleAssets"][0]["label"] = "German "
+        row["trailers"][0]["title"] = ""
+        row["people"][0]["name"] = "A Director "
+        jwrite(export, e)
+        # the subtitle's label is its package's, which the catalog's row took over
+        mp = os.path.join(packages, "movies", iid[:2], iid, "manifest.json")
+        m = jload(mp)
+        m["subtitles"][0]["title"] = "German "
+        jwrite(mp, m)
+        out = os.path.join(tmp, "library")
+        code, text = run(FROM_CATALOG, "--export", export, "--packages", packages, "--media", media, "--out", out)
+        meta = jload(os.path.join(out, "movies", iid[:2], iid, "metadata.json"))
+        t.ok("(the tree keeps the texts as a record keeps them)",
+             code == 0 and meta["titles"]["localized"]["und"]["overview"] == "A film that stands in for a real one."
+             and meta["videos"][0]["name"] is None and meta["credits"][0]["name"] == "A Director", text)
+        code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("a database holding them with the whitespace around them agrees with the tree made from it",
+             code == 0 and "the tree and the database agree" in ctext, ctext)
+        row["description"] = "Another film."
+        row["chapters"][0]["title"] = "Uno"
+        jwrite(export, e)
+        code, ctext = run(REBUILD, out, "--compare", export, "--text-language", "und", "--ignore-fields", ignore)
+        t.ok("a text that is another still differs",
+             code == 1 and "description: 1 difference(s)" in ctext and "chapters.title: 1 difference(s)" in ctext, ctext)
+
+
 def downgrade(root):
     """Turn a tree in today's layout into the one before 2026-10-02 (b), as the live trees are:
     no item checksums, sources/<id>.json beside sources/<id>/ffprobe.json, events/<stamp>-<kind>.json,
@@ -5845,6 +5964,8 @@ def main():
                         ("credits: a role, the source's own words, one order", test_credits), ("people", test_people),
                         ("the people list in full", test_people_in_full),
                         ("projecting again, and nothing else", test_projections_only),
+                        ("the marks follow the database", test_marks),
+                        ("a text as a record keeps it", test_text_form),
                         ("upgrading a tree in place", test_upgrade),
                         ("neutral names for a tree from before", test_neutral_names), ("sweeping garbage", test_sweep),
                         ("sweeping a version an event removed", test_sweep_removed_versions),

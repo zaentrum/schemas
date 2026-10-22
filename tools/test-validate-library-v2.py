@@ -995,6 +995,22 @@ CASES = [
     ("a series listing its episodes' orderings", False, lambda r: edit(meta(series(r)), lambda d: d["library"].update(orderings={})), "'orderings' was unexpected", []),
     ("a place in an ordering on a movie", False, lambda r: edit(meta(movie(r)), lambda d: d["library"].update(numbering={})), "must not have numbering", []),
 
+    # ---- the marks as the database holds them
+    ("a movie's marks as the database holds them", True, lambda r: edit(meta(movie(r)), lambda d: d.update(marks={
+        "chapters": [{"startMs": 0, "endMs": 300000, "title": None, "ordinal": None},
+                     {"startMs": 300000, "endMs": 600000, "title": "Chapter 2", "ordinal": 3}],
+        "segments": [{"kind": "credits", "startMs": 580000, "endMs": 600000, "detector": "blackframe", "confidence": 0.7,
+                      "label": "black 20.0s"}]})), "OK", []),
+    ("an episode the database holds no marks of", True, lambda r: edit(meta(episode(r, 1)), lambda d: d.update(
+        marks={"chapters": [], "segments": []})), "OK", []),
+    ("marks on a series", False, lambda r: edit(meta(series(r)), lambda d: d.update(marks={"chapters": [], "segments": []})),
+     "must not have marks", []),
+    ("a range of a kind the format does not know", False, lambda r: edit(meta(movie(r)), lambda d: d.update(marks={
+        "chapters": [], "segments": [{"kind": "chaptersdb", "startMs": 0, "endMs": 1, "detector": None, "confidence": None,
+                                      "label": None}]})), "'chaptersdb' is not one of", []),
+    ("a chapter without the ordinal the database gives it", False, lambda r: edit(meta(movie(r)), lambda d: d.update(marks={
+        "chapters": [{"startMs": 0, "endMs": 1, "title": "One"}], "segments": []})), "'ordinal' is a required property", []),
+
     # ---- where the episodes sit in each ordering
     ("a numbering against the item's own aired numbers", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"]["aired"].update(episode=5)), "but item.json was created with", []),
     ("a numbering in an ordering the format does not know", False, lambda r: edit(meta(episode(r, 1)), lambda d: d["library"]["numbering"].update(broadcast={"season": 1, "episode": 1, "episodeEnd": None})), "$.library.numbering: 'broadcast' is not one of", []),
