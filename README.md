@@ -239,8 +239,9 @@ movies/<aa>/<itemId>/
     package.json                   renditions, losses, and the hash of checksums.sha256
     .complete                      the hash of package.json: the version is finished
     subs/attached-<sha256>.<lang>[.forced][.sdh].vtt
-                                   a subtitle attached after the package completed, named by its
-                                   bytes: no file of the package, and outside its chain
+                                   a subtitle attached after the package completed — or while the
+                                   version is taken in, before anything packaged it — named by its
+                                   bytes: no file of a package, and outside any chain
   events/<timestamp>-<eventId8>-<kind>/
     event.json                     a fact that arose later, written once
     checksums.sha256               covers event.json, written with it
@@ -430,7 +431,10 @@ chain holds with it beside the package, pending or closed, and its name is its c
 — a full verification holds its bytes to the hash it names. How it was made, who attached it and when,
 no record holds: its row in the catalog does. A file so named anywhere else — deeper in `subs/`, in
 another folder of the package, in an extra — is any other file, and one the checksums list is a file
-of the chain.
+of the chain. A title whose file was taken in before anything packaged it — its version holds its
+original alone, and the title plays from it — takes a subtitle the same way: it goes into the `subs/`
+of the version taken in, which then holds the attached subtitles and nothing else, no package and
+nothing unfinished, and the package added to the version later goes in beside them.
 
 An extra is written whole, in one step, and keeps its original for as long as it exists — no event
 deletes part of one — so its checksums list the originals too, unlike a version's. A packaged extra
@@ -476,8 +480,8 @@ Validate a tree (the schemas plus the rules that span files: ids match their fol
 outside a version or extra folder, every write-once folder's checksums cover exactly its records and
 each version's chain holds, a subtitle attached to a version later lies beside its package and
 outside the chain, its bytes with `--check-checksums` the ones its name says, `package.json` exists
-exactly when `.complete` does — a version taken in
-holds its original alone — images are named by their own hash, events reference records that exist —
+exactly when `.complete` does — a version taken in holds its original alone, and the subtitles
+attached to it since — images are named by their own hash, events reference records that exist —
 or a version a `version-removed` event of the same item removed, and its package — and a deletion
 accepts no more than the gate its records compute, episodes do not contradict their own numbering, a
 source's `covers` lists its holder first and the episodes after it in episode order — a movie's file
@@ -659,7 +663,11 @@ format, `webvtt`, whether it is SDH (`isSdh`), the version it follows (`versionI
 (`sha256`), never the default. What no record holds stays empty — how it was made (`origin`), the
 label it was given, who attached it and when (`attachedBy`, `attachedAt`) — so a database rebuilt from
 the tree tells an attached subtitle by its `versionId` and `sha256` and has lost the rest; every other
-subtitle row says what the catalog says of a title's own, `isSdh` false and none of the others. An
+subtitle row says what the catalog says of a title's own, `isSdh` false and none of the others. A
+title whose file was taken in before anything packaged it has its subtitles attached to the version
+taken in, and their rows are rebuilt the same way while no package of the title plays; once one does,
+the catalog's attached subtitles are that package's version's, and what a version taken in holds in
+its `subs/` is no row. An
 export's subtitle row carries those fields under the same names (`sha256` as its hex hash or as
 `sha256:<hex>`). `--compare` compares the attached rows apart, as `attachedSubtitles` — an export's row
 is one when its file is named and placed as one, or it has an `origin` — matched by version and file
@@ -898,6 +906,17 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-22** — subtitles attached to a version taken in. katalog-manager attaches a subtitle to a
+  title whose file was taken in before anything packaged it, in the `subs/` of that version, which has
+  no package and no chain; the package added to the version later goes in beside it. The validator
+  finds nothing unfinished in a version taken in whose `subs/` holds attached subtitles alone — one that
+  holds anything else, or nothing, is a package that never finished, as before — and with
+  `--check-media` counts them (`attached`) and with `--check-checksums` reports one whose bytes are not
+  its name's, as beside a package; so does the media check, with `--checksums`.
+  `library-v2-rebuild.py` gives each the row it gives one beside a package while no package of the
+  title plays, so `--compare` finds the catalog's rows of them; beside a package that plays, what a
+  version taken in holds is no row. `version.schema.json` says so — text, its `$id` the published
+  one — every record and tree written before validates as it is, and `libv2_records.py` is unchanged.
 - **2026-10-22** — the marks follow the database. A movie's or an episode's `metadata.json` carries
   `marks`: its chapters, each with the ordinal the database gives it, and its intro, recap and
   credits ranges, each with its detector, as the database holds them, in the order of the timeline.
