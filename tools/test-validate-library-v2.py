@@ -694,6 +694,20 @@ def taken_in(root):
         os.remove(os.path.join(vp, name))
 
 
+def taken_in_attached(root, changed=False, beside=None):
+    """Episode 1's version taken in before anything packaged it, with two subtitles attached to it since,
+    as katalog-manager attaches them: in its subs/, which holds nothing else — or the first one changed
+    since it was attached (changed), or a file nobody attached beside them (beside, its path in subs/)."""
+    taken_in(root)
+    vp = version_of(episode(root, 1), True)
+    attach(vp)
+    attach(vp, "WEBVTT\n\n00:00:03.000 --> 00:00:04.000\n[Music]\n", "zh-hans", forced=True, sdh=True)
+    if changed:
+        attached_changed(vp)
+    if beside:
+        stray(vp, beside)
+
+
 def new_episode(root, number, title, season=1, covered_by=None, primary=None, end=None):
     """An episode folder of the example series with its record, the checksums over it and its projection,
     and nothing else — as a covered episode is, or one whose file has not been recorded yet; end is where
@@ -853,6 +867,15 @@ CASES = [
     ("an attached subtitle's name in another folder of the package", False, lambda r: attach(gone(r), where="hls"), "package file hls/attached-", ["--check-media"]),
     ("a file in subs/ named as no attached subtitle is, beside a pending package", False, lambda r: (pending(kept(r)), stray(kept(r), "subs/attached-abc.de.vtt")), "the record counted", ["--check-media"]),
     ("an attached subtitle's name in an extra's package", False, lambda r: attach(trailer(r)), "an extra's checksums cover extra.json and every file beside it", []),
+    # ---- a subtitle attached to a version taken in before anything packaged it: no package, nothing unfinished
+    ("subtitles attached to a version taken in, counted and held to their names, and no package that never finished", True, taken_in_attached, "'attached': 2", ["--check-checksums"], "a package that never finished"),
+    ("subtitles attached to a version taken in, nothing hashed", True, lambda r: taken_in_attached(r, changed=True), "'attached': 2", ["--check-media"], "a package that never finished"),
+    ("subtitles attached to a version taken in, the bytes not read", True, taken_in_attached, "OK", [], "a package that never finished"),
+    ("an attached subtitle of a version taken in whose bytes are not the ones its name says", False, lambda r: taken_in_attached(r, changed=True), "an attached subtitle whose bytes hash to", ["--check-checksums"]),
+    ("a file of a package beside the subtitles attached to a version taken in is a package that never finished", True, lambda r: taken_in_attached(r, beside="subs/0.vtt"), "a package that never finished", []),
+    ("a file in subs/ named as no attached subtitle is, beside those of a version taken in", True, lambda r: taken_in_attached(r, beside="subs/attached-abc.de.vtt"), "a package that never finished", ["--check-checksums"]),
+    ("an attached subtitle's name deeper in the subs/ of a version taken in", True, lambda r: taken_in_attached(r, beside=f"subs/more/attached-{hashlib.sha256(SUBTITLE_TEXT.encode()).hexdigest()}.de.vtt"), "a package that never finished", []),
+    ("a subs/ beside a version taken in that holds nothing is a package that never finished", True, lambda r: (taken_in(r), os.makedirs(os.path.join(version_of(episode(r, 1), True), "subs"))), "a package that never finished", []),
     ("an original the library before still names, with --shared-originals", True, lambda r: os.link(os.path.join(kept(r), originals(kept(r))[0]), os.path.join(r, "..", "outside-link")), "1 original(s) shared with another path", ["--check-media", "--shared-originals"]),
     ("an original the library before still names", False, lambda r: os.link(os.path.join(kept(r), originals(kept(r))[0]), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media"]),
     ("a package file shared with another path, whatever --shared-originals allows", False, lambda r: os.link(os.path.join(kept(r), "hls", "v0", ".keep"), os.path.join(r, "..", "outside-link")), "hard links shared with another path", ["--check-media", "--shared-originals"]),
@@ -1335,7 +1358,7 @@ def main():
     wanted = sys.argv[1:]
     cases = [c for c in CASES if not wanted or any(w in c[0] for w in wanted)]
     failures = 0
-    for name, expect_ok, change, phrase, extra in cases:
+    for name, expect_ok, change, phrase, extra, *absent in cases:
         with tempfile.TemporaryDirectory() as tmp:
             root = os.path.join(tmp, "library")
             shutil.copytree(EXAMPLES, root)
@@ -1343,7 +1366,9 @@ def main():
             run = subprocess.run([sys.executable, VALIDATOR, *extra, root], capture_output=True, text=True)
             out = run.stdout + run.stderr
             ok = run.returncode == 0
-            good = ok == expect_ok and phrase in out and "Traceback" not in out and "checked:" in out
+            # a phrase after the arguments is one the output must not hold
+            good = ok == expect_ok and phrase in out and not any(a in out for a in absent) \
+                and "Traceback" not in out and "checked:" in out
             print(f"{'pass' if good else 'FAIL'}  {'accepts' if expect_ok else 'rejects'}: {name}")
             if not good:
                 failures += 1

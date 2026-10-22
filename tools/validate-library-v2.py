@@ -34,7 +34,8 @@ with the bytes beside them, never about a document being up to date.
                name source records that exist and its originalFiles are those sources' file names,
                each with its fixity while it is kept (a source without one says why in probe.note);
                package.json exists exactly when .complete does, and a version taken in before anything
-               packaged it holds its originals alone; a package is canonical exactly when
+               packaged it holds its originals alone, and the subtitles attached to it since in its
+               subs/ — no package, and nothing unfinished; a package is canonical exactly when
                the version keeps no original; lossless means no losses; chapters are ordered and
                kept when the original carried them; every track — a 5.1 companion's too — says what
                it is for and the playlist flags do not contradict it; a rendition is in an audio group
@@ -100,8 +101,9 @@ with the bytes beside them, never about a document being up to date.
                package names exists and the cues cover the duration;
                checksums.sha256 lists exactly version.json and the package's files, with their total
                size (pending, the folder holds the files and the bytes the record counted) — a
-               subtitle attached to the version after its package completed, named by its bytes as
-               subs/attached-<sha256>.<lang>[.forced][.sdh].vtt, is no file of the package, and is
+               subtitle attached to the version, after its package completed or while it was taken in
+               before anything packaged it, named by its bytes as
+               subs/attached-<sha256>.<lang>[.forced][.sdh].vtt, is no file of a package, and is
                counted (attached) — and an extra's lists files of that total; an extra's every
                original has the size and qh1 extra.json records
   --check-checksums  also hash every package file and every file an extra's checksums list, an
@@ -157,9 +159,10 @@ SWEEP = "library-v2-sweep.py collects it once it is older than the grace period"
 # nothing of the name either arrived under, and only [a-z0-9.-]. libv2_records.py makes them.
 ORIGINAL_NAME = re.compile(r"^original(-[0-9]+)?\.[a-z0-9]{1,8}$")
 SUBTITLE_COPY = re.compile(r"^subtitle-[0-9]+\.[a-z]{2,8}(\.forced)?(\.sdh)?\.[a-z0-9]{1,8}$")
-# A subtitle attached to a version after its package completed, relative to the version folder: in its
-# subs/, named by the hex sha256 of its bytes, its BCP 47 language in lower case and its flags. It is no
-# file of the package, and its checksums do not list it: its name is its check. libv2_records.py
+# A subtitle attached to a version after its package completed — or while it is taken in, before anything
+# packaged it — relative to the version folder: in its subs/, named by the hex sha256 of its bytes, its
+# BCP 47 language in lower case and its flags. It is no file of a package, and no checksums list it: its
+# name is its check. libv2_records.py
 # (ATTACHED_SUBTITLE_RE) and katalog-manager, which writes it, read the name the same way.
 ATTACHED_SUBTITLE = re.compile(r"^subs/attached-([0-9a-f]{64})\.[a-z0-9]+(-[a-z0-9]+)*(\.forced)?(\.sdh)?\.vtt$")
 NEUTRAL ="library-v2-neutral-names.py gives a tree written before 2026-10-08 the names the library gives its files"
@@ -201,6 +204,16 @@ def deletion_gate(sources, package):
 def listdir(d):
     """Directory entries without the files operating systems and NAS software drop into shared folders."""
     return sorted(n for n in os.listdir(d) if not OS_ARTEFACTS.match(n))
+
+
+def attached_only(vp):
+    """Whether the subs/ of the version folder vp holds subtitles attached to the version and nothing
+    else, each a file directly in it named as one is (ATTACHED_SUBTITLE): a version taken in before
+    anything packaged it keeps the ones attached to it since there, which are no package."""
+    subs = os.path.join(vp, "subs")
+    names = listdir(subs) if os.path.isdir(subs) and not os.path.islink(subs) else []
+    return bool(names) and all(os.path.isfile(os.path.join(subs, n)) and not os.path.islink(os.path.join(subs, n))
+                               and ATTACHED_SUBTITLE.match(f"subs/{n}") for n in names)
 
 
 def sha_file(p):
@@ -863,7 +876,9 @@ class Checker:
         if has_package != marker:
             self.err(vp, "package.json exists exactly when .complete does, and here only "
                          + ("package.json" if has_package else ".complete") + " is present")
-        elif not marker and any(os.path.exists(os.path.join(vp, n)) for n in PACKAGE_DIRS + (SUMS,)):
+        elif not marker and any(os.path.exists(os.path.join(vp, n)) for n in PACKAGE_DIRS + (SUMS,)
+                                if not (n == "subs" and attached_only(vp))):
+            # a version taken in keeps the subtitles attached to it since in its subs/, which is no package
             self.note(vp, f"a package that never finished: no .complete beside it; {SWEEP}")
         if pkg is not None:
             self.counts["packages"] += 1
@@ -1034,6 +1049,10 @@ class Checker:
             elif src and (src["file"].get("fixity") or {}).get("qh1") and qh1(f) != src["file"]["fixity"]["qh1"]:
                 self.err(f, "original does not match its qh1 fixity")
         if pkg is None:
+            if not any(os.path.isfile(os.path.join(vp, n)) for n in ("package.json", ".complete")):
+                # taken in before anything packaged it: the subtitles attached to it since, in its subs/,
+                # are counted and held to their names as beside a package
+                self.attached_subtitles(vp, self.beside(vp, package_files(vp, ("subs",)), {})[1])
             return
         where = os.path.join(vp, "package.json")
         self.playable(vp, pkg)
@@ -1067,9 +1086,10 @@ class Checker:
                         self.err(where, f"{rel} does not match its checksum")
 
     def beside(self, vp, files, listed):
-        """The files of the package in vp, files without the subtitles attached to the version after its
-        package completed, and those apart: each in subs/, named as one is, and not listed (listed: the
-        checksums, {} while they are pending) — one the checksums list is a file of the chain."""
+        """The files of the package in vp, files without the subtitles attached to the version — after its
+        package completed, or before, while it was taken in — and those apart: each in subs/, named as one
+        is, and not listed (listed: the checksums, {} while they are pending or there are none) — one the
+        checksums list is a file of the chain."""
         attached = [rel for rel in files if rel not in listed and ATTACHED_SUBTITLE.match(rel.replace(os.sep, "/"))]
         return [rel for rel in files if rel not in attached], attached
 

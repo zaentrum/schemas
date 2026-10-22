@@ -26,7 +26,8 @@ What it checks, for every item folder:
     the version after its package completed, named by its bytes as
     subs/attached-<sha256>.<lang>[.forced][.sdh].vtt, is no file of the package and none the
     checksums list or the record counted: it is counted apart (attached), and --checksums holds its
-    bytes to the hash its name gives them, a problem of its own when they are not;
+    bytes to the hash its name gives them, a problem of its own when they are not — and so is one
+    attached to a version taken in before anything packaged it, which has no package and no chain;
   * every file a record names is there: the probe and the sidecars of each source, every image
     metadata.json lists, each version's originals, and each package's rendition folders — its 5.1
     companions' too — subtitles and their HLS renditions, master playlist and trickplay sheet;
@@ -68,9 +69,10 @@ CHAIN = (".complete", "package.json", SUMS)
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")
 COMPLETE = re.compile(r"^sha256:[0-9a-f]{64}$")
 EVENT_FOLDER = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}-[a-z-]+$")
-# A subtitle attached to a version after its package completed, relative to the version folder: in its
-# subs/, named by the hex sha256 of its bytes, its BCP 47 language in lower case and its flags — no file
-# of the package, and its name is its check (libv2_records.py ATTACHED_SUBTITLE_RE).
+# A subtitle attached to a version after its package completed — or while it is taken in, before anything
+# packaged it — relative to the version folder: in its subs/, named by the hex sha256 of its bytes, its
+# BCP 47 language in lower case and its flags — no file of a package, and its name is its check
+# (libv2_records.py ATTACHED_SUBTITLE_RE).
 ATTACHED_SUBTITLE = re.compile(r"^subs/attached-([0-9a-f]{64})\.[a-z0-9]+(-[a-z0-9]+)*(\.forced)?(\.sdh)?\.vtt$")
 UPGRADE ="library-v2-upgrade.py upgrades a tree from before 2026-10-02 (b) in place"
 
@@ -387,6 +389,10 @@ class Check:
                 self.err(f, "original does not match the qh1 fingerprint its source record wrote down")
         if has_package:
             self.package(vp, self.load(os.path.join(vp, "package.json")), marker)
+        elif not marker:
+            # taken in before anything packaged it: the subtitles attached to it since, in its subs/, are
+            # counted and held to their names as beside a package
+            self.attached_subtitles(vp, self.beside(package_files(vp, ("subs",), seen=self.seen), {})[1])
 
     def head(self, vp, what="version"):
         """.complete, the head of the chain: sha256:<hex> of the package.json beside it."""
