@@ -143,7 +143,10 @@ was attached to, named by its bytes, attached-<sha256>.<language>[.forced][.sdh]
 record lists — is a subtitle row of its own, rebuilt from what its name and its folder say: its
 language, cased as a BCP 47 tag is (zh-Hans, pt-BR), its format, webvtt, whether it is for deaf and
 hard-of-hearing viewers (isSdh), the version it follows (versionId) and its hash (sha256), and never
-the default. What no record holds is the catalog's alone, and the row leaves it empty: how it was
+the default. A title whose file was taken in before anything packaged it has its subtitles attached
+to that version, which has no package, and their rows are rebuilt the same way while no package of
+the title plays: once one does, the catalog's attached subtitles are that version's, or carried over
+to it. What no record holds is the catalog's alone, and the row leaves it empty: how it was
 made (origin: source, provider, transcribed, translated or converted in the catalog, null here), the
 label it was given, who attached it and when (attachedBy, attachedAt). A database rebuilt from the
 tree tells an attached subtitle by its versionId and sha256, and has lost the rest. Every other
@@ -701,10 +704,16 @@ class Rebuild:
         # the folder of the version before it until it is retired.
         made_from = (primary.get("version") or {}).get("sourceIds") if primary else None
         made_from = set(made_from) if isinstance(made_from, list) else None
+        # A subtitle attached to a title follows the version whose package plays; a title with none — its
+        # file taken in before anything packaged it — has its subtitles attached to the version taken in,
+        # and once a package plays, those of a version of another file are the catalog's no more.
+        plays = any(v["package"] and not v["superseded"] for v in versions)
         for v in versions:
             row["playbackAssets"] += self.assets(item, v, sources, v is primary, made_from)
             if v["package"] and not v["superseded"]:
                 row["subtitleAssets"] += [dict(s, **TITLES_OWN) for s in self.subtitles(item, v, sources)]
+                row["subtitleAssets"] += self.attached(item, v)
+            elif v["package"] is None and not plays:
                 row["subtitleAssets"] += self.attached(item, v)
         return row
 

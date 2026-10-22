@@ -68,6 +68,10 @@ rule and checks the tool notices:
                  module that would count it; a file so named anywhere else is any other file
   attached rows  the rebuild gives an attached subtitle a row of its own from its name and its folder,
                  and --compare holds it apart from the package's rows, never in what no record holds
+  taken in       a subtitle attached to a version taken in before anything packaged it is counted and
+                 held to its name by the media check and the validator, which find nothing unfinished
+                 there, and is a row of the rebuild's while no package of the title plays; beside one
+                 that plays it is none
   v1 -> v2       the v1 example tree converts, and given the names the library gives its files by
                  library-v2-neutral-names.py the result passes validate-library-v2.py and the media
                  check, the texts and the packages survive, and a second run does nothing
@@ -5336,6 +5340,117 @@ def test_attached_rows(t):
              and "subtitleAssets: 1 difference(s)" in text, text)
 
 
+def taken_in_version(root):
+    """The example episode whose version is taken in before anything packaged it — its record and its
+    original alone, nothing else of the episode's to play — and that version's folder."""
+    for vp in sorted(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*", "versions", "*"))):
+        if not os.path.exists(os.path.join(vp, "package.json")) and jload(os.path.join(vp, "version.json"))["originalFiles"]:
+            return os.path.basename(os.path.dirname(os.path.dirname(vp))), vp
+    raise AssertionError("no episode's version is taken in")
+
+
+def test_attached_taken_in(t):
+    """A subtitle attached to a version taken in before anything packaged it, whose original the title
+    plays from, lies in the version's subs/ as one beside a package does: the media check and the
+    validator count it and hold its bytes to its name, and find nothing unfinished there; the rebuild
+    gives it the row it gives one beside a package, while no package of the title plays, and --compare
+    finds the catalog's rows of them as the tree holds them. Beside a package that plays, what a version
+    taken in holds in its subs/ is no row: the catalog's attached subtitles are that package's version's."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        iid, vp = taken_in_version(root)
+        vid = os.path.basename(vp)
+        german = attach_subtitle(vp)
+        hans = attach_subtitle(vp, "WEBVTT\n\n00:00:03.000 --> 00:00:04.000\n[Music]\n", "zh-hans", forced=True, sdh=True)
+        code, text = run(MEDIA_CHECK, "--checksums", root)
+        t.ok("the media check counts the subtitles attached to a version taken in, their bytes their names'",
+             code == 0 and text.strip().endswith("OK") and "'attached': 2" in text, text)
+        if have_jsonschema():
+            code, text = run(VALIDATOR, "--check-checksums", root)
+            t.ok("and so does the validator, which finds no package that never finished in the version taken in",
+                 code == 0 and text.strip().endswith("OK") and "'attached': 2" in text
+                 and "a package that never finished" not in text, text)
+        else:
+            t.skip("and so does the validator, which finds no package that never finished in the version taken in",
+                   "jsonschema is not importable here")
+        rows, _ = rows_of(root)
+        mine = sorted((x for x in rows[iid]["subtitleAssets"] if x["sha256"]), key=lambda x: x["language"])
+        t.eq("the rebuild gives each the row it gives one beside a package, the version it follows the one taken in",
+             [{k: v for k, v in x.items() if k != "id"} for x in mine],
+             [{"path": german, "format": "webvtt", "language": "de", "label": None, "isDefault": False, "isSdh": False,
+               "origin": None, "versionId": vid, "sha256": "sha256:" + digest(german), "attachedBy": None,
+               "attachedAt": None},
+              {"path": hans, "format": "webvtt", "language": "zh-Hans", "label": None, "isDefault": False, "isSdh": True,
+               "origin": None, "versionId": vid, "sha256": "sha256:" + digest(hans), "attachedBy": None,
+               "attachedAt": None}])
+
+        def compare(change):
+            export = {"exportedAt": "2026-10-22T12:00:00Z", "items": json.loads(json.dumps(list(rows.values()))),
+                      "deletedItems": []}
+            change(next(r for r in export["items"] if r["id"] == iid))
+            path = os.path.join(tmp, "catalog.json")
+            jwrite(path, export)
+            return run(REBUILD, root, "--compare", path, "--text-language", "en")
+
+        def as_the_catalog_holds(*files):
+            """The title's rows as the catalog keeps them: its own, and a row of each of files as
+            katalog-manager writes one when it attaches it — how it was made, its label, who attached it
+            and when, which no record holds, and its hash as the column has it — the library mounted
+            elsewhere. The rows of the tree's own rebuild are no part of it."""
+            def change(row):
+                own = [x for x in row["subtitleAssets"] if not x["sha256"]]
+                for f, language, sdh in files:
+                    own.append({"id": str(uuid.uuid4()), "path": f, "format": "webvtt", "language": language,
+                                "label": "AI", "isDefault": False, "isSdh": sdh, "origin": "translated",
+                                "versionId": vid, "sha256": digest(f), "attachedBy": "sample-addon",
+                                "attachedAt": "2026-10-22T10:15:00.123+02:00"})
+                for x in own:
+                    x["path"] = "/var/lib/library/" + os.path.relpath(x["path"], root).replace(os.sep, "/")
+                row["subtitleAssets"] = own
+            return change
+
+        code, text = compare(as_the_catalog_holds((german, "de", False), (hans, "zh-Hans", True)))
+        t.ok("and --compare finds the catalog's rows of them as the tree holds them",
+             code == 0 and "the tree and the database agree" in text, text)
+        code, text = compare(as_the_catalog_holds((german, "de", False)))
+        t.ok("one of them the catalog has no row of is a difference of attached subtitles, as beside a package",
+             code == 1 and "attachedSubtitles: 1 difference(s)" in text and "subtitleAssets" not in text, text)
+        with open(german, "ab") as f:
+            f.write(b"Guten Abend\n")
+        code, text = run(MEDIA_CHECK, "--checksums", root)
+        t.ok("an attached subtitle of a version taken in whose bytes are not its name's is a problem of its own",
+             code != 0 and "an attached subtitle whose bytes hash to" in text, text)
+        if have_jsonschema():
+            code, text = run(VALIDATOR, "--check-checksums", root)
+            t.ok("to the validator too", code != 0 and "an attached subtitle whose bytes hash to" in text, text)
+        else:
+            t.skip("to the validator too", "jsonschema is not importable here")
+
+    # beside a package that plays, a version taken in: the movie's version that keeps its originals, its
+    # package gone, beside the one whose package is the only copy
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        movie = glob.glob(os.path.join(root, "movies", "*", "*"))[0]
+        vp = next(v for v in sorted(glob.glob(os.path.join(movie, "versions", "*")))
+                  if jload(os.path.join(v, "version.json"))["originalFiles"]
+                  and all(os.path.isfile(os.path.join(v, n)) for n in jload(os.path.join(v, "version.json"))["originalFiles"]))
+        for name in ("hls", "subs", "trickplay", "package.json", "checksums.sha256", ".complete"):
+            p = os.path.join(vp, name)
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            elif os.path.exists(p):
+                os.unlink(p)
+        before, _ = rows_of(root)
+        attach_subtitle(vp)
+        rows, _ = rows_of(root)
+        iid = os.path.basename(movie)
+        t.ok("beside a package that plays, the subtitle a version taken in holds is no row of the title's",
+             not any(x["sha256"] for x in rows[iid]["subtitleAssets"]) and rows[iid] == before[iid],
+             rows[iid]["subtitleAssets"])
+
+
 # ---------------------------------------------------------------- sweeping an extra that never finished
 X_BESIDE = "44444444-0000-4000-8000-00000000000e"         # an extra's package that never finished beside its original
 X_RECORDED = "55555555-0000-4000-8000-00000000000e"       # a packaged extra that wrote its record and kept no original
@@ -5972,6 +6087,7 @@ def main():
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("subtitles attached after the package completed", test_attached_subtitles),
                         ("an attached subtitle's row, and the compare", test_attached_rows),
+                        ("subtitles attached to a version taken in", test_attached_taken_in),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):
             continue
