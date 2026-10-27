@@ -96,7 +96,9 @@ rule and checks the tool notices:
                  original, its parts and the copy of a subtitle file as the library does, its probe
                  is the tool's output with two edits, and nothing it writes names a file as it
                  arrived; a source of a file of several episodes covers them as given, the holder
-                 first; piped behind a tool, the module has none of its names redefined by it
+                 first; a subtitle made from a stream for the hard of hearing by its disposition alone
+                 is sdh in the package's essence as in the source's; piped behind a tool, the module
+                 has none of its names redefined by it
 """
 import ast, base64, collections, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
 
@@ -737,6 +739,48 @@ def test_records(t):
          (entry["file"], entry["language"], entry["forced"], entry["hearingImpaired"], entry["purpose"],
           "originalName" in entry, entry["format"], entry["sizeBytes"]),
          (f"sources/{GOLDEN_ITEM}/subtitle-2.en.forced.sdh.srt", "eng", True, True, "forced", False, "srt", size))
+
+    # a stream for the hard of hearing by its disposition alone, with no title — a second English track
+    # flagged hearing_impaired and captions, a German one flagged captions only — is sdh in the source's
+    # essence, and in the package's once the manifest entry of the subtitle made from it says so
+    # (hearingImpaired); a forced one stays forced, and a manifest that says nothing of it reads as before
+    hearing = rec.probed({"format": {"duration": "1.0"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 1080, "disposition": {}},
+        {"index": 1, "codec_type": "subtitle", "codec_name": "mov_text", "tags": {"language": "eng"},
+         "disposition": {"default": 1}},
+        {"index": 2, "codec_type": "subtitle", "codec_name": "mov_text", "tags": {"language": "eng"},
+         "disposition": {"hearing_impaired": 1, "captions": 1}},
+        {"index": 3, "codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "ger"},
+         "disposition": {"captions": 1}},
+        {"index": 4, "codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "fre", "title": "SDH"},
+         "disposition": {"hearing_impaired": 1}},
+        {"index": 5, "codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "spa"},
+         "disposition": {"forced": 1, "hearing_impaired": 1}}]})
+    entries = [{"id": "sub0", "language": "eng", "forced": False},
+               {"id": "sub1", "language": "eng", "forced": False, "hearingImpaired": True},
+               {"id": "sub2", "language": "ger", "forced": False, "hearingImpaired": True},
+               {"id": "sub3", "language": "fre", "title": "SDH", "forced": False, "hearingImpaired": True},
+               {"id": "sub4", "language": "spa", "forced": True, "hearingImpaired": True}]
+    marked = [rec.subtitle_rendition(s, i) for i, s in enumerate(entries)]
+    unmarked = [rec.subtitle_rendition({k: v for k, v in s.items() if k != "hearingImpaired"}, i)
+                for i, s in enumerate(entries)]
+    t.eq("a subtitle made from a stream for the hard of hearing is sdh by that stream's disposition, as the "
+         "stream is, a forced one forced; without the mark it is read by its forced flag and title as before",
+         ([(x["purpose"], x["purposeFrom"]) for x in hearing["streams"] if x["type"] == "subtitle"],
+          [(x["purpose"], x["purposeFrom"]) for x in marked], [(x["purpose"], x["purposeFrom"]) for x in unmarked]),
+         ([("dialogue", "assumed"), ("sdh", "disposition"), ("sdh", "disposition"), ("sdh", "disposition"),
+           ("forced", "disposition")],
+          [("dialogue", "assumed"), ("sdh", "disposition"), ("sdh", "disposition"), ("sdh", "disposition"),
+           ("forced", "disposition")],
+          [("dialogue", "assumed"), ("dialogue", "assumed"), ("dialogue", "assumed"), ("sdh", "title"),
+           ("forced", "disposition")]))
+    lost = lambda subs: [x for x in rec.deletion_gate([hearing["essence"]], rec.package_essence(
+        {"renditions": {"video": [{"height": 1080}], "audio": []}, "subtitles": subs}, hearing["essence"]))
+                         if x.startswith(("sdh", "forced"))]
+    t.eq("so the package carries every language the source has for the hard of hearing, and deleting the "
+         "original costs none of them; without the mark the gate names the two it would cost",
+         (hearing["essence"]["sdhSubtitleLanguages"], lost(marked), lost(unmarked)),
+         (["de", "en", "fr"], [], ["sdhSubtitleLanguages:de", "sdhSubtitleLanguages:en"]))
     probe = {"format": {"filename": "/media/Example Film (2024)/Example Film (2024).mkv", "duration": "1.0",
                         "tags": {"TITLE": "Example.Film.2024", "title": "Example Film", "Title": "x", "ENCODER": "e",
                                  "subtitle": "kept"}},
@@ -5232,7 +5276,7 @@ def test_attached_subtitles(t):
         after = tree_files(with_subs)
         code, text = run(os.path.join(TOOLS, "library-v2-fill-checksums.py"), with_subs, "--apply")
         t.ok("a fill after it changes nothing", code == 0 and "filled 0 of 0" in text and tree_files(with_subs) == after, text)
-        older = open(RECORDS, "rb").read().replace(b"\nLIBV2_RECORDS = 6\n", b"\nLIBV2_RECORDS = 5\n")
+        older = re.sub(rb"\nLIBV2_RECORDS = [0-9]+\n", b"\nLIBV2_RECORDS = 5\n", open(RECORDS, "rb").read())
         code, text = run_fill_piped(older, plain)
         t.ok("the fill refuses a record module before 6, which would hold an attached subtitle against the record",
              older != open(RECORDS, "rb").read() and code != 0 and "needs libv2_records.py 6 or later, found 5" in text, text)

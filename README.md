@@ -906,6 +906,16 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-10-27** — a subtitle for the hard of hearing by its disposition alone. A source's stream
+  flagged `hearing_impaired` or `captions` is `sdh` by its disposition, its language one of the
+  source's `sdhSubtitleLanguages`; the package's subtitle made from it was read by its forced flag and
+  its title alone — `dialogue`, `assumed` for a track with no title — so the deletion gate named its
+  language as lost, and packaging the title again kept it so. `libv2_records.py` (7) reads
+  `hearingImpaired` in a manifest's subtitle entry, which the packager writes for a subtitle made from
+  such a stream, as that disposition: the subtitle is `sdh` by `disposition`, after `forced` as a
+  stream is (`subtitle_purpose`), and the package's essence names its language. A manifest without it
+  gives the record it gave. The schemas are unchanged, and every record and tree written before
+  validates as it is.
 - **2026-10-22** — subtitles attached to a version taken in. katalog-manager attaches a subtitle to a
   title whose file was taken in before anything packaged it, in the `subs/` of that version, which has
   no package and no chain; the package added to the version later goes in beside it. The validator
