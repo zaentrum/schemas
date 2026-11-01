@@ -913,9 +913,10 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   mastering display colour volume and content light level into the init segment of every HEVC
   rendition in PQ — the sample entry's `mdcv` and `clli` boxes, where a player reads them — and says
   so: a video rendition of `package.json` gains `hdr10Metadata` (`true`; left out otherwise, and
-  refused by the validator on a rendition that is not in PQ), and `package_essence` gives the package
-  the HDR10 metadata a source had when its top rendition is that copy or any rendition says so. A
-  source's audio or subtitle stream flagged `comment` is a `commentary` by its disposition
+  refused by the validator on a rendition that does not say it is in PQ), and `package_essence` gives
+  the package the HDR10 metadata a source had when its top rendition is that copy or every rendition in
+  PQ, the top one among them, says so — one in PQ that says nothing of it lacks it, and so does the
+  package. A source's audio or subtitle stream flagged `comment` is a `commentary` by its disposition
   (`commentaryTracks`, `commentarySubtitles`), and an audio stream flagged `visual_impaired` or
   `descriptions` a `description` (`audioDescriptionTracks`), but the package's renditions made from
   them were read by their titles alone, so the deletion gate named them as lost. `libv2_records.py`

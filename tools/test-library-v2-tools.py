@@ -99,8 +99,9 @@ rule and checks the tool notices:
                  first; a subtitle made from a stream for the hard of hearing by its disposition alone
                  is sdh in the package's essence as in the source's, and a commentary or an audio
                  description by its disposition alone is one in both; a package carries a source's
-                 HDR10 static metadata when its top rendition is the original's own stream in PQ or a
-                 rendition says its init segment does; piped behind a tool, the module
+                 HDR10 static metadata when its top rendition is the original's own stream in PQ or every
+                 rendition in PQ, the top one among them, says its init segment does; piped behind a
+                 tool, the module
                  has none of its names redefined by it
 """
 import ast, base64, collections, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
@@ -841,24 +842,32 @@ def test_records(t):
           ["audioDescriptionTracks", "commentarySubtitles", "commentaryTracks"]))
 
     # HDR10 static metadata: a top rendition that is the original's own stream in PQ carries it, as before;
-    # an encode carries it when a rendition says its init segment does (hdr10Metadata), which the record
-    # keeps; a source without it has none to carry, and a mark that is no true is no mark
+    # an encode carries it when every rendition in PQ, the top one among them, says its init segment does
+    # (hdr10Metadata), which the record keeps — one in PQ that says nothing of it lacks it, and an SDR one
+    # needs none; a source without it has none to carry, and a mark that is no true is no mark
     hdr10 = {"hdr10Metadata": True}
     v = lambda **fields: {"id": "v0", "dir": "hls/v0", "codec": "hvc1.2.4.L150.B0", "height": 2160, "hdr": True,
                           "videoRange": "PQ", **fields}
+    sdr = lambda **fields: v(hdr=False, videoRange="SDR", codec="hvc1.1.6.L93.B0", height=540, **fields)
     carried = lambda vids, source: rec.package_essence(
         {"renditions": {"video": [rec.video_rendition(x) for x in vids], "audio": []}, "subtitles": []},
         source)["hdr10Metadata"]
     t.eq("a package carries a source's HDR10 static metadata when its top rendition is the original's own "
-         "stream in PQ or a rendition says it does, and only then; a rendition's record says so only when "
-         "its manifest entry does",
+         "stream in PQ, or every rendition in PQ, the top one among them, says it does, and only then; a "
+         "rendition's record says so only when its manifest entry does",
          (carried([v(encoder="copy")], hdr10), carried([v(encoder="hevc_nvenc")], hdr10),
           carried([v(encoder="hevc_nvenc", hdr10Metadata=True)], hdr10),
+          carried([v(encoder="hevc_nvenc", hdr10Metadata=True), v(id="v1", encoder="hevc_nvenc", hdr10Metadata=True),
+                   sdr(id="v2", encoder="hevc_nvenc")], hdr10),
           carried([v(encoder="hevc_nvenc"), v(id="v1", encoder="hevc_nvenc", hdr10Metadata=True)], hdr10),
+          carried([v(encoder="hevc_nvenc", hdr10Metadata=True), v(id="v1", encoder="hevc_nvenc")], hdr10),
+          carried([v(encoder="copy"), v(id="v1", encoder="hevc_nvenc")], hdr10),
+          carried([v(encoder="hevc_nvenc", videoRange="HLG", hdr10Metadata=True)], hdr10),
+          carried([sdr(encoder="hevc_nvenc"), v(id="v1", encoder="hevc_nvenc", hdr10Metadata=True)], hdr10),
           carried([v(encoder="hevc_nvenc", hdr10Metadata=True)], {"hdr10Metadata": False}),
           carried([v(encoder="hevc_nvenc", hdr10Metadata="true")], hdr10),
           [sorted(rec.video_rendition(x)) for x in (v(), v(hdr10Metadata=True), v(hdr10Metadata=False))]),
-         (True, False, True, True, False, False,
+         (True, False, True, True, False, False, True, False, False, False, False,
           [sorted(rec.video_rendition(v())), sorted([*rec.video_rendition(v()), "hdr10Metadata"]),
            sorted(rec.video_rendition(v()))]))
     probe = {"format": {"filename": "/media/Example Film (2024)/Example Film (2024).mkv", "duration": "1.0",

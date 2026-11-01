@@ -831,6 +831,7 @@ CASES = [
     ("a rendition in PQ that says nothing of HDR10 static metadata", True, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][1].pop("hdr10Metadata")), "OK", []),
     ("HDR10 static metadata in an HLG rendition", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].update(videoRange="HLG")), "video rendition v0 says its init segment carries HDR10 static metadata, which only a rendition in PQ carries", []),
     ("HDR10 static metadata in an SDR rendition", False, lambda r: edit(pkg(gone(r)), lambda d: d["renditions"]["video"][0].update(hdr10Metadata=True)), "video rendition v0 says its init segment carries HDR10 static metadata", []),
+    ("HDR10 static metadata in a rendition that does not say its range", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].pop("videoRange")), "video rendition v0 says its init segment carries HDR10 static metadata", []),
     ("HDR10 static metadata that is no boolean", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].update(hdr10Metadata="yes")), "'yes' is not of type 'boolean'", []),
 
     # ---- the marks the version keeps
