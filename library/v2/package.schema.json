@@ -125,7 +125,8 @@
         "peakBitrateBps": { "type": "integer", "minimum": 0, "description": "The highest bitrate of any segment of the rendition, where bitrateBps is the average." },
         "videoRange": { "enum": ["SDR", "PQ", "HLG"], "description": "The VIDEO-RANGE the master playlist gives the rendition." },
         "label": { "type": "string", "description": "The rung's name in the ladder, e.g. 'source', '1080p'." },
-        "encoder": { "type": "string", "description": "What made the rung: 'copy' when it is the original's own stream, otherwise the encoder." }
+        "encoder": { "type": "string", "description": "What made the rung: 'copy' when it is the original's own stream, otherwise the encoder." },
+        "hdr10Metadata": { "type": "boolean", "description": "True when the rendition's init segment carries the original's HDR10 static metadata — its mastering display colour volume, its content light level, or both (the sample entry's mdcv and clli boxes) — whatever its own bitstream carries; left out otherwise. Only a rendition in PQ carries it." }
       }
     },
     "audioRendition": {

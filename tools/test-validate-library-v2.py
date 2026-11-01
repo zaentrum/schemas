@@ -828,6 +828,10 @@ CASES = [
     ("a rendition without a purpose", False, lambda r: edit(pkg(kept(r)), lambda d: [d["renditions"]["audio"][0].pop("purpose"), d["renditions"]["audio"][0].pop("purposeFrom")]), "'purpose' is a required property", []),
     ("a rendition language that is not a language", False, lambda r: edit(pkg(kept(r)), lambda d: d["renditions"]["audio"][0].update(language="English (5.1)")), "does not match", []),
     ("two renditions with one id", False, lambda r: edit(pkg(gone(r)), lambda d: d["renditions"]["video"][1].update(id="v0")), "rendition ids are not unique", []),
+    ("a rendition in PQ that says nothing of HDR10 static metadata", True, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][1].pop("hdr10Metadata")), "OK", []),
+    ("HDR10 static metadata in an HLG rendition", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].update(videoRange="HLG")), "video rendition v0 says its init segment carries HDR10 static metadata, which only a rendition in PQ carries", []),
+    ("HDR10 static metadata in an SDR rendition", False, lambda r: edit(pkg(gone(r)), lambda d: d["renditions"]["video"][0].update(hdr10Metadata=True)), "video rendition v0 says its init segment carries HDR10 static metadata", []),
+    ("HDR10 static metadata that is no boolean", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].update(hdr10Metadata="yes")), "'yes' is not of type 'boolean'", []),
 
     # ---- the marks the version keeps
     ("chapters out of order", False, lambda r: edit(ver(gone(r)), lambda d: d["chapters"].reverse()), "chapters are not in timeline order", []),

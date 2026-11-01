@@ -906,6 +906,27 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-11-01** — HDR10 static metadata in a package's init segments, and a commentary or an audio
+  description by its disposition alone. A package's essence had the HDR10 metadata its source had
+  only when the top rendition is the original's own stream, copied, in PQ, which keeps it in its
+  bitstream; an encoded rendition was taken to have lost it. The packager now writes the original's
+  mastering display colour volume and content light level into the init segment of every HEVC
+  rendition in PQ — the sample entry's `mdcv` and `clli` boxes, where a player reads them — and says
+  so: a video rendition of `package.json` gains `hdr10Metadata` (`true`; left out otherwise, and
+  refused by the validator on a rendition that is not in PQ), and `package_essence` gives the package
+  the HDR10 metadata a source had when its top rendition is that copy or any rendition says so. A
+  source's audio or subtitle stream flagged `comment` is a `commentary` by its disposition
+  (`commentaryTracks`, `commentarySubtitles`), and an audio stream flagged `visual_impaired` or
+  `descriptions` a `description` (`audioDescriptionTracks`), but the package's renditions made from
+  them were read by their titles alone, so the deletion gate named them as lost. `libv2_records.py`
+  (8) reads a manifest entry's `commentary` (audio and subtitles) and `visualImpaired` (audio), which
+  the packager writes for a rendition made from such a stream, as those dispositions, in the order a
+  stream is read: a subtitle forced, then for the hard of hearing, then a commentary
+  (`subtitle_purpose`); an audio track a commentary, then a description (`audio_purpose`); then the
+  title. It keeps a video entry's `hdr10Metadata` in the record (`video_rendition`). A manifest
+  without them gives the record it gave. The field is new and optional, the `$id`s are the published
+  ones, and every record and tree written before validates as it is; the episode example's platform
+  package says its two rungs carry the metadata.
 - **2026-10-27** — a subtitle for the hard of hearing by its disposition alone. A source's stream
   flagged `hearing_impaired` or `captions` is `sdh` by its disposition, its language one of the
   source's `sdhSubtitleLanguages`; the package's subtitle made from it was read by its forced flag and

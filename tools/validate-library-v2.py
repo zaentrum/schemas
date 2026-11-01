@@ -39,7 +39,8 @@ with the bytes beside them, never about a document being up to date.
                the version keeps no original; lossless means no losses; chapters are ordered and
                kept when the original carried them; every track — a 5.1 companion's too — says what
                it is for and the playlist flags do not contradict it; a rendition is in an audio group
-               the HLS layout names; a subtitle made from a sidecar names one a source of the version
+               the HLS layout names; a video rendition whose init segment carries HDR10 static
+               metadata is one in PQ; a subtitle made from a sidecar names one a source of the version
                keeps, and an extra's never does
   names        no record names a file as it arrived, and no file in the record is named so: a source's
                file.name, a version's and an extra's originalFiles and what an extra was packaged from
@@ -929,6 +930,10 @@ class Checker:
             ids = [x["id"] for x in items]
             if len(ids) != len(set(ids)):
                 self.err(where, f"{kind} rendition ids are not unique")
+        for x in video:
+            if x.get("hdr10Metadata") and not (x.get("hdr") and x.get("videoRange", "PQ") == "PQ"):
+                self.err(where, f"video rendition {x['id']} says its init segment carries HDR10 static metadata, "
+                                f"which only a rendition in PQ carries")
         if audio and sum(1 for a in audio if a.get("default")) != 1:
             self.err(where, f"exactly one audio rendition must be default, found {sum(1 for a in audio if a.get('default'))}")
         if sum(1 for a in surround if a.get("default")) > 1:

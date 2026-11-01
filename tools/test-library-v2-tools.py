@@ -97,7 +97,10 @@ rule and checks the tool notices:
                  is the tool's output with two edits, and nothing it writes names a file as it
                  arrived; a source of a file of several episodes covers them as given, the holder
                  first; a subtitle made from a stream for the hard of hearing by its disposition alone
-                 is sdh in the package's essence as in the source's; piped behind a tool, the module
+                 is sdh in the package's essence as in the source's, and a commentary or an audio
+                 description by its disposition alone is one in both; a package carries a source's
+                 HDR10 static metadata when its top rendition is the original's own stream in PQ or a
+                 rendition says its init segment does; piped behind a tool, the module
                  has none of its names redefined by it
 """
 import ast, base64, collections, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
@@ -781,6 +784,83 @@ def test_records(t):
          "original costs none of them; without the mark the gate names the two it would cost",
          (hearing["essence"]["sdhSubtitleLanguages"], lost(marked), lost(unmarked)),
          (["de", "en", "fr"], [], ["sdhSubtitleLanguages:de", "sdhSubtitleLanguages:en"]))
+
+    # a commentary and an audio description by their disposition alone — an English audio track flagged
+    # comment with a title that says nothing of it, a German one flagged visual_impaired, a French one
+    # flagged descriptions, and two subtitle tracks flagged comment, one of them also forced — are for
+    # that in the source's essence, and in the package's once the manifest entry of the rendition made
+    # from each says so (commentary, visualImpaired); a forced one stays forced, and a manifest that
+    # says nothing of it reads as before
+    flagged = rec.probed({"format": {"duration": "1.0"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 1080, "disposition": {}},
+        {"index": 1, "codec_type": "audio", "codec_name": "eac3", "channels": 6, "tags": {"language": "eng"},
+         "disposition": {"default": 1}},
+        {"index": 2, "codec_type": "audio", "codec_name": "aac", "channels": 2,
+         "tags": {"language": "eng", "title": "Director"}, "disposition": {"comment": 1}},
+        {"index": 3, "codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"language": "ger"},
+         "disposition": {"visual_impaired": 1}},
+        {"index": 4, "codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"language": "fre"},
+         "disposition": {"descriptions": 1}},
+        {"index": 5, "codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "eng"},
+         "disposition": {"comment": 1}},
+        {"index": 6, "codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "eng"},
+         "disposition": {"forced": 1, "comment": 1}}]})
+    audios = [{"id": "a0", "language": "eng", "channels": 2, "default": True},
+              {"id": "a1", "language": "eng", "title": "Director", "channels": 2, "commentary": True},
+              {"id": "a2", "language": "ger", "channels": 2, "visualImpaired": True},
+              {"id": "a3", "language": "fre", "channels": 2, "visualImpaired": True}]
+    subtitles = [{"id": "sub0", "language": "eng", "forced": False, "commentary": True},
+                 {"id": "sub1", "language": "eng", "forced": True, "commentary": True}]
+    bare = lambda entries, marks: [{k: v for k, v in e.items() if k not in marks} for e in entries]
+    read = lambda xs: [(x["purpose"], x["purposeFrom"]) for x in xs]
+    t.eq("an audio rendition made from a commentary or an audio description is one by that stream's "
+         "disposition, as the stream is, and so is a subtitle made from a commentary, a forced one forced; "
+         "without the marks they are read by their forced flag and title as before",
+         ([(x["purpose"], x["purposeFrom"]) for x in flagged["streams"] if x["type"] != "video"],
+          read([rec.audio_rendition(a, i) for i, a in enumerate(audios)]),
+          read([rec.subtitle_rendition(s, i) for i, s in enumerate(subtitles)]),
+          read([rec.audio_rendition(a, i) for i, a in enumerate(bare(audios, ("commentary", "visualImpaired")))]),
+          read([rec.subtitle_rendition(s, i) for i, s in enumerate(bare(subtitles, ("commentary",)))])),
+         ([("main", "assumed"), ("commentary", "disposition"), ("description", "disposition"),
+           ("description", "disposition"), ("commentary", "disposition"), ("forced", "disposition")],
+          [("main", "assumed"), ("commentary", "disposition"), ("description", "disposition"),
+           ("description", "disposition")],
+          [("commentary", "disposition"), ("forced", "disposition")],
+          [("main", "assumed")] * 4,
+          [("dialogue", "assumed"), ("forced", "disposition")]))
+    gate = lambda auds, subs: [x for x in rec.deletion_gate([flagged["essence"]], rec.package_essence(
+        {"renditions": {"video": [{"height": 1080}], "audio": [rec.audio_rendition(a, i) for i, a in enumerate(auds)]},
+         "subtitles": [rec.subtitle_rendition(s, i) for i, s in enumerate(subs)]}, flagged["essence"]))
+        if x in ("commentaryTracks", "commentarySubtitles", "audioDescriptionTracks")]
+    t.eq("so the package carries every commentary and audio description the source has, and deleting the "
+         "original costs none of them; without the marks the gate names all three",
+         ({k: flagged["essence"][k] for k in ("commentaryTracks", "commentarySubtitles", "audioDescriptionTracks")},
+          gate(audios, subtitles),
+          gate(bare(audios, ("commentary", "visualImpaired")), bare(subtitles, ("commentary",)))),
+         ({"commentaryTracks": 1, "commentarySubtitles": 1, "audioDescriptionTracks": 2}, [],
+          ["audioDescriptionTracks", "commentarySubtitles", "commentaryTracks"]))
+
+    # HDR10 static metadata: a top rendition that is the original's own stream in PQ carries it, as before;
+    # an encode carries it when a rendition says its init segment does (hdr10Metadata), which the record
+    # keeps; a source without it has none to carry, and a mark that is no true is no mark
+    hdr10 = {"hdr10Metadata": True}
+    v = lambda **fields: {"id": "v0", "dir": "hls/v0", "codec": "hvc1.2.4.L150.B0", "height": 2160, "hdr": True,
+                          "videoRange": "PQ", **fields}
+    carried = lambda vids, source: rec.package_essence(
+        {"renditions": {"video": [rec.video_rendition(x) for x in vids], "audio": []}, "subtitles": []},
+        source)["hdr10Metadata"]
+    t.eq("a package carries a source's HDR10 static metadata when its top rendition is the original's own "
+         "stream in PQ or a rendition says it does, and only then; a rendition's record says so only when "
+         "its manifest entry does",
+         (carried([v(encoder="copy")], hdr10), carried([v(encoder="hevc_nvenc")], hdr10),
+          carried([v(encoder="hevc_nvenc", hdr10Metadata=True)], hdr10),
+          carried([v(encoder="hevc_nvenc"), v(id="v1", encoder="hevc_nvenc", hdr10Metadata=True)], hdr10),
+          carried([v(encoder="hevc_nvenc", hdr10Metadata=True)], {"hdr10Metadata": False}),
+          carried([v(encoder="hevc_nvenc", hdr10Metadata="true")], hdr10),
+          [sorted(rec.video_rendition(x)) for x in (v(), v(hdr10Metadata=True), v(hdr10Metadata=False))]),
+         (True, False, True, True, False, False,
+          [sorted(rec.video_rendition(v())), sorted([*rec.video_rendition(v()), "hdr10Metadata"]),
+           sorted(rec.video_rendition(v()))]))
     probe = {"format": {"filename": "/media/Example Film (2024)/Example Film (2024).mkv", "duration": "1.0",
                         "tags": {"TITLE": "Example.Film.2024", "title": "Example Film", "Title": "x", "ENCODER": "e",
                                  "subtitle": "kept"}},

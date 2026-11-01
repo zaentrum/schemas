@@ -29,7 +29,8 @@
         "peakBitrateBps": 16000000,
         "videoRange": "PQ",
         "label": "source",
-        "encoder": "copy"
+        "encoder": "copy",
+        "hdr10Metadata": true
       },
       {
         "id": "v1",
@@ -47,7 +48,8 @@
         "peakBitrateBps": 6000000,
         "videoRange": "PQ",
         "label": "1440p",
-        "encoder": "hevc_nvenc"
+        "encoder": "hevc_nvenc",
+        "hdr10Metadata": true
       }
     ],
     "audio": [

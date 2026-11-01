@@ -632,8 +632,11 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
     recipe = {"video": "hevc re-encode", "audio": "aac-lc 2ch 192k", "subtitles": "text -> webvtt" if tracks else None}
     hls = None
     if platform:
+        # both rungs are HEVC in PQ: the init segment of each carries the original's HDR10 static
+        # metadata, the encode's too
         for v, (label, encoder) in zip(ren["video"], (("source", "copy"), ("1440p", "hevc_nvenc"))):
-            v.update(peakBitrateBps=v["bitrateBps"] * 2, videoRange="PQ", label=label, encoder=encoder)
+            v.update(peakBitrateBps=v["bitrateBps"] * 2, videoRange="PQ", label=label, encoder=encoder,
+                     hdr10Metadata=True)
         ren["audio"][0].update(group="audio", name="English")
         ren["audioSurround"] = [{"id": "a1", "dir": "hls/a1", "codec": "ec-3", "language": "eng", "title": "",
                                  "default": True, "channels": 6, "bitrateBps": 640000, "segments": 15, "visible": True,
