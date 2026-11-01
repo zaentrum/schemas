@@ -843,12 +843,20 @@ def test_records(t):
           ["audioDescriptionTracks", "commentarySubtitles", "commentaryTracks"]))
 
     # a title that says its track is no commentary makes it none: its words are taken back by a negation
-    # before them or say it themselves; a commentary's title that says no to something else is one
-    nones = ["No commentary", "English - no director's commentary", "Kommentarlos", "Deutsch (ohne Kommentar)",
-             "Keine Kommentare", "Sans commentaire", "Sin comentarios", "Senza commento", "Zonder commentaar",
-             "Non-commentary", "Commentary-free", "W/o commentary"]
-    ones = ["Commentary", "Director's commentary (no spoilers)", "Kommentar", "Commentaire du réalisateur",
-            "Commentary — no subtitles", "No. 2: Commentary", "Comentario del director"]
+    # right before them, or past articles and possessives alone (three at most); a negation of anything
+    # else — a title, a word in between — leaves the commentary one, as one after it does
+    nones = ["No commentary", "Without commentary", "w/o commentary", "W/o commentary", "Ohne Kommentar",
+             "Kein Kommentar", "Keine Kommentare", "Kommentarlos", "Kommentarfrei", "Sans commentaire",
+             "Sans commentaires", "Sin comentarios", "Senza commento", "Zonder commentaar", "Geen commentaar",
+             "Non commentary", "Non-commentary", "English (No Commentary)", "English - no director's commentary",
+             "Without the director's audio commentary", "Commentary-free", "Deutsch (ohne Kommentar)"]
+    ones = ["Commentary", "Kommentar", "Commentaire du réalisateur", "Comentario del director",
+            "No-spoiler commentary", "No spoilers commentary", "No 2 commentary", "No Mercy commentary",
+            "Sin City commentary", "Sans Soleil commentary", "Without Remorse - Commentary",
+            "Commentary - not for kids", "Non-English commentary", "Director's commentary (no spoilers)",
+            "Commentary with no music", "Kommentar ohne Spoiler", "Commentaire sans spoilers",
+            "Comentario sin spoilers", "Commentary — no subtitles", "No. 2: Commentary",
+            "No a the an audio commentary"]
     titled = lambda title: {"tags": {"title": title}}
     t.eq("a title that says its track is no commentary makes it none, for audio and subtitles alike; one that "
          "says no to something else is a commentary still",

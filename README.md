@@ -910,9 +910,11 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   titled "No commentary", "without the director's commentary", "Kommentarlos", "ohne Kommentar",
   "sans commentaire" or the like was a `commentary` by its title, counted in `commentaryTracks` or
   `commentarySubtitles`, and so was the package's rendition made from it. `libv2_records.py` (9)
-  reads such a title as none (`says_commentary`): a commentary word that a negation before it takes
-  back, or a word that says it itself (`kommentarlos`, `commentary-free`), as the forced flag of a
-  title such as "Non-forced" already was. A source recorded before keeps the essence it was written
+  reads such a title as none (`says_commentary`): a commentary word right after a negation, or past an
+  article or a possessive alone ("without the director's commentary"), or a word that says it itself
+  (`kommentarlos`, `commentary-free`), as the forced flag of a title such as "Non-forced" already was;
+  a negation of anything else ("No Mercy commentary", "Sin City commentary") leaves it a commentary.
+  A source recorded before keeps the essence it was written
   with; one that counted such a track keeps counting it, and the deletion gate names it for the
   version until the source is recorded again. The schemas are unchanged, and every record and tree
   written before validates as it is.
