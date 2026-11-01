@@ -98,7 +98,8 @@ rule and checks the tool notices:
                  arrived; a source of a file of several episodes covers them as given, the holder
                  first; a subtitle made from a stream for the hard of hearing by its disposition alone
                  is sdh in the package's essence as in the source's, and a commentary or an audio
-                 description by its disposition alone is one in both; a package carries a source's
+                 description by its disposition alone is one in both, and a title that says its track
+                 is no commentary makes it none; a package carries a source's
                  HDR10 static metadata when its top rendition is the original's own stream in PQ or every
                  rendition in PQ, the top one among them, says its init segment does; piped behind a
                  tool, the module
@@ -840,6 +841,41 @@ def test_records(t):
           gate(bare(audios, ("commentary", "visualImpaired")), bare(subtitles, ("commentary",)))),
          ({"commentaryTracks": 1, "commentarySubtitles": 1, "audioDescriptionTracks": 2}, [],
           ["audioDescriptionTracks", "commentarySubtitles", "commentaryTracks"]))
+
+    # a title that says its track is no commentary makes it none: its words are taken back by a negation
+    # before them or say it themselves; a commentary's title that says no to something else is one
+    nones = ["No commentary", "English - no director's commentary", "Kommentarlos", "Deutsch (ohne Kommentar)",
+             "Keine Kommentare", "Sans commentaire", "Sin comentarios", "Senza commento", "Zonder commentaar",
+             "Non-commentary", "Commentary-free", "W/o commentary"]
+    ones = ["Commentary", "Director's commentary (no spoilers)", "Kommentar", "Commentaire du réalisateur",
+            "Commentary — no subtitles", "No. 2: Commentary", "Comentario del director"]
+    titled = lambda title: {"tags": {"title": title}}
+    t.eq("a title that says its track is no commentary makes it none, for audio and subtitles alike; one that "
+         "says no to something else is a commentary still",
+         ([rec.audio_purpose(titled(x)) for x in nones], [rec.subtitle_purpose(titled(x)) for x in nones],
+          [rec.audio_purpose(titled(x)) for x in ones], [rec.subtitle_purpose(titled(x)) for x in ones],
+          [rec.says_commentary(x) for x in ("", None, "No comments", "Commentaries")]),
+         ([("main", "assumed")] * len(nones), [("dialogue", "assumed")] * len(nones),
+          [("commentary", "title")] * len(ones), [("commentary", "title")] * len(ones),
+          [False, False, False, False]))
+    negated = rec.probed({"format": {"duration": "1.0"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 1080, "disposition": {}},
+        {"index": 1, "codec_type": "audio", "codec_name": "aac", "channels": 2,
+         "tags": {"language": "ger", "title": "Deutsch (kommentarlos)"}, "disposition": {"default": 1}},
+        {"index": 2, "codec_type": "audio", "codec_name": "aac", "channels": 2,
+         "tags": {"language": "ger", "title": "Kommentar"}, "disposition": {}},
+        {"index": 3, "codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "eng",
+                                                                               "title": "No commentary"},
+         "disposition": {}}]})
+    renditions = {"video": [{"height": 1080}],
+                  "audio": [rec.audio_rendition({"language": "ger", "title": x["title"], "channels": 2}, i)
+                            for i, x in enumerate(s for s in negated["streams"] if s["type"] == "audio")]}
+    t.eq("so neither essence counts a track that says it is none, and the gate names nothing of it",
+         ({k: negated["essence"][k] for k in ("commentaryTracks", "commentarySubtitles")},
+          rec.deletion_gate([negated["essence"]], rec.package_essence(
+              {"renditions": renditions, "subtitles": [rec.subtitle_rendition(
+                  {"language": "eng", "title": "No commentary"}, 0)]}, negated["essence"]))),
+         ({"commentaryTracks": 1, "commentarySubtitles": 0}, []))
 
     # HDR10 static metadata: a top rendition that is the original's own stream in PQ carries it, as before;
     # an encode carries it when every rendition in PQ, the top one among them, says its init segment does

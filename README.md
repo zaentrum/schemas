@@ -906,7 +906,17 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
-- **2026-11-01** — HDR10 static metadata in a package's init segments, and a commentary or an audio
+- **2026-11-01 (b)** — a title that says its track is no commentary. A source's audio or subtitle stream
+  titled "No commentary", "without the director's commentary", "Kommentarlos", "ohne Kommentar",
+  "sans commentaire" or the like was a `commentary` by its title, counted in `commentaryTracks` or
+  `commentarySubtitles`, and so was the package's rendition made from it. `libv2_records.py` (9)
+  reads such a title as none (`says_commentary`): a commentary word that a negation before it takes
+  back, or a word that says it itself (`kommentarlos`, `commentary-free`), as the forced flag of a
+  title such as "Non-forced" already was. A source recorded before keeps the essence it was written
+  with; one that counted such a track keeps counting it, and the deletion gate names it for the
+  version until the source is recorded again. The schemas are unchanged, and every record and tree
+  written before validates as it is.
+- **2026-11-01 (a)** — HDR10 static metadata in a package's init segments, and a commentary or an audio
   description by its disposition alone. A package's essence had the HDR10 metadata its source had
   only when the top rendition is the original's own stream, copied, in PQ, which keeps it in its
   bitstream; an encoded rendition was taken to have lost it. The packager now writes the original's
