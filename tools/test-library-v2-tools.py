@@ -995,6 +995,75 @@ def test_records(t):
           ["subs/fonts/0.ttf", "subs/fonts/1.otf"], (True, True), [], False, (False, False),
           ["subtitle-styling", "attachments-dropped"]))
 
+    # what a font is (10): a MIME type in any of the words a font's carries, a font's name, or — where neither
+    # says so and no picture's MIME type makes it a cover — its first bytes, a font's signature, which its
+    # stream then says; a source counts every font so, and a package carrying it loses none
+    role = rec.attachment_role
+    t.eq("an attachment is a font by a MIME type in any of a font's words or by a font's name, else by its first "
+         "bytes where it is no picture; a cover by a picture's MIME type; else other",
+         [role("application/vnd.ms-opentype", None), role("application/x-truetype-font", "x"), role("font/ttf", None),
+          role("application/font-sfnt", None), role("application/x-font-otf", "x.bin"), role("FONT/COLLECTION", None),
+          role(None, "a.WOFF2"), role("application/octet-stream", "a.woff"), role("application/octet-stream", "a.bin",
+                                                                                   b"OTTO\x00\x0a"),
+          role(None, None, b"ttcf\x00\x01"), role(None, None, b"\x00\x01\x00\x00"), role("text/plain", "a.txt", b"hello"),
+          role("image/jpeg", "cover.jpg", b"OTTO"), role("image/png", None), role(None, None), role("application/xml", "a")],
+         ["font"] * 11 + ["other", "cover", "cover", "other", "other"])
+    with_bytes = {"format": {"format_name": "matroska,webm", "duration": "60.0"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 1080, "pix_fmt": "yuv420p"},
+        {"index": 1, "codec_type": "subtitle", "codec_name": "ass", "tags": {"language": "eng"}},
+        {"index": 2, "codec_type": "attachment", "tags": {"filename": "data.bin", "mimetype": "application/octet-stream"}},
+        {"index": 3, "codec_type": "attachment", "codec_name": "otf",
+         "tags": {"filename": "Example Serif", "mimetype": "application/vnd.ms-opentype"}}]}
+    counted, uncounted = rec.probed(with_bytes, {2: b"OTTO" + bytes(12)}), rec.probed(with_bytes)
+    attachments = lambda facts: [(x["index"], x["role"], x.get("signature")) for x in facts["streams"]
+                                 if x["type"] == "attachment"]
+    t.eq("a font told by its first bytes alone is a font in the source, and its stream says what they are; an "
+         "OpenType font by its MIME type alone is one too, read or not",
+         (attachments(counted), counted["essence"]["fonts"], attachments(uncounted)),
+         ([(2, "font", "otf"), (3, "font", None)], True, [(2, "other", None), (3, "font", None)]))
+    carried_fonts = lambda files: rec.package_essence(
+        {"renditions": styled_renditions, "subtitles": [rec.subtitle_rendition(sub(-1), 0)],
+         "fonts": [font(n, index, fmt) for n, (index, fmt) in enumerate(files)]},
+        counted["essence"], counted["streams"])["fonts"]
+    t.eq("so a package carries the source's fonts only with the one its bytes told, and the gate names fonts without it",
+         (carried_fonts([(2, "otf"), (3, "otf")]), carried_fonts([(3, "otf")]),
+          [k for k in rec.deletion_gate([counted["essence"]], rec.package_essence(
+              {"renditions": styled_renditions, "subtitles": [], "fonts": [font(0, 3, "otf")]},
+              counted["essence"], counted["streams"])) if k == "fonts"]),
+         (True, False, ["fonts"]))
+    with tempfile.TemporaryDirectory() as tmp:
+        bin_dir, empty = os.path.join(tmp, "bin"), os.path.join(tmp, "empty")
+        os.makedirs(bin_dir)
+        os.makedirs(empty)
+        fake = os.path.join(bin_dir, "ffmpeg")
+        with open(fake, "w") as f:  # writes an attachment's bytes, a megabyte past its signature, to the pipe
+            f.write(f"#!{sys.executable}\nimport sys\n"
+                    "spec = next(a for a in sys.argv if a.startswith('-dump_attachment:'))\n"
+                    "assert sys.argv[sys.argv.index(spec) + 1] == 'pipe:1'\n"
+                    "data = {2: b'OTTO' + bytes(1 << 20), 6: b'plain text, no font at all'}.get(int(spec.split(':')[1]))\n"
+                    "if data is None:\n    sys.exit(1)\n"
+                    "try:\n    sys.stdout.buffer.write(data)\n    sys.stdout.buffer.flush()\nexcept BrokenPipeError:\n    pass\n")
+        os.chmod(fake, 0o755)
+        probe = {"streams": [
+            {"index": 0, "codec_type": "video"},
+            {"index": 2, "codec_type": "attachment", "tags": {"filename": "data.bin", "mimetype": "application/octet-stream"}},
+            {"index": 3, "codec_type": "attachment", "tags": {"filename": "a.ttf", "mimetype": "font/ttf"}},
+            {"index": 4, "codec_type": "attachment", "tags": {"filename": "cover.jpg", "mimetype": "image/jpeg"}},
+            {"index": 5, "codec_type": "attachment", "extradata_size": 0, "tags": {"mimetype": "application/octet-stream"}},
+            {"index": 6, "codec_type": "attachment", "tags": {"filename": "notes.txt", "mimetype": "text/plain"}},
+            {"index": 7, "codec_type": "attachment", "tags": {}}]}
+        path = os.environ.get("PATH", "")
+        try:
+            os.environ["PATH"] = bin_dir + os.pathsep + path
+            heads = rec.attachment_heads("/nowhere/original.mkv", probe)
+            os.environ["PATH"] = empty
+            none = rec.attachment_heads("/nowhere/original.mkv", probe)
+        finally:
+            os.environ["PATH"] = path
+        t.eq("the first bytes are read of the attachments the probe gives no role by itself, no further than a "
+             "signature needs, through a pipe; one ffmpeg can't read, or a file without ffmpeg, gives none",
+             (heads, none), ({2: b"OTTO" + bytes(12), 6: b"plain text, no f"}, {}))
+
     probe = {"format": {"filename": "/media/Example Film (2024)/Example Film (2024).mkv", "duration": "1.0",
                         "tags": {"TITLE": "Example.Film.2024", "title": "Example Film", "Title": "x", "ENCODER": "e",
                                  "subtitle": "kept"}},

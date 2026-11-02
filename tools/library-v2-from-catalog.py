@@ -263,7 +263,8 @@ import argparse, base64, datetime, hashlib, json, os, re, shutil, sys
 
 try:  # the record logic the packager writes the same records with: beside this tool, or piped in front of it
     from libv2_records import (
-        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, chapter_marks, checksums, complete, deletion_gate, did,
+        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, attachment_heads, chapter_marks, checksums, complete,
+        deletion_gate, did,
         external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
         library_original_name, listdir, naming, num, package_files, package_listing, package_record, peak_bandwidth,
         primary_language,
@@ -737,7 +738,8 @@ class Build:
             self.note(row["id"], f"{name} was not probed: streams, fidelity and essence stay empty")
         rec, raw = source_record(did(row["id"], "source", name), name, os.path.getsize(path), taken_at=self.as_of,
                                  taken_by="library-v2-from-catalog", library_path=rel, qh1=qh1(path),
-                                 mtime=ts_of_mtime(path), probe=probe, probe_version=self.probe_version)
+                                 mtime=ts_of_mtime(path), probe=probe, probe_version=self.probe_version,
+                                 heads=attachment_heads(path, probe) if probe else None)
         return {"record": rec, "probe": raw, "chapters": probe_chapters(probe), "path": path}, None
 
     # -------------------------------------------------- versions and packages
@@ -853,7 +855,8 @@ class Build:
                                    ("fetchedAt", ts(t.get("fetchedAt")))) if v}},
                                probe=probe, probe_version=self.probe_version, original_files=[kept],
                                originals=[{"name": kept, "sizeBytes": size,
-                                           "fixity": {"qh1": qh1(path), "sha256": digest, "sha256At": self.as_of}}])
+                                           "fixity": {"qh1": qh1(path), "sha256": digest, "sha256At": self.as_of}}],
+                               heads=attachment_heads(path, probe) if probe else None)
             record = json_bytes(doc)
             self.w.write(os.path.join(xp, "extra.json"), record)
             if not self.w.place(path, os.path.join(xp, kept), self.a.media_mode):
@@ -1656,7 +1659,8 @@ class Platform(Build):
                                  library_path=library_path, qh1=qh1(original) if original else None,
                                  mtime=ts_of_mtime(original) if original else None,
                                  probe=probe, probe_version=self.probe_version, sidecars=entries,
-                                 note=None if original else GONE, covers=covers)
+                                 note=None if original else GONE, covers=covers,
+                                 heads=attachment_heads(original, probe) if probe else None)
         files["source.json"] = json_bytes(rec)
         if raw is not None:
             files["ffprobe.json"] = raw
@@ -1853,7 +1857,8 @@ class Platform(Build):
                                title=text(x.get("title")), localized_titles=titles,
                                language=language if language and LANGUAGE_RE.match(language) else None,
                                season_number=season, origin=origin, probe=probe, probe_version=self.probe_version,
-                               probed_at=self.as_of, packaged_from=made_from)
+                               probed_at=self.as_of, packaged_from=made_from,
+                               heads=attachment_heads(local, probe) if probe else None)
             record = json_bytes(doc)
             xp = os.path.join(d, "extras", xid)
             store = os.path.relpath(folder, self.a.packages)

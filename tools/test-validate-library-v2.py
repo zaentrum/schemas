@@ -406,6 +406,16 @@ def styled(root, at=None, font_at="subs/fonts/0.ttf", files=True, essence=True, 
     rechecksum(vp)
 
 
+def attachment(root, **fields):
+    """The movie's probed source with one more stream, an attachment: fields say its name, MIME type,
+    role and signature."""
+    def add(d):
+        d["streams"].append({"index": max(s["index"] for s in d["streams"]) + 1, "codec": None, "language": None,
+                             "languageRaw": None, "title": None, "type": "attachment", "filename": None,
+                             "mimetype": None, "role": "other", **fields})
+    edit(movie_source(root), add)
+
+
 def pending_extra(root):
     """The trailer's package said to be pending, which only a version's may be."""
     xp = next(x for x in (featurette(root), trailer(root), bts(root)) if os.path.isfile(pkg(x)))
@@ -891,6 +901,23 @@ CASES = [
     ("fonts in an essence whose package lists no font file", False,
      lambda r: edit(pkg(primary(episode(r, 1))), lambda d: d["essence"].update(fonts=True)),
      "the essence has fonts, but the package lists no font file", []),
+    ("an attachment that is a font by its OpenType MIME type alone", True,
+     lambda r: attachment(r, mimetype="application/vnd.ms-opentype", role="font"), "OK", []),
+    ("an attachment that is a font by its first bytes alone, saying so", True,
+     lambda r: attachment(r, filename="data.bin", mimetype="application/octet-stream", role="font", signature="otf"),
+     "OK", []),
+    ("an attachment that is a font by nothing it says", False,
+     lambda r: attachment(r, filename="data.bin", mimetype="application/octet-stream", role="font"),
+     "is a font by neither its MIME type nor its name, and says no signature its bytes are", []),
+    ("a font's signature on an attachment that is no font", False,
+     lambda r: attachment(r, filename="cover.jpg", mimetype="image/jpeg", role="cover", signature="ttf"),
+     "says a font's signature, ttf, but its role is cover", []),
+    ("a signature that is no font's", False,
+     lambda r: attachment(r, filename="data.bin", role="font", signature="exe"), "source.json: $.streams[3]", []),
+    ("a font by its MIME type that a record from before record logic 10 calls other is a note", True,
+     lambda r: attachment(r, filename="Example Display", mimetype="application/vnd.ms-opentype", role="other"),
+     "is a font by its MIME type or its name, but its record calls it other: the deletion gate counts no font there",
+     []),
 
     # ---- the marks the version keeps
     ("chapters out of order", False, lambda r: edit(ver(gone(r)), lambda d: d["chapters"].reverse()), "chapters are not in timeline order", []),

@@ -279,7 +279,8 @@
         "type": { "const": "attachment" },
         "filename": { "type": ["string", "null"] },
         "mimetype": { "type": ["string", "null"] },
-        "role": { "enum": ["font", "cover", "other"], "description": "Fonts are required to render styled subtitles." }
+        "role": { "enum": ["font", "cover", "other"], "description": "Fonts are required to render styled subtitles. An attachment is a font by a MIME type in any of the words a font's carries (font, opentype, truetype, sfnt), by a font's file name (.ttf, .otf, .ttc, .woff, .woff2), or, where neither says so and no picture's MIME type makes it a cover, by its first bytes: a font's signature. A package carries every font its source counts." },
+        "signature": { "enum": ["ttf", "otf", "ttc", "woff", "woff2"], "description": "What the attachment's first bytes say it is, read where its MIME type and its name say nothing: a font by its signature alone. Left out of every other attachment." }
       }
     },
     "dataStream": {

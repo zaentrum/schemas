@@ -917,7 +917,16 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   file: its `path`, the `format` its bytes are (`ttf`, `otf`, `ttc`, `woff`, `woff2`, or null), the
   `names` a style or an override tag asks for it by (its family, full and PostScript names) and the
   original's stream it was taken from (`sourceStreamIndex`); both are left out where there are none, so
-  a reader that shows the WebVTT copy sees the package as before. `libv2_records.py` (10) keeps them in
+  a reader that shows the WebVTT copy sees the package as before. An attachment is a font by a MIME type in
+  any of the words a font's carries — `font`, `opentype`, `truetype`, `sfnt`, so
+  `application/vnd.ms-opentype` and `application/font-sfnt` too, not only `font/*` and
+  `application/x-truetype-font` — by a font's file name (`.ttf`, `.otf`, `.ttc`, `.woff`, `.woff2`), or,
+  where neither says so and no picture's MIME type makes it a cover, by its first bytes, a font's
+  signature (`attachment_role`; `attachment_heads` reads them from the original through a pipe, and the
+  writers pass them to `source_record` and `extra_record` as `heads`): the stream of such a font says what
+  they are (`signature`, new and optional in `source.schema.json`), and the validator holds a stream's role
+  to its MIME type, its name and its signature. A source counts every font so, and the packager carries
+  every font a source counts. `libv2_records.py` (10) keeps them in
   the record (`styled_original`, `font_file`), and `package_essence` gives the package styled subtitles
   and fonts when it carries them for every stream of its source that has them — each styled subtitle
   stream by a subtitle made from it that keeps its original, each font attachment by a font file taken

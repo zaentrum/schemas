@@ -181,6 +181,10 @@ LOSS_FLAGS = ("surround", "losslessAudio", "objectAudio", "hdr10Metadata", "dolb
 LOSS_COUNTS = ("maxAudioChannels", "maxVideoHeight", "videoBitDepth", "subtitleTracks",
                "commentaryTracks", "commentarySubtitles", "audioDescriptionTracks")
 LOSS_LANGUAGES = ("audioLanguages", "subtitleLanguages", "sdhSubtitleLanguages", "forcedSubtitleLanguages")
+# What says an attachment is a font, as libv2_records.py reads it (attachment_role): a MIME type in any of the
+# words a font's carries, or a font's file name; else, read from its first bytes, its signature.
+FONT_MIME = re.compile(r"font|opentype|truetype|sfnt", re.I)
+FONT_FILE = re.compile(r"\.(ttf|otf|ttc|woff2?)$", re.I)
 
 
 def deletion_gate(sources, package):
@@ -743,6 +747,7 @@ class Checker:
             records[name] = src
             self.source_files(d, sp, src)
             self.neutral_source(d, sp, src)
+            self.attachments(sp, src)
             named = {"source.json"} | {os.path.basename(x["file"]) for x in src.get("sidecars") or []} | \
                 ({os.path.basename(src["probe"]["file"])} if src["probe"].get("file") else set())
             for entry in listdir(p):
@@ -750,6 +755,26 @@ class Checker:
                     self.err(os.path.join(p, entry), "not the record, the probe, a sidecar or the checksums of this source")
             self.covered(p, named, "source.json, its probe or one of its sidecars")
         return records
+
+    def attachments(self, where, src):
+        """An attachment is a font by its MIME type or its name, or by the signature its first bytes are,
+        which its stream then says (signature) — and only a font says one. A record written before
+        record logic 10 that calls a font by its MIME type or name something else is a note."""
+        for x in src.get("streams") or []:
+            if x.get("type") != "attachment":
+                continue
+            claims = bool(FONT_MIME.search(x.get("mimetype") or "") or FONT_FILE.search(x.get("filename") or ""))
+            if x.get("signature") and x.get("role") != "font":
+                self.err(where, f"attachment stream {x['index']} says a font's signature, {x['signature']}, "
+                                f"but its role is {x.get('role')}")
+            elif x.get("role") == "font" and not claims and not x.get("signature"):
+                self.err(where, f"attachment stream {x['index']} is a font by neither its MIME type nor its name, "
+                                f"and says no signature its bytes are")
+            elif claims and x.get("role") != "font":
+                # a record written before record logic 10 read fewer MIME types and names as a font's, and
+                # keeps what it said: its source counts no font there, so the deletion gate holds none
+                self.note(where, f"attachment stream {x['index']} is a font by its MIME type or its name, but its "
+                                 f"record calls it {x.get('role')}: the deletion gate counts no font there")
 
     def source_files(self, d, where, src):
         pf, psha = src["probe"].get("file"), src["probe"].get("sha256")
