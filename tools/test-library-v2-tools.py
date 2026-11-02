@@ -68,6 +68,10 @@ rule and checks the tool notices:
                  module that would count it; a file so named anywhere else is any other file
   attached rows  the rebuild gives an attached subtitle a row of its own from its name and its folder,
                  and --compare holds it apart from the package's rows, never in what no record holds
+  styled rows    the rebuild gives a package's styled subtitle the script it keeps beside it, and the
+                 title the fonts of the package that plays, by the ids katalog-manager gives them; a
+                 script or a font outside the package is none of it; --compare compares them where the
+                 export carries them, the script's path where paths are compared, a font by its place
   taken in       a subtitle attached to a version taken in before anything packaged it is counted and
                  held to its name by the media check and the validator, which find nothing unfinished
                  there, and is a row of the rebuild's while no package of the title plays; beside one
@@ -5590,10 +5594,10 @@ def test_attached_rows(t):
              [{k: v for k, v in x.items() if k != "id"} for x in mine],
              [{"path": brazil, "format": "webvtt", "language": "pt-BR", "label": None, "isDefault": False, "isSdh": True,
                "origin": None, "versionId": vid, "sha256": "sha256:" + digest(brazil), "attachedBy": None,
-               "attachedAt": None},
+               "attachedAt": None, "styledPath": None, "styledFormat": None},
               {"path": hans, "format": "webvtt", "language": "zh-Hans", "label": None, "isDefault": False, "isSdh": False,
                "origin": None, "versionId": vid, "sha256": "sha256:" + digest(hans), "attachedBy": None,
-               "attachedAt": None}])
+               "attachedAt": None, "styledPath": None, "styledFormat": None}])
         own = [x for x in rows[iid]["subtitleAssets"] if not x["sha256"]]
         t.ok("every other subtitle row is the title's own, as the catalog says of one: not SDH, and none of the rest",
              own and all({k: x[k] for k in ("isSdh", "origin", "versionId", "sha256", "attachedBy", "attachedAt")}
@@ -5667,6 +5671,102 @@ def test_attached_rows(t):
              and "subtitleAssets: 1 difference(s)" in text, text)
 
 
+def test_styled_rows(t):
+    """The rebuild gives a package's styled subtitle the script it keeps beside its file (styledPath,
+    styledFormat) and the title the fonts of the package that plays, each at its place by a name-based id,
+    as katalog-manager keeps them (its migration 053); a script or a font whose path leaves the package is
+    none of it. --compare compares them where the export carries them, the script's path only where paths
+    are compared, and a font by its place."""
+    rebuild = load_tool(REBUILD)
+    t.eq("a font's id is the one katalog-manager gives it (library.FontID)",
+         rebuild.did("a1a1a1a1-0000-4000-8000-0000000000a1", "font", "b2b2b2b2-0000-4000-8000-0000000000b2", 0),
+         "62df731b-f6d8-5eab-af65-87a2ad1779e1")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "library")
+        shutil.copytree(EXAMPLES, root)
+        vp = subtitled(root)
+        iid, vid = os.path.basename(os.path.dirname(os.path.dirname(vp))), os.path.basename(vp)
+        pkg = jload(os.path.join(vp, "package.json"))
+        sub = pkg["subtitles"][0]
+        sub["styled"] = {"path": os.path.splitext(sub["path"])[0] + ".ass", "format": "ass"}
+        pkg["subtitles"].append({"id": "sub9", "path": "subs/9.vtt", "language": "eng", "format": "webvtt",
+                                 "styled": {"path": "../../9.ass", "format": "ass"}})
+        pkg["fonts"] = [{"path": "subs/fonts/0.ttf", "format": "ttf", "names": ["Example Sans", " ", "ExampleSans-Regular"],
+                         "sourceStreamIndex": 4},
+                        {"path": "../../../evil.ttf", "format": "ttf", "names": ["Example Evil"]},
+                        {"path": "subs/fonts/2.bin", "format": None, "names": []}]
+        jwrite(os.path.join(vp, "package.json"), pkg)
+        rows, _ = rows_of(root)
+        styled = {os.path.basename(x["path"]): (x["styledPath"], x["styledFormat"]) for x in rows[iid]["subtitleAssets"]}
+        t.eq("a package's subtitle row says the script beside its file, and one whose script leaves the package none",
+             (styled.get(os.path.basename(sub["path"])), styled.get("9.vtt")),
+             ((os.path.join(vp, sub["styled"]["path"]), "ass"), (None, None)))
+        t.eq("the title's fonts are the package's, each at its place by the id katalog-manager gives it, with its "
+             "file, format, names and attachment; one outside the package keeps its place empty",
+             rows[iid]["fontAssets"],
+             [{"id": rebuild.did(iid, "font", vid, 0), "versionId": vid, "path": os.path.join(vp, "subs", "fonts", "0.ttf"),
+               "format": "ttf", "names": ["Example Sans", "ExampleSans-Regular"], "ordinal": 0, "sourceStreamIndex": 4},
+              {"id": rebuild.did(iid, "font", vid, 2), "versionId": vid, "path": os.path.join(vp, "subs", "fonts", "2.bin"),
+               "format": None, "names": [], "ordinal": 2, "sourceStreamIndex": None}])
+        t.ok("every other title has no fonts, and every other subtitle no script",
+             all(r["fontAssets"] == [] for k, r in rows.items() if k != iid)
+             and all(x["styledPath"] is None and x["styledFormat"] is None for k, r in rows.items()
+                     for x in r["subtitleAssets"] if k != iid))
+
+        def compare(change, *extra):
+            export = {"exportedAt": "2026-11-02T12:00:00Z", "items": json.loads(json.dumps(list(rows.values()))),
+                      "deletedItems": []}
+            change(next(r for r in export["items"] if r["id"] == iid))
+            path = os.path.join(tmp, "catalog.json")
+            jwrite(path, export)
+            return run(REBUILD, root, "--compare", path, "--text-language", "en", *extra)
+
+        def elsewhere(row):
+            """The rows as the catalog keeps them: the library mounted elsewhere, the fonts by ids of its own."""
+            for x in row["subtitleAssets"] + row["fontAssets"]:
+                for k in ("path", "styledPath"):
+                    if x.get(k):
+                        x[k] = "/var/lib/library/" + os.path.relpath(x[k], root).replace(os.sep, "/")
+            for x in row["fontAssets"]:
+                x["id"] = str(uuid.uuid4())
+
+        def before_053(row):
+            """An export of a catalog from before it kept styled subtitles: neither field, and no fonts."""
+            for x in row["subtitleAssets"]:
+                x.pop("styledPath"), x.pop("styledFormat")
+            row.pop("fontAssets")
+
+        def styled_of(name, **values):
+            return lambda row: next(x for x in row["subtitleAssets"] if os.path.basename(x["path"]) == name).update(values)
+
+        def font(ordinal, **values):
+            return lambda row: next(x for x in row["fontAssets"] if x["ordinal"] == ordinal).update(values)
+
+        code, text = compare(lambda row: None)
+        t.ok("a tree and the rows it rebuilds to agree, scripts and fonts and all",
+             code == 0 and "the tree and the database agree" in text, text)
+        code, text = compare(elsewhere)
+        t.ok("and agree with the catalog's rows, the library mounted elsewhere: a script's path moves with its "
+             "subtitle's", code == 0 and "the tree and the database agree" in text, text)
+        code, text = compare(before_053)
+        t.ok("and with an export from before the catalog kept them", code == 0 and "the tree and the database agree" in text,
+             text)
+        name = os.path.basename(sub["path"])
+        code, text = compare(styled_of(name, styledPath=None, styledFormat=None))
+        t.ok("a catalog that does not know a subtitle's script differs in its format",
+             code == 1 and "subtitleAssets.styledFormat: 1 difference(s)" in text and "styledPath" not in text, text)
+        code, text = compare(styled_of(name, styledPath=os.path.join(vp, "subs", "7.ass")), "--ignore-fields", "id,hash")
+        t.ok("and where paths are compared, a script's path is", code == 1 and "subtitleAssets.styledPath: 1 difference(s)"
+             in text, text)
+        code, text = compare(lambda row: row["fontAssets"].pop())
+        t.ok("a font the catalog has no row of is a difference", code == 1 and "fontAssets: 1 difference(s)" in text, text)
+        code, text = compare(lambda row: (font(0, names=["Example Sans"])(row), font(2, format="otf")(row)))
+        t.ok("and so are a font's names and its format", code == 1 and "fontAssets.names: 1 difference(s)" in text
+             and "fontAssets.format: 1 difference(s)" in text, text)
+        code, text = compare(lambda row: [x.update(versionId="c3c3c3c3-0000-4000-8000-0000000000c3") for x in row["fontAssets"]])
+        t.ok("and fonts of another version's package", code == 1 and "fontAssets.versionId: 2 difference(s)" in text, text)
+
+
 def taken_in_version(root):
     """The example episode whose version is taken in before anything packaged it — its record and its
     original alone, nothing else of the episode's to play — and that version's folder."""
@@ -5707,10 +5807,10 @@ def test_attached_taken_in(t):
              [{k: v for k, v in x.items() if k != "id"} for x in mine],
              [{"path": german, "format": "webvtt", "language": "de", "label": None, "isDefault": False, "isSdh": False,
                "origin": None, "versionId": vid, "sha256": "sha256:" + digest(german), "attachedBy": None,
-               "attachedAt": None},
+               "attachedAt": None, "styledPath": None, "styledFormat": None},
               {"path": hans, "format": "webvtt", "language": "zh-Hans", "label": None, "isDefault": False, "isSdh": True,
                "origin": None, "versionId": vid, "sha256": "sha256:" + digest(hans), "attachedBy": None,
-               "attachedAt": None}])
+               "attachedAt": None, "styledPath": None, "styledFormat": None}])
 
         def compare(change):
             export = {"exportedAt": "2026-10-22T12:00:00Z", "items": json.loads(json.dumps(list(rows.values()))),
@@ -6425,6 +6525,7 @@ def main():
                         ("sweeping an extra that never finished", test_sweep_extras),
                         ("subtitles attached after the package completed", test_attached_subtitles),
                         ("an attached subtitle's row, and the compare", test_attached_rows),
+                        ("a styled subtitle's script and the package's fonts, and the compare", test_styled_rows),
                         ("subtitles attached to a version taken in", test_attached_taken_in),
                         ("the media check", test_media_check)):
         if wanted and not any(w in section for w in wanted):

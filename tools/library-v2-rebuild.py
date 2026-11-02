@@ -157,6 +157,16 @@ in their format and language and, where the export carries them, isSdh, versionI
 in what no record holds. The other subtitle rows are compared as they were, the fields the catalog
 gained with attached subtitles only where the export carries them.
 
+A styled subtitle's row says the script its package keeps beside the subtitle's file, as
+katalog-manager keeps it (its migration 053): styledPath and styledFormat (ass), none of every other
+subtitle row, and of a script whose path leaves the package. An item row's fontAssets are the fonts of
+the package that plays, in their order: each by the name-based id katalog-manager gives it — of the
+title, the version and its place — with its versionId, path, format (none for bytes that are none of
+the formats), the names a script asks for it by, its place (ordinal, from 0) and the attachment it was
+taken from (sourceStreamIndex); a font whose path leaves the package keeps its place empty. --compare
+compares them only where the export carries them, the script's path only where paths are compared —
+ignoring path ignores styledPath — and a font by its place.
+
 --subset reports the rows only the database has without counting them, for a tree that was built
 from part of a catalog.
 
@@ -210,6 +220,12 @@ TITLES_OWN = {"isSdh": False, "origin": None, "versionId": None, "sha256": None,
 # What no record holds of an attached subtitle — how it was made, the label it was given, who attached
 # it and when — is the catalog's alone: the rebuild writes none of it, and --compare compares none of it.
 ATTACHED_UNRECORDED = ("label", "origin", "attachedBy", "attachedAt")
+# What the catalog keeps of a styled subtitle's script beside the subtitle's file (katalog-manager's
+# migration 053), under the names an export gives them; and the formats it keeps of a script and of a
+# font of the package, as package.json names them.
+STYLED_FIELDS = ("styledPath", "styledFormat")
+STYLED_FORMATS = ("ass",)
+FONT_FORMATS = ("ttf", "otf", "ttc", "woff", "woff2")
 
 
 def did(*parts):
@@ -218,6 +234,16 @@ def did(*parts):
 
 def listdir(d):
     return sorted(n for n in os.listdir(d) if not OS_ARTEFACTS.match(n))
+
+
+def inside(root, rel):
+    """rel, a path a package's record names relative to its folder, joined to root as the row of a file
+    of the package is, or None for one that is no text, is absolute, or leaves root — which
+    katalog-manager keeps no row of either."""
+    if not isinstance(rel, str) or not rel or os.path.isabs(rel):
+        return None
+    full = os.path.join(root, rel)
+    return full if os.path.normpath(full).startswith(os.path.normpath(root) + os.sep) else None
 
 
 def load(p):
@@ -675,7 +701,7 @@ class Rebuild:
             # a credit from before credits were general has no job and no episode count: null, as the
             # export writes a field it does not know
             "people": [{k: c.get(k) for k in CREDIT_FIELDS} for c in meta.get("credits") or []],
-            "chapters": [], "segments": [], "playbackAssets": [], "subtitleAssets": [],
+            "chapters": [], "segments": [], "playbackAssets": [], "subtitleAssets": [], "fontAssets": [],
             "trailers": [{"source": v.get("origin"), "site": v.get("site"), "externalId": v.get("key"),
                           "url": v.get("url"), "title": v.get("name"),
                           "durationSec": (v["durationMs"] // 1000) if v.get("durationMs") else None,
@@ -713,6 +739,7 @@ class Rebuild:
             if v["package"] and not v["superseded"]:
                 row["subtitleAssets"] += [dict(s, **TITLES_OWN) for s in self.subtitles(item, v, sources)]
                 row["subtitleAssets"] += self.attached(item, v)
+                row["fontAssets"] += self.fonts(item, v)
             elif v["package"] is None and not plays:
                 row["subtitleAssets"] += self.attached(item, v)
         return row
@@ -784,16 +811,40 @@ class Rebuild:
                 language = kept.get("language", language)
             # never the package's default: that is what its playlist says, and which subtitle a viewer
             # gets is behaviour, which the database keeps and no record holds
+            styled = s.get("styled") if isinstance(s.get("styled"), dict) else {}
+            script = inside(v["dir"], styled.get("path")) if styled.get("format") in STYLED_FORMATS else None
             out.append({"id": did(item["itemId"], "subtitle", v["id"], s["id"]),
                         "path": os.path.join(v["dir"], s["path"]), "format": s.get("format"),
-                        "language": language, "label": s.get("title") or "", "isDefault": False})
+                        "language": language, "label": s.get("title") or "", "isDefault": False,
+                        "styledPath": script, "styledFormat": styled["format"] if script else None})
         item_dir = os.path.dirname(os.path.dirname(v["dir"]))
         for sid in v.get("version", {}).get("sourceIds") or []:
             for x in (sources.get(sid) or {}).get("sidecars") or [] if gone(sid) else []:
                 if x.get("kind") == "subtitle" and x.get("file") not in made:
                     out.append({"id": did(item["itemId"], "subtitle", sid, x["file"]),
                                 "path": os.path.join(item_dir, x["file"]), "format": x.get("format"),
-                                "language": x.get("language"), "label": None, "isDefault": False})
+                                "language": x.get("language"), "label": None, "isDefault": False,
+                                "styledPath": None, "styledFormat": None})
+        return out
+
+    def fonts(self, item, v):
+        """The rows of the fonts of a version's package, in their order, as katalog-manager keeps them
+        (db/migrations/053): each at its place among the package's fonts (ordinal, from 0), by a
+        name-based id of the title, the version and that place, with its file, its format (one of
+        FONT_FORMATS, else none), the names a script asks for it by and the attachment it was taken from.
+        A font whose path leaves the version's folder is none of the package's, and keeps its place
+        empty."""
+        out = []
+        for i, f in enumerate(v["package"].get("fonts") or []):
+            path = inside(v["dir"], f.get("path")) if isinstance(f, dict) else None
+            if not path:
+                continue
+            index = f.get("sourceStreamIndex")
+            out.append({"id": did(item["itemId"], "font", v["id"], i), "versionId": v["id"], "path": path,
+                        "format": f.get("format") if f.get("format") in FONT_FORMATS else None,
+                        "names": [n for n in f.get("names") or [] if isinstance(n, str) and n.strip()],
+                        "ordinal": i,
+                        "sourceStreamIndex": index if isinstance(index, int) and not isinstance(index, bool) else None})
         return out
 
     def attached(self, item, v):
@@ -811,7 +862,8 @@ class Rebuild:
             out.append({"id": did(item["itemId"], "subtitle", v["id"], name), "path": os.path.join(subs, name),
                         "format": "webvtt", "language": bcp47_cased(m.group(2)), "label": None, "isDefault": False,
                         "isSdh": bool(m.group(4)), "origin": None, "versionId": v["id"],
-                        "sha256": "sha256:" + m.group(1), "attachedBy": None, "attachedAt": None})
+                        "sha256": "sha256:" + m.group(1), "attachedBy": None, "attachedAt": None,
+                        "styledPath": None, "styledFormat": None})
         return out
 
     # -------------------------------------------------- bonus material
@@ -908,6 +960,8 @@ LIST_KEYS = {
     "playbackAssets": lambda x: x.get("kind"),
     "subtitleAssets": lambda x: (x.get("language"), os.path.basename(str(x.get("path") or ""))),
     "attachedSubtitles": attached_key,
+    # a font is the one at its place among the fonts of the package the title plays
+    "fontAssets": lambda x: x.get("ordinal"),
     # an image row is one kind of an image, so the bytes alone do not name it: a backdrop that is the
     # poster is two rows of one file
     "artwork": lambda x: (x.get("sha256"), x.get("kind")),
@@ -927,14 +981,17 @@ SET_FIELDS = ("genres", "tags")
 # all of them: the export's value against none, the database knowing more until it is projected again.
 CARRIED_ENTRY_FIELDS = {"artwork": ("width", "height", "isPrimary", "sourcePath"),
                         "people": ("job", "character", "order", "episodeCount"),
-                        # what a subtitle row gained with attached subtitles (katalog-manager's migration 048)
-                        "subtitleAssets": ATTACHED_FIELDS, "attachedSubtitles": ATTACHED_FIELDS}
+                        # what a subtitle row gained with attached subtitles (katalog-manager's migration 048),
+                        # and with styled subtitles (053)
+                        "subtitleAssets": ATTACHED_FIELDS + STYLED_FIELDS,
+                        "attachedSubtitles": ATTACHED_FIELDS + STYLED_FIELDS}
 # The fields of a list's entries --compare never compares, whatever --ignore-fields says: of an attached
 # subtitle, what no record holds.
 UNRECORDED_ENTRY_FIELDS = {"attachedSubtitles": ATTACHED_UNRECORDED}
 # The fields of an item row compared only when the export's row carries them, for the same reason:
-# items do not carry the first two yet, and coveredBy only once the catalog links covered episodes.
-CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt", "coveredBy")
+# items do not carry the first two yet, coveredBy only once the catalog links covered episodes, and
+# fontAssets only once it keeps the fonts of a package (053).
+CARRIED_ITEM_FIELDS = ("tmdbFetchedAt", "tmdbChangedAt", "coveredBy", "fontAssets")
 # A person's row says when the catalog last asked its source about them, and the day of the change it
 # last saw there. Asking moves both and changes nothing of the person: the row's modifiedAt — and so
 # its projection — moves only when a value does. --compare never compares them, whatever
@@ -1342,6 +1399,9 @@ def compare(tree_rows, tree_people, export, ignore, subset=False, text_language=
     catalog has no table for yet: they are counted, never compared. Behaviour is never compared.
     differences, a path, gets every field difference (write_differences): the lines show five of each."""
     ignore = set(ignore) | set(BEHAVIOUR)
+    # a styled subtitle's script is a file beside the subtitle's, which moved with it
+    if "path" in ignore:
+        ignore.add("styledPath")
     tree = {r["id"]: normalise(r) for r in tree_rows}
     db = {r["id"]: normalise(outside_arrivals(r, arrivals)) for r in export.get("items") or []}
     log, people_log = deletion_log(export), deletion_log(export, "person")

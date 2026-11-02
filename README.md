@@ -677,6 +677,18 @@ name, in their format and language and, where the export carries them, `isSdh`, 
 `subtitleAssets`, and the other subtitle rows are compared as they were, the fields the catalog gained
 with attached subtitles only where the export carries them.
 
+A styled subtitle's row says the script its package keeps beside the subtitle's file, as
+katalog-manager keeps it (its migration 053): `styledPath`, the script's file, and `styledFormat`,
+`ass`; null for every other subtitle row, and for a script whose path leaves the package. An item row
+gains `fontAssets`, the fonts of the package that plays, in their order: each its `id` — the
+name-based id katalog-manager gives it, of the title, the version and its place — its `versionId`,
+`path`, `format` (null for bytes that are none of the formats), the `names` a script asks for it by,
+its place (`ordinal`, from 0) and the attachment it was taken from (`sourceStreamIndex`); a font whose
+path leaves the package keeps its place empty, as katalog-manager keeps no row of it. `--compare`
+compares them only where the export carries them — an export from before 053 makes no tree differ —
+the script's path only where paths are compared (a `path` that `--ignore-fields` ignores ignores
+`styledPath` too), and a font by its place.
+
 Bonus material becomes rows of its own, under `extras` in the rows JSON: what `extra.json` records,
 the `order`, `hidden` and `label` the projection decided, and its original and package as playback
 rows, in the order a viewer sees them; an extra that never finished is left out with a note. The
@@ -933,8 +945,11 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   from it, by `sourceStreamIndex` — so a styled track kept as WebVTT alone, or a font left out, is still
   named by the deletion gate. The validator refuses a styled original or a font file outside `subs/`,
   and an essence that has styled subtitles or fonts the package lists none of; it and the media check
-  find every one the package names there. The fields are new and optional, the `$id`s are the
-  published ones, and every record and tree written before validates as it is.
+  find every one the package names there. `library-v2-rebuild.py` gives a subtitle row the script
+  beside it (`styledPath`, `styledFormat`) and an item row the fonts of the package that plays
+  (`fontAssets`), as katalog-manager's migration 053 keeps them, and `--compare` compares them where the
+  export carries them. The fields are new and optional, the `$id`s are the published ones, and every
+  record and tree written before validates as it is.
 
 - **2026-11-01 (b)** — a title that says its track is no commentary. A source's audio or subtitle stream
   titled "No commentary", "without the director's commentary", "Kommentarlos", "ohne Kommentar",
