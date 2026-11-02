@@ -407,8 +407,8 @@ class Check:
                      "does not name this package.json: package.json changed after the package completed")
 
     def playable(self, vp, pkg):
-        """Every rendition folder — the 5.1 companions' too — subtitle and its HLS rendition, master
-        playlist, trickplay and trailer the package in vp names is there."""
+        """Every rendition folder — the 5.1 companions' too — subtitle, its HLS rendition and its styled
+        original, font file, master playlist, trickplay and trailer the package in vp names is there."""
         ren = pkg.get("renditions") or {}
         for r in (ren.get("video") or []) + (ren.get("audio") or []) + (ren.get("audioSurround") or []):
             if not os.path.isdir(os.path.join(vp, r.get("dir") or "")):
@@ -418,6 +418,12 @@ class Check:
                 self.err(vp, f"subtitle {sub.get('path')} is missing")
             if sub.get("hls") and not os.path.isdir(os.path.join(vp, sub["hls"])):
                 self.err(vp, f"the HLS rendition {sub['hls']} of subtitle {sub.get('id')} is missing")
+            styled = (sub.get("styled") or {}).get("path")
+            if styled and not os.path.isfile(os.path.join(vp, styled)):
+                self.err(vp, f"the styled original {styled} of subtitle {sub.get('id')} is missing")
+        for font in pkg.get("fonts") or []:
+            if not os.path.isfile(os.path.join(vp, font.get("path") or "")):
+                self.err(vp, f"font {font.get('path')} is missing")
         master = (pkg.get("hls") or {}).get("master")
         if master and not os.path.isfile(os.path.join(vp, master)):
             self.err(vp, f"master playlist {master} is missing")

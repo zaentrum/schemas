@@ -372,6 +372,40 @@ def stray(folder, rel, text=SUBTITLE_TEXT):
         f.write(text)
 
 
+ASS_TEXT = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\n\n[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+            "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+            "MarginR, MarginV, Encoding\n"
+            "Style: Default,Example Sans,28,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,"
+            "20,20,20,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+            "Dialogue: 0,0:00:01.00,0:00:02.50,Default,,0,0,0,,{\\i1}Guten{\\i0} Tag\n")
+# A font file's first bytes, a TrueType font's, and nothing of a font after them: no check reads further.
+FONT_BYTES = b"\x00\x01\x00\x00" + bytes(60)
+
+
+def styled(root, at=None, font_at="subs/fonts/0.ttf", files=True, essence=True, fonts=True):
+    """The first episode's package as the packager writes one of a styled original: its first subtitle
+    keeping its ASS script beside its WebVTT copy (at, by default beside it in subs/), a font the
+    original carried in subs/fonts/ (font_at), both named in package.json, the essence saying so, and the
+    chain closed over them — files False writes neither file, fonts False names no font."""
+    vp = primary(episode(root, 1))
+    doc = json.load(open(pkg(vp)))
+    sub = doc["subtitles"][0]
+    at = at or os.path.splitext(sub["path"])[0] + ".ass"
+    sub["styled"] = {"path": at, "format": "ass"}
+    if fonts:
+        doc["fonts"] = [{"path": font_at, "format": "ttf", "names": ["Example Sans", "ExampleSans-Regular"],
+                         "sourceStreamIndex": None}]
+    doc["essence"].update(styledSubtitles=essence, fonts=essence and fonts)
+    if files:
+        for rel, data in [(at, ASS_TEXT.encode())] + ([(font_at, FONT_BYTES)] if fonts else []):
+            os.makedirs(os.path.dirname(os.path.join(vp, rel)), exist_ok=True)
+            with open(os.path.join(vp, rel), "wb") as f:
+                f.write(data)
+    write_json(pkg(vp), doc)
+    rechecksum(vp)
+
+
 def pending_extra(root):
     """The trailer's package said to be pending, which only a version's may be."""
     xp = next(x for x in (featurette(root), trailer(root), bts(root)) if os.path.isfile(pkg(x)))
@@ -833,6 +867,30 @@ CASES = [
     ("HDR10 static metadata in an SDR rendition", False, lambda r: edit(pkg(gone(r)), lambda d: d["renditions"]["video"][0].update(hdr10Metadata=True)), "video rendition v0 says its init segment carries HDR10 static metadata", []),
     ("HDR10 static metadata in a rendition that does not say its range", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].pop("videoRange")), "video rendition v0 says its init segment carries HDR10 static metadata", []),
     ("HDR10 static metadata that is no boolean", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].update(hdr10Metadata="yes")), "'yes' is not of type 'boolean'", []),
+    ("a styled original beside its WebVTT copy, and a font the original carried", True, styled, "OK", ["--check-checksums"]),
+    ("a styled original and a font the essence says nothing of", True, lambda r: styled(r, essence=False), "OK", ["--check-checksums"]),
+    ("a styled original that is not there", False, lambda r: styled(r, files=False, fonts=False),
+     "the styled original subs/0.ass of subtitle sub0 is missing", ["--check-media"]),
+    ("a font file that is not there", False, lambda r: (styled(r), os.remove(os.path.join(primary(episode(r, 1)), "subs", "fonts", "0.ttf"))),
+     "font subs/fonts/0.ttf missing", ["--check-media"]),
+    ("a styled original outside subs/", False, lambda r: styled(r, at="hls/0.ass"), "a package keeps it in its subs/", []),
+    ("a styled original that is the subtitle's own file", False, lambda r: styled(r, at="subs/1.vtt", files=False, fonts=False),
+     "the styled original of subtitle sub0 is subs/1.vtt", []),
+    ("a font file outside subs/", False, lambda r: styled(r, font_at="fonts/0.ttf"), "a font file is fonts/0.ttf", []),
+    ("a styled original in a format a record does not know", False,
+     lambda r: (styled(r), edit(pkg(primary(episode(r, 1))), lambda d: d["subtitles"][0]["styled"].update(format="ssa"))),
+     "'ass' was expected", []),
+    ("a font file of a format a record does not know", False,
+     lambda r: (styled(r), edit(pkg(primary(episode(r, 1))), lambda d: d["fonts"][0].update(format="pfb"))),
+     "is not one of", []),
+    ("an empty list of fonts", False, lambda r: (styled(r), edit(pkg(primary(episode(r, 1))), lambda d: d.update(fonts=[]))),
+     "should be non-empty", []),
+    ("styled subtitles in an essence whose package keeps no styled original", False,
+     lambda r: edit(pkg(primary(episode(r, 1))), lambda d: d["essence"].update(styledSubtitles=True)),
+     "the essence has styled subtitles, but no subtitle keeps its styled original", []),
+    ("fonts in an essence whose package lists no font file", False,
+     lambda r: edit(pkg(primary(episode(r, 1))), lambda d: d["essence"].update(fonts=True)),
+     "the essence has fonts, but the package lists no font file", []),
 
     # ---- the marks the version keeps
     ("chapters out of order", False, lambda r: edit(ver(gone(r)), lambda d: d["chapters"].reverse()), "chapters are not in timeline order", []),

@@ -234,7 +234,8 @@ movies/<aa>/<itemId>/
   versions/<versionId>/
     version.json                   edition, presentation, marks, sources — written once
     original.mkv                   the original, from the moment it is taken in until it is deleted
-    hls/  subs/  trickplay/        the package
+    hls/  subs/  trickplay/        the package; subs/ holds a styled subtitle's ASS beside its WebVTT
+                                   copy, and in subs/fonts/ the fonts the original carried
     checksums.sha256               version.json and every package file, sha256sum -c format
     package.json                   renditions, losses, and the hash of checksums.sha256
     .complete                      the hash of package.json: the version is finished
@@ -905,6 +906,26 @@ package that never finished, a version's or an extra's, and an extra its writer 
 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
+
+- **2026-11-02** — styled subtitles as they are, with their fonts. A package carried every ASS/SSA
+  subtitle as a WebVTT copy alone and none of the fonts the original carried, so its essence had no
+  `styledSubtitles` and no `fonts`, and the deletion gate kept every original that had them. The
+  packager now keeps each styled subtitle's script beside its WebVTT copy, its text and styles as the
+  stream or the file beside the original had them, and takes each font attachment out of the original
+  into the package's `subs/fonts/`, its bytes as they were. A subtitle of `package.json` gains `styled`
+  — `{path, format: "ass"}`, the script in `subs/` — and the package gains `fonts`, one entry per font
+  file: its `path`, the `format` its bytes are (`ttf`, `otf`, `ttc`, `woff`, `woff2`, or null), the
+  `names` a style or an override tag asks for it by (its family, full and PostScript names) and the
+  original's stream it was taken from (`sourceStreamIndex`); both are left out where there are none, so
+  a reader that shows the WebVTT copy sees the package as before. `libv2_records.py` (10) keeps them in
+  the record (`styled_original`, `font_file`), and `package_essence` gives the package styled subtitles
+  and fonts when it carries them for every stream of its source that has them — each styled subtitle
+  stream by a subtitle made from it that keeps its original, each font attachment by a font file taken
+  from it, by `sourceStreamIndex` — so a styled track kept as WebVTT alone, or a font left out, is still
+  named by the deletion gate. The validator refuses a styled original or a font file outside `subs/`,
+  and an essence that has styled subtitles or fonts the package lists none of; it and the media check
+  find every one the package names there. The fields are new and optional, the `$id`s are the
+  published ones, and every record and tree written before validates as it is.
 
 - **2026-11-01 (b)** — a title that says its track is no commentary. A source's audio or subtitle stream
   titled "No commentary", "without the director's commentary", "Kommentarlos", "ohne Kommentar",

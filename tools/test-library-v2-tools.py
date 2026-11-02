@@ -914,6 +914,87 @@ def test_records(t):
          (True, False, True, True, False, False, True, False, False, False, False,
           [sorted(rec.video_rendition(v())), sorted([*rec.video_rendition(v()), "hdr10Metadata"]),
            sorted(rec.video_rendition(v()))]))
+
+    # styled subtitles and fonts (10): a subtitle that keeps its styled original names it, the package lists
+    # the font files it took out of the original, and its essence has them when it carries them for every
+    # stream of the source that has them — by the stream each was made from — or, of a source whose streams
+    # are unknown, when it carries any; a manifest without them gives the record it gave
+    styled_probe = {"format": {"format_name": "matroska,webm", "duration": "60.0"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 1080, "pix_fmt": "yuv420p10le"},
+        {"index": 1, "codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"language": "jpn"}},
+        {"index": 2, "codec_type": "subtitle", "codec_name": "ass", "tags": {"language": "eng"}},
+        {"index": 3, "codec_type": "subtitle", "codec_name": "ass", "tags": {"language": "eng", "title": "Signs"}},
+        {"index": 4, "codec_type": "attachment", "codec_name": "ttf",
+         "tags": {"filename": "Example Sans.ttf", "mimetype": "application/x-truetype-font"}},
+        {"index": 5, "codec_type": "attachment", "tags": {"filename": "Example Serif.otf", "mimetype": "font/otf"}},
+        {"index": 6, "codec_type": "attachment", "tags": {"filename": "cover.webp", "mimetype": "image/webp"}}]}
+    styled_source = rec.probed(styled_probe)
+    styled_renditions = {"video": [rec.video_rendition({"codec": "hvc1.2.4.L120.B0", "height": 1080})],
+                         "audio": [rec.audio_rendition({"language": "jpn", "channels": 2, "default": True}, 0)]}
+    sub = lambda n, styled=True, **kw: {"id": f"sub{n}", "path": f"subs/{n}.vtt", "language": "eng", "format": "webvtt",
+                                        "sourceStreamIndex": n + 2,
+                                        **({"styled": {"path": f"subs/{n}.ass", "format": "ass"}} if styled else {}),
+                                        **kw}
+    font = lambda n, index, fmt="ttf", names=("Example Sans",): {"path": f"subs/fonts/{n}.{fmt or 'bin'}", "format": fmt,
+                                                                   "names": list(names), "sourceStreamIndex": index}
+    styled_essence = lambda subs, fonts, streams=styled_source["streams"]: rec.package_essence(
+        {"renditions": styled_renditions, "subtitles": [rec.subtitle_rendition(s, i) for i, s in enumerate(subs)],
+         "fonts": fonts}, styled_source["essence"], streams)
+    gate = lambda subs, fonts, streams=styled_source["streams"]: [
+        x for x in rec.deletion_gate([styled_source["essence"]], styled_essence(subs, fonts, streams))
+        if x in ("styledSubtitles", "fonts")]
+    t.eq("an original whose subtitles are styled and that carries fonts has both in its essence, an image attachment "
+         "no font",
+         ({k: styled_source["essence"][k] for k in ("styledSubtitles", "fonts")},
+          [x["role"] for x in styled_source["streams"] if x["type"] == "attachment"]),
+         ({"styledSubtitles": True, "fonts": True}, ["font", "font", "cover"]))
+    t.eq("a package that keeps every styled track's original and every font of the original carries both, and the "
+         "gate names neither; one that keeps a styled track as WebVTT alone, or leaves a font out, carries none of "
+         "them, and the gate names it",
+         (gate([sub(0), sub(1)], [font(0, 4), font(1, 5, "otf")]), gate([sub(0), sub(1, styled=False)],
+                                                                        [font(0, 4), font(1, 5, "otf")]),
+          gate([sub(0), sub(1)], [font(0, 4)]), gate([sub(0, styled=False), sub(1, styled=False)], []),
+          gate([sub(0), sub(1)], [font(0, 4), font(1, 5, None, ())])),
+         ([], ["styledSubtitles"], ["fonts"], ["fonts", "styledSubtitles"], []))
+    t.eq("a styled original or a font made from no stream of the original counts for none of them, and of a source "
+         "whose streams are unknown any carries them",
+         (gate([sub(0), sub(1, sourceStreamIndex=None)], [font(0, 4), font(1, None)]),
+          {k: styled_essence([sub(0)], [font(0, 9)], None)[k] for k in ("styledSubtitles", "fonts")}),
+         (["fonts", "styledSubtitles"], {"styledSubtitles": True, "fonts": True}))
+    t.eq("a subtitle's record keeps its styled original as {path, format}, and nothing that is none",
+         [rec.subtitle_rendition(s, 0).get("styled") for s in (
+             sub(0), sub(0, styled=False), {"path": "subs/0.vtt", "styled": {"path": "subs/0.ass", "format": "srt"}},
+             {"path": "subs/0.vtt", "styled": {"path": " ", "format": "ass"}}, {"path": "subs/0.vtt", "styled": "subs/0.ass"},
+             {"path": "subs/0.vtt", "styled": {"path": "subs/0.ass", "format": "ass", "extra": 1}})],
+         [{"path": "subs/0.ass", "format": "ass"}, None, None, None, None, {"path": "subs/0.ass", "format": "ass"}])
+    t.eq("a font file's record keeps its path, a format it knows, each name once and the stream it was taken from",
+         [rec.font_file(f) for f in (font(0, 4, names=("Example Sans", "Example Sans", " ", "ExampleSans-Regular")),
+                                     {"path": "subs/fonts/1.bin", "format": "exe", "sourceStreamIndex": "5"},
+                                     {"format": "ttf"}, "subs/fonts/2.ttf")],
+         [{"path": "subs/fonts/0.ttf", "format": "ttf", "names": ["Example Sans", "ExampleSans-Regular"],
+           "sourceStreamIndex": 4},
+          {"path": "subs/fonts/1.bin", "format": None, "names": [], "sourceStreamIndex": 5}, None, None])
+    styled_manifest = {"durationMs": 60000, "renditions": {"video": [{"id": "v0", "dir": "hls/v0", "codec": "hvc1.2.4.L120.B0",
+                                                                      "height": 1080}],
+                                                           "audio": [{"id": "a0", "dir": "hls/a0", "codec": "mp4a.40.2",
+                                                                      "language": "jpn", "channels": 2, "default": True}]},
+                       "subtitles": [sub(0), sub(1)], "fonts": [font(0, 4), font(1, 5, "otf", ("Example Serif",))]}
+    styled_record = {"streams": styled_source["streams"], "essence": styled_source["essence"]}
+    kept, _ = rec.package_record("p", styled_manifest, [], source=styled_record)
+    bare, _ = rec.package_record("p", dict(styled_manifest, subtitles=[sub(0, styled=False), sub(1, styled=False)],
+                                           fonts=[]), [], source=styled_record)
+    t.eq("a package record lists its fonts after its subtitles and names each styled original, its essence has both "
+         "and no loss of them; one that carries neither lists no fonts at all, and loses the styling and the fonts",
+         (list(kept)[list(kept).index("subtitles"):list(kept).index("subtitles") + 3],
+          [s.get("styled") for s in kept["subtitles"]], [f["path"] for f in kept["fonts"]],
+          (kept["essence"]["styledSubtitles"], kept["essence"]["fonts"]), [x["kind"] for x in kept["fidelity"]["losses"]],
+          "fonts" in bare, (bare["essence"]["styledSubtitles"], bare["essence"]["fonts"]),
+          [x["kind"] for x in bare["fidelity"]["losses"]]),
+         (["subtitles", "fonts", "trickplay"],
+          [{"path": "subs/0.ass", "format": "ass"}, {"path": "subs/1.ass", "format": "ass"}],
+          ["subs/fonts/0.ttf", "subs/fonts/1.otf"], (True, True), [], False, (False, False),
+          ["subtitle-styling", "attachments-dropped"]))
+
     probe = {"format": {"filename": "/media/Example Film (2024)/Example Film (2024).mkv", "duration": "1.0",
                         "tags": {"TITLE": "Example.Film.2024", "title": "Example Film", "Title": "x", "ENCODER": "e",
                                  "subtitle": "kept"}},
@@ -5976,6 +6057,17 @@ def test_media_check(t):
     case("a subtitle's HLS rendition that is gone", False,
          lambda r: names(r, subtitles=[{"id": "sub0", "hls": "hls/s9"}]),
          "the HLS rendition hls/s9 of subtitle sub0 is missing")
+    case("a subtitle's styled original that is gone", False,
+         lambda r: names(r, subtitles=[{"id": "sub0", "styled": {"path": "subs/9.ass", "format": "ass"}}]),
+         "the styled original subs/9.ass of subtitle sub0 is missing")
+
+    def fonts_gone(r):
+        vp = package_version(r)
+        doc = jload(os.path.join(vp, "package.json"))
+        doc["fonts"] = [{"path": "subs/fonts/0.ttf", "format": "ttf", "names": [], "sourceStreamIndex": None}]
+        jwrite(os.path.join(vp, "package.json"), doc)
+        close(vp)
+    case("a font file the package names that is gone", False, fonts_gone, "font subs/fonts/0.ttf is missing")
     case("a master playlist that is gone", False,
          lambda r: names(r, hls={"master": "hls/gone.m3u8", "segmentSeconds": 6, "audioGroups": ["audio"],
                                  "subtitleGroup": None}),

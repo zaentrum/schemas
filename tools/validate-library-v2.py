@@ -950,6 +950,16 @@ class Checker:
                 self.err(where, f"subtitle {x['id']} is flagged forced but its purpose is {x['purpose']}")
             if x.get("default") and (x.get("forced") or x.get("purpose") in ("forced", "signs-songs")):
                 self.err(where, f"subtitle {x['id']} is a forced track flagged default: a reader would open with it instead of no subtitles")
+        # a styled original and a font file are files of the package: in its subs/, which its checksums cover
+        for what, path in [(f"the styled original of subtitle {x['id']}", x["styled"]["path"]) for x in subs
+                           if x.get("styled")] + [("a font file", f["path"]) for f in pkg.get("fonts") or []]:
+            if not path.startswith("subs/") or path in {x["path"] for x in subs}:
+                self.err(where, f"{what} is {path}: a package keeps it in its subs/, a file of its own")
+        essence = pkg.get("essence") or {}
+        if essence.get("styledSubtitles") and not any(x.get("styled") for x in subs):
+            self.err(where, "the essence has styled subtitles, but no subtitle keeps its styled original")
+        if essence.get("fonts") and not pkg.get("fonts"):
+            self.err(where, "the essence has fonts, but the package lists no font file")
         hls = pkg.get("hls")
         if hls:
             for a in audio + surround:
@@ -1112,9 +1122,9 @@ class Checker:
                                                 f"name says: changed since it was attached, or named for other bytes")
 
     def playable(self, vp, pkg):
-        """Every rendition folder — the 5.1 companions' too — subtitle, subtitle HLS rendition, master
-        playlist and trickplay sheet the package in vp names is there, and the trickplay cues cover its
-        duration."""
+        """Every rendition folder — the 5.1 companions' too — subtitle, subtitle HLS rendition and styled
+        original, font file, master playlist and trickplay sheet the package in vp names is there, and
+        the trickplay cues cover its duration."""
         where = os.path.join(vp, "package.json")
         ren = pkg["renditions"]
         if not ren["video"]:
@@ -1127,6 +1137,11 @@ class Checker:
                 self.err(where, f"subtitle {sub['path']} missing")
             if sub.get("hls") and not os.path.isdir(os.path.join(vp, sub["hls"])):
                 self.err(where, f"the HLS rendition {sub['hls']} of subtitle {sub['id']} is missing")
+            if sub.get("styled") and not os.path.isfile(os.path.join(vp, sub["styled"]["path"])):
+                self.err(where, f"the styled original {sub['styled']['path']} of subtitle {sub['id']} is missing")
+        for font in pkg.get("fonts") or []:
+            if not os.path.isfile(os.path.join(vp, font["path"])):
+                self.err(where, f"font {font['path']} missing")
         if pkg.get("hls") and not os.path.isfile(os.path.join(vp, pkg["hls"]["master"])):
             self.err(where, f"master playlist {pkg['hls']['master']} missing")
         tp = pkg.get("trickplay")
