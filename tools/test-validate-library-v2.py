@@ -406,6 +406,47 @@ def styled(root, at=None, font_at="subs/fonts/0.ttf", files=True, essence=True, 
     rechecksum(vp)
 
 
+def styled_source(root, styled=(), fonts=0):
+    """The first episode's source record with its subtitle streams of the indices styled made ASS scripts,
+    and fonts font attachments more after its last stream, its essence saying both."""
+    def change(d):
+        for x in d["streams"]:
+            if x["index"] in styled:
+                x.update(codec="ass", styled=True)
+        for _ in range(fonts):
+            d["streams"].append({"index": max(x["index"] for x in d["streams"]) + 1, "codec": "ttf", "language": None,
+                                 "languageRaw": None, "title": None, "type": "attachment", "filename": "Example Sans.ttf",
+                                 "mimetype": "font/ttf", "role": "font"})
+        d["essence"].update(styledSubtitles=bool(styled) or d["essence"].get("styledSubtitles", False),
+                            fonts=bool(fonts) or d["essence"].get("fonts", False))
+    edit(episode_source(root, 1), change)
+
+
+def carried(root, styled=(), fonts=()):
+    """The first episode's package with a styled original beside each subtitle made from a stream of the
+    indices styled, a font file taken from each attachment of the indices fonts, the essence saying both,
+    and the chain closed over them."""
+    vp = primary(episode(root, 1))
+    doc = json.load(open(pkg(vp)))
+    files = []
+    for x in doc["subtitles"]:
+        if x.get("sourceStreamIndex") in styled:
+            x["styled"] = {"path": os.path.splitext(x["path"])[0] + ".ass", "format": "ass"}
+            files.append((x["styled"]["path"], ASS_TEXT.encode()))
+    doc["fonts"] = [{"path": f"subs/fonts/{n}.ttf", "format": "ttf", "names": ["Example Sans"], "sourceStreamIndex": i}
+                    for n, i in enumerate(fonts)]
+    files += [(f["path"], FONT_BYTES) for f in doc["fonts"]]
+    if not doc["fonts"]:
+        del doc["fonts"]
+    doc["essence"].update(styledSubtitles=bool(styled), fonts=bool(fonts))
+    for rel, data in files:
+        os.makedirs(os.path.dirname(os.path.join(vp, rel)), exist_ok=True)
+        with open(os.path.join(vp, rel), "wb") as f:
+            f.write(data)
+    write_json(pkg(vp), doc)
+    rechecksum(vp)
+
+
 def attachment(root, **fields):
     """The movie's probed source with one more stream, an attachment: fields say its name, MIME type,
     role and signature."""
@@ -901,6 +942,21 @@ CASES = [
     ("fonts in an essence whose package lists no font file", False,
      lambda r: edit(pkg(primary(episode(r, 1))), lambda d: d["essence"].update(fonts=True)),
      "the essence has fonts, but the package lists no font file", []),
+    # per stream: the essence has them when the package carries them for every stream of its source that has them
+    ("every styled stream and every font of the source carried", True,
+     lambda r: (styled_source(r, styled=(3, 4), fonts=2), carried(r, styled=(3, 4), fonts=(6, 7))), "OK", []),
+    ("a styled stream of the source whose package keeps no styled original of it", False,
+     lambda r: (styled_source(r, styled=(3, 4)), carried(r, styled=(3,))),
+     "the essence has styled subtitles, but the styled subtitle stream(s) 4 of the source keep no styled original", []),
+    ("a font of the source the package carries no file of", False,
+     lambda r: (styled_source(r, fonts=2), carried(r, fonts=(7,))),
+     "the essence has fonts, but the font attachment(s) 6 of the source are no font file of the package", []),
+    ("a styled original its package's checksums do not list", False, lambda r: styled(r, files=False, fonts=False),
+     "the styled original of subtitle sub0 is subs/0.ass, which is no file of the package", []),
+    ("a font file its package's checksums do not list", False,
+     lambda r: (styled(r), os.remove(os.path.join(primary(episode(r, 1)), "subs", "fonts", "0.ttf")),
+                rechecksum(primary(episode(r, 1)))),
+     "a font file is subs/fonts/0.ttf, which is no file of the package", []),
     ("an attachment that is a font by its OpenType MIME type alone", True,
      lambda r: attachment(r, mimetype="application/vnd.ms-opentype", role="font"), "OK", []),
     ("an attachment that is a font by its first bytes alone, saying so", True,

@@ -908,7 +908,8 @@ class Checker:
             self.note(vp, f"a package that never finished: no .complete beside it; {SWEEP}")
         if pkg is not None:
             self.counts["packages"] += 1
-            self.package(vp, v, pkg)
+            made_from = [sources[s] for s in v["sourceIds"] if s in sources]
+            self.package(vp, v, pkg, streams=made_from[0].get("streams") or None if len(made_from) == 1 else None)
             self.from_sidecars(vp, v, pkg, sources)
             if marker:
                 self.chain(vp)
@@ -938,8 +939,9 @@ class Checker:
             self.media(vp, v, pkg, sources, gone, whole)
         return v, pkg
 
-    def package(self, vp, v, pkg, what="version"):
-        """A package and the record it was made for, v: a version's or an extra's."""
+    def package(self, vp, v, pkg, what="version", streams=None):
+        """A package and the record it was made for, v: a version's or an extra's. streams are the streams
+        of the one record it was made from, as that record keeps them — None where that can't be told."""
         where = os.path.join(vp, "package.json")
         if pkg["fidelity"]["lossless"] != (not pkg["fidelity"]["losses"]):
             self.err(where, "fidelity.lossless must be true exactly when losses is empty")
@@ -975,16 +977,37 @@ class Checker:
                 self.err(where, f"subtitle {x['id']} is flagged forced but its purpose is {x['purpose']}")
             if x.get("default") and (x.get("forced") or x.get("purpose") in ("forced", "signs-songs")):
                 self.err(where, f"subtitle {x['id']} is a forced track flagged default: a reader would open with it instead of no subtitles")
-        # a styled original and a font file are files of the package: in its subs/, which its checksums cover
-        for what, path in [(f"the styled original of subtitle {x['id']}", x["styled"]["path"]) for x in subs
-                           if x.get("styled")] + [("a font file", f["path"]) for f in pkg.get("fonts") or []]:
+        # a styled original and a font file are files of the package: in its subs/, each one its checksums list
+        cs = pkg["checksums"]
+        sums = os.path.join(vp, cs["file"])
+        own = set(read_checksums(sums)) if not cs.get("pending") and os.path.isfile(sums) else None
+        for named, path in [(f"the styled original of subtitle {x['id']}", x["styled"]["path"]) for x in subs
+                            if x.get("styled")] + [("a font file", f["path"]) for f in pkg.get("fonts") or []]:
             if not path.startswith("subs/") or path in {x["path"] for x in subs}:
-                self.err(where, f"{what} is {path}: a package keeps it in its subs/, a file of its own")
+                self.err(where, f"{named} is {path}: a package keeps it in its subs/, a file of its own")
+            elif own is not None and path not in own:
+                self.err(where, f"{named} is {path}, which is no file of the package: {cs['file']} lists none of "
+                                f"that name")
+        # the essence has them when the package carries them for every stream of its source that has them,
+        # by the stream each was made from (libv2_records.package_essence); of a source whose streams can't
+        # be told, when it carries any
         essence = pkg.get("essence") or {}
-        if essence.get("styledSubtitles") and not any(x.get("styled") for x in subs):
-            self.err(where, "the essence has styled subtitles, but no subtitle keeps its styled original")
-        if essence.get("fonts") and not pkg.get("fonts"):
-            self.err(where, "the essence has fonts, but the package lists no font file")
+        styled = {x.get("sourceStreamIndex") for x in subs if x.get("styled")}
+        fonts = {f.get("sourceStreamIndex") for f in pkg.get("fonts") or []}
+        for flag, taken, has, said in (
+                ("styledSubtitles", styled, lambda x: x.get("type") == "subtitle" and x.get("styled"),
+                 "styled subtitle stream(s) {} of the source keep no styled original in the package"),
+                ("fonts", fonts, lambda x: x.get("type") == "attachment" and x.get("role") == "font",
+                 "font attachment(s) {} of the source are no font file of the package")):
+            if not essence.get(flag):
+                continue
+            left = [x.get("index") for x in streams or [] if has(x) and x.get("index") not in taken]
+            if not taken:
+                self.err(where, "the essence has styled subtitles, but no subtitle keeps its styled original"
+                         if flag == "styledSubtitles" else "the essence has fonts, but the package lists no font file")
+            elif left:
+                self.err(where, f"the essence has {'styled subtitles' if flag == 'styledSubtitles' else 'fonts'}, "
+                                f"but the " + said.format(", ".join(str(i) for i in left)))
         hls = pkg.get("hls")
         if hls:
             for a in audio + surround:
@@ -1294,7 +1317,7 @@ class Checker:
             pkg, ok = self.document("package", os.path.join(xp, "package.json"))
             pkg = pkg if ok else None
             if pkg is not None:
-                self.package(xp, x, pkg, what="extra")
+                self.package(xp, x, pkg, what="extra", streams=x.get("streams") or None)
                 if pkg.get("trailers"):
                     self.err(os.path.join(xp, "package.json"), "an extra's package lists no trailers: a trailer "
                                                                "that is a file of its own is an extra of kind trailer")

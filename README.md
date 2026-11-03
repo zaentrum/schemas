@@ -937,14 +937,22 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   signature (`attachment_role`; `attachment_heads` reads them from the original through a pipe, and the
   writers pass them to `source_record` and `extra_record` as `heads`): the stream of such a font says what
   they are (`signature`, new and optional in `source.schema.json`), and the validator holds a stream's role
-  to its MIME type, its name and its signature. A source counts every font so, and the packager carries
+  to its MIME type, its name and its signature. `attachment_heads` waits for those bytes no longer than
+  `HEAD_TIMEOUT` (120 s), killing an ffmpeg that gives none, and raises `AttachmentTimeout`: what the
+  attachment is can't be told then, so `library-v2-from-catalog.py` records such a file as not probed,
+  with a note, and the packager records none of it that time. A source counts every font so, and the packager carries
   every font a source counts. `libv2_records.py` (10) keeps them in
   the record (`styled_original`, `font_file`), and `package_essence` gives the package styled subtitles
   and fonts when it carries them for every stream of its source that has them — each styled subtitle
   stream by a subtitle made from it that keeps its original, each font attachment by a font file taken
   from it, by `sourceStreamIndex` — so a styled track kept as WebVTT alone, or a font left out, is still
-  named by the deletion gate. The validator refuses a styled original or a font file outside `subs/`,
-  and an essence that has styled subtitles or fonts the package lists none of; it and the media check
+  named by the deletion gate. A styled original or a font file the manifest names counts only when it
+  is one of the package's own files, those its checksums list; one that is none is left out of the
+  record, with a note. The validator refuses a styled original or a font file outside `subs/` or that
+  the package's checksums don't list, and an essence that has styled subtitles or fonts the package
+  doesn't carry for every stream of its source that has them, by the stream each was made from (of a
+  source whose streams can't be told, an essence that has them while the package lists none); it and
+  the media check
   find every one the package names there. `library-v2-rebuild.py` gives a subtitle row the script
   beside it (`styledPath`, `styledFormat`) and an item row the fonts of the package that plays
   (`fontAssets`), as katalog-manager's migration 053 keeps them, and `--compare` compares them where the
