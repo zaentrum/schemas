@@ -984,9 +984,13 @@ def test_records(t):
                                                                       "language": "jpn", "channels": 2, "default": True}]},
                        "subtitles": [sub(0), sub(1)], "fonts": [font(0, 4), font(1, 5, "otf", ("Example Serif",))]}
     styled_record = {"streams": styled_source["streams"], "essence": styled_source["essence"]}
-    kept, _ = rec.package_record("p", styled_manifest, [], source=styled_record)
-    bare, _ = rec.package_record("p", dict(styled_manifest, subtitles=[sub(0, styled=False), sub(1, styled=False)],
-                                           fonts=[]), [], source=styled_record)
+    # the files of a package that keeps every file its manifest names, as its checksums list them
+    own = lambda man: [(p, "0" * 64, 1) for p in [x["path"] for x in man["subtitles"]]
+                       + [x["styled"]["path"] for x in man["subtitles"] if x.get("styled")]
+                       + [f["path"] for f in man.get("fonts") or []]]
+    kept, _ = rec.package_record("p", styled_manifest, own(styled_manifest), source=styled_record)
+    bare_manifest = dict(styled_manifest, subtitles=[sub(0, styled=False), sub(1, styled=False)], fonts=[])
+    bare, _ = rec.package_record("p", bare_manifest, own(bare_manifest), source=styled_record)
     t.eq("a package record lists its fonts after its subtitles and names each styled original, its essence has both "
          "and no loss of them; one that carries neither lists no fonts at all, and loses the styling and the fonts",
          (list(kept)[list(kept).index("subtitles"):list(kept).index("subtitles") + 3],
@@ -998,6 +1002,29 @@ def test_records(t):
           [{"path": "subs/0.ass", "format": "ass"}, {"path": "subs/1.ass", "format": "ass"}],
           ["subs/fonts/0.ttf", "subs/fonts/1.otf"], (True, True), [], False, (False, False),
           ["subtitle-styling", "attachments-dropped"]))
+
+    # through package_record, as the packager writes a package's record: of two styled tracks and two fonts, a
+    # package that keeps one of the two tracks' originals, or one of the two fonts, carries none of them
+    def through(subs, fonts, listed=None):
+        man = dict(styled_manifest, subtitles=subs, fonts=fonts)
+        doc, notes = rec.package_record("p", man, own(man) if listed is None else listed, source=styled_record)
+        return (doc["essence"]["styledSubtitles"], doc["essence"]["fonts"]), notes, doc
+    t.eq("a package record's essence has styled subtitles and fonts only when the package carries every styled track's "
+         "original and every font of the source, by the stream each was made from: one of two tracks or one of two "
+         "fonts carries neither",
+         [through(subs, fonts)[0] for subs, fonts in (
+             ([sub(0), sub(1)], [font(0, 4), font(1, 5, "otf")]), ([sub(0), sub(1, styled=False)], [font(0, 4), font(1, 5, "otf")]),
+             ([sub(0, styled=False), sub(1)], [font(0, 4), font(1, 5, "otf")]), ([sub(0), sub(1)], [font(0, 4)]),
+             ([sub(0), sub(1)], [font(1, 5, "otf")]), ([sub(0), sub(1, styled=False)], [font(1, 5, "otf")]))],
+         [(True, True), (False, True), (False, True), (True, False), (True, False), (False, False)])
+    unlisted = [x for x in own(styled_manifest) if x[0] not in ("subs/1.ass", "subs/fonts/1.otf")]
+    essence, notes, doc = through([sub(0), sub(1)], [font(0, 4), font(1, 5, "otf", ("Example Serif",))], unlisted)
+    t.eq("a styled original or a font file the manifest names that is none of the package's files, as its checksums "
+         "list them, is no styling or font the package carries: left out of the record, with a note",
+         (essence, [x.get("styled") for x in doc["subtitles"]], [f["path"] for f in doc["fonts"]], notes),
+         ((False, False), [{"path": "subs/0.ass", "format": "ass"}, None], ["subs/fonts/0.ttf"],
+          ["subtitle sub1's styled original subs/1.ass is no file of the package; left out",
+           "font file subs/fonts/1.otf is no file of the package; left out"]))
 
     # what a font is (10): a MIME type in any of the words a font's carries, a font's name, or — where neither
     # says so and no picture's MIME type makes it a cover — its first bytes, a font's signature, which its
@@ -1067,6 +1094,34 @@ def test_records(t):
         t.eq("the first bytes are read of the attachments the probe gives no role by itself, no further than a "
              "signature needs, through a pipe; one ffmpeg can't read, or a file without ffmpeg, gives none",
              (heads, none), ({2: b"OTTO" + bytes(12), 6: b"plain text, no f"}, {}))
+        with open(fake, "w") as f:  # gives nothing, ever: a storage that stalls
+            f.write(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
+        timeout, rec.HEAD_TIMEOUT = rec.HEAD_TIMEOUT, 1
+        started = time.monotonic()
+        try:
+            os.environ["PATH"] = bin_dir + os.pathsep + path
+            rec.attachment_heads("/nowhere/original.mkv", probe)
+            stalled = None
+        except rec.AttachmentTimeout as e:
+            stalled = str(e)
+        finally:
+            os.environ["PATH"] = path
+            rec.HEAD_TIMEOUT = timeout
+        t.ok("an ffmpeg that gives no bytes within the time is killed, and the read fails, saying which attachment of "
+             "which file: what it is can't be told", stalled == "ffmpeg gave no first bytes of attachment 2 of "
+             "/nowhere/original.mkv within 1 s" and time.monotonic() - started < 30, stalled)
+        cat = load_tool(FROM_CATALOG)
+        noted = []
+        stub = type("Stub", (), {"note": lambda self, iid, msg: noted.append((iid, msg))})()
+        heads_of, cat.attachment_heads = cat.attachment_heads, lambda p, pr: (_ for _ in ()).throw(
+            cat.AttachmentTimeout("ffmpeg gave no first bytes of attachment 2 of x.mkv within 1 s"))
+        try:
+            t.eq("so library-v2-from-catalog.py records such a file as not probed, with a note, rather than one that may "
+                 "count a font as none", (cat.Build.heads_of(stub, "i1", "x.mkv", "x.mkv", {"streams": []}), noted),
+                 ((None, None), [("i1", "x.mkv: ffmpeg gave no first bytes of attachment 2 of x.mkv within 1 s; it is "
+                                         "recorded as not probed")]))
+        finally:
+            cat.attachment_heads = heads_of
 
     probe = {"format": {"filename": "/media/Example Film (2024)/Example Film (2024).mkv", "duration": "1.0",
                         "tags": {"TITLE": "Example.Film.2024", "title": "Example Film", "Title": "x", "ENCODER": "e",

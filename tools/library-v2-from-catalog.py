@@ -263,7 +263,8 @@ import argparse, base64, datetime, hashlib, json, os, re, shutil, sys
 
 try:  # the record logic the packager writes the same records with: beside this tool, or piped in front of it
     from libv2_records import (
-        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, attachment_heads, chapter_marks, checksums, complete,
+        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, AttachmentTimeout, attachment_heads, chapter_marks, checksums,
+        complete,
         deletion_gate, did,
         external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
         library_original_name, listdir, naming, num, package_files, package_listing, package_record, peak_bandwidth,
@@ -451,6 +452,19 @@ class Build:
 
     def note(self, item_id, msg):
         self.notes.append(f"{item_id}: {msg}")
+
+    def heads_of(self, item_id, name, path, probe):
+        """The probe of the file at path with the first bytes of the attachments it gives no role by itself
+        (attachment_heads): (probe, heads). A file whose attachments ffmpeg gave no bytes of in time is
+        recorded as not probed, (None, None), with a note: what they are can't be told, and a record that
+        counted a font as none would let it go with the file."""
+        if not probe:
+            return probe, None
+        try:
+            return probe, attachment_heads(path, probe)
+        except AttachmentTimeout as e:
+            self.note(item_id, f"{name}: {e}; it is recorded as not probed")
+            return None, None
 
     def staging_order(self, row):
         """The order the rows are written in: series, movies, episodes, each by id — a series' folder
@@ -731,7 +745,7 @@ class Build:
         name = os.path.basename(path)
         rel = os.path.relpath(path, self.a.media) if path.startswith(os.path.abspath(self.a.media) + os.sep) \
             else str(asset["path"]).lstrip("/")
-        probe = ffprobe(path) if self.probe_version else None
+        probe, heads = self.heads_of(row["id"], name, path, ffprobe(path) if self.probe_version else None)
         if probe:
             self.counts["probed"] += 1
         else:
@@ -739,7 +753,7 @@ class Build:
         rec, raw = source_record(did(row["id"], "source", name), name, os.path.getsize(path), taken_at=self.as_of,
                                  taken_by="library-v2-from-catalog", library_path=rel, qh1=qh1(path),
                                  mtime=ts_of_mtime(path), probe=probe, probe_version=self.probe_version,
-                                 heads=attachment_heads(path, probe) if probe else None)
+                                 heads=heads)
         return {"record": rec, "probe": raw, "chapters": probe_chapters(probe), "path": path}, None
 
     # -------------------------------------------------- versions and packages
@@ -843,7 +857,8 @@ class Build:
             kept = library_original_name(name)
             digest, size = sha_file(path), os.path.getsize(path)
             site, key = link_of(t)
-            probe = ffprobe(path) if self.probe_version else None
+            probe, heads = self.heads_of(row["id"], f"trailer {name}", path,
+                                         ffprobe(path) if self.probe_version else None)
             if probe:
                 self.counts["probed"] += 1
             else:
@@ -856,7 +871,7 @@ class Build:
                                probe=probe, probe_version=self.probe_version, original_files=[kept],
                                originals=[{"name": kept, "sizeBytes": size,
                                            "fixity": {"qh1": qh1(path), "sha256": digest, "sha256At": self.as_of}}],
-                               heads=attachment_heads(path, probe) if probe else None)
+                               heads=heads)
             record = json_bytes(doc)
             self.w.write(os.path.join(xp, "extra.json"), record)
             if not self.w.place(path, os.path.join(xp, kept), self.a.media_mode):
@@ -1646,7 +1661,8 @@ class Platform(Build):
         # sources/<sourceId>/: the probe, a copy of each subtitle file that came with the original — in the order
         # the catalog lists them, under the name the record logic gives it, and nothing else that sat beside it —
         # the record
-        probe = self.probe_of(original) if original and self.probe_version else None
+        probe, heads = self.heads_of(iid, name, original,
+                                     self.probe_of(original) if original and self.probe_version else None)
         if probe:
             self.counts["probed"] += 1
         elif original:
@@ -1659,8 +1675,7 @@ class Platform(Build):
                                  library_path=library_path, qh1=qh1(original) if original else None,
                                  mtime=ts_of_mtime(original) if original else None,
                                  probe=probe, probe_version=self.probe_version, sidecars=entries,
-                                 note=None if original else GONE, covers=covers,
-                                 heads=attachment_heads(original, probe) if probe else None)
+                                 note=None if original else GONE, covers=covers, heads=heads)
         files["source.json"] = json_bytes(rec)
         if raw is not None:
             files["ffprobe.json"] = raw
@@ -1849,7 +1864,8 @@ class Platform(Build):
             titles = {k: text(v) for k, v in (x.get("localizedTitles") or {}).items()
                       if LANGUAGE_RE.match(str(k)) and text(v)}
             language = text(x.get("language"))
-            probe = ffprobe(local) if local and self.probe_version else None
+            probe, heads = self.heads_of(row["id"], f"extra {xid}", local,
+                                         ffprobe(local) if local and self.probe_version else None)
             if probe:
                 self.counts["probed"] += 1
             doc = extra_record(xid, created_at=self.moment(xid, "createdAt", x.get("createdAt")) or self.as_of,
@@ -1857,8 +1873,7 @@ class Platform(Build):
                                title=text(x.get("title")), localized_titles=titles,
                                language=language if language and LANGUAGE_RE.match(language) else None,
                                season_number=season, origin=origin, probe=probe, probe_version=self.probe_version,
-                               probed_at=self.as_of, packaged_from=made_from,
-                               heads=attachment_heads(local, probe) if probe else None)
+                               probed_at=self.as_of, packaged_from=made_from, heads=heads)
             record = json_bytes(doc)
             xp = os.path.join(d, "extras", xid)
             store = os.path.relpath(folder, self.a.packages)
