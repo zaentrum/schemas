@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  # The check pages.yml makes before it publishes: every schema's $id is the
+  # URL it is served at. Here on every pull request too, not only on main.
+  ids:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ids match their published URLs
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          bad = 0
+          for p in sorted(pathlib.Path("library").rglob("*.schema.json")):
+              want = "https://zaentrum.github.io/schemas/" + p.as_posix()
+              got = json.loads(p.read_text()).get("$id")
+              ok = got == want
+              bad += not ok
+              print(("ok   " if ok else "FAIL ") + p.as_posix() + ("" if ok else f"  $id={got}"))
+          sys.exit(1 if bad else 0)
+          PY
   validate:
     runs-on: ubuntu-latest
     steps:
