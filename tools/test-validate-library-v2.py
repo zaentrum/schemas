@@ -341,6 +341,131 @@ def pending(vp):
     close(vp)
 
 
+# ---------------------------------------------------------------- a mended package (package.json mends)
+def mp4_box(kind, payload):
+    return (8 + len(payload)).to_bytes(4, "big") + kind + payload
+
+
+def mp4_full(kind, payload, version=0, flags=0):
+    return mp4_box(kind, bytes([version]) + flags.to_bytes(3, "big") + payload)
+
+
+def init_segment(media_time, timescale=16000, handler=b"vide"):
+    """An init segment of one track whose edit list holds one media edit at media_time — no media,
+    only the boxes a mend reads."""
+    elst = mp4_full(b"elst", (1).to_bytes(4, "big") + (0).to_bytes(4, "big")
+                    + media_time.to_bytes(4, "big", signed=True) + (1).to_bytes(2, "big") + bytes(2))
+    mdhd = mp4_full(b"mdhd", bytes(8) + timescale.to_bytes(4, "big") + bytes(8))
+    hdlr = mp4_full(b"hdlr", bytes(4) + handler + bytes(13))
+    trak = mp4_box(b"trak", mp4_full(b"tkhd", bytes(80), flags=3) + mp4_box(b"edts", elst)
+                   + mp4_box(b"mdia", mdhd + hdlr + mp4_box(b"minf", mp4_box(b"stbl", b""))))
+    mvhd = mp4_full(b"mvhd", bytes(8) + (1000).to_bytes(4, "big") + bytes(84))
+    return mp4_box(b"ftyp", b"iso6" + bytes(4) + b"iso6cmfc") + mp4_box(b"moov", mvhd + trak)
+
+
+def with_media_time(data, media_time):
+    at = data.index(b"elst") + 16  # past the box's type, version and flags, count, segment_duration
+    return data[:at] + media_time.to_bytes(4, "big", signed=True) + data[at + 4:]
+
+
+def written_init(root, media_time=1328):
+    """The package-only movie version's top video rendition with an init segment its checksums list,
+    as the package was written: its edit list cuts media_time (83 ms at 16000)."""
+    vp = gone(root)
+    with open(os.path.join(vp, "hls", "v0", "init.mp4"), "wb") as f:
+        f.write(init_segment(media_time))
+    rechecksum(vp)
+    return vp
+
+
+def mend_entry(p, before, **entry):
+    e = {"kind": "avsync-editlist", "file": os.path.relpath(p, os.path.dirname(os.path.dirname(os.path.dirname(p)))),
+         "box": "moov/trak/edts/elst", "old": 1328, "new": 0, "sha256Before": before,
+         "sha256After": "sha256:" + digest(p), "at": "2026-10-01T12:00:00Z", "by": "an operator"}
+    e.update(entry)
+    return e
+
+
+def mended(root, media_time=0, summed=True, **entry):
+    """written_init's package mended as library-v2-mend.py mends it: the edit's media_time in place,
+    the file's line in checksums.sha256, package.json's hash of it and an entry in its mends, and
+    .complete again. summed=False leaves the checksums as they were. entry gives a field of the entry
+    another value."""
+    vp = written_init(root)
+    p = os.path.join(vp, "hls", "v0", "init.mp4")
+    before = "sha256:" + digest(p)
+    with open(p, "rb") as f:
+        data = f.read()
+    with open(p, "wb") as f:
+        f.write(with_media_time(data, media_time))
+    if summed:
+        rechecksum(vp)
+    e = mend_entry(p, before, **entry)
+    edit(pkg(vp), lambda d: d.update(mends=[e]))
+    return vp
+
+
+def mended_twice(root, gap=False):
+    """Two mends of one file, the second made to the bytes the first left (a change of the same box:
+    its edit's media_rate_fraction) — or, with gap, to other bytes than those."""
+    vp = written_init(root)
+    p = os.path.join(vp, "hls", "v0", "init.mp4")
+    first = "sha256:" + digest(p)
+    with open(p, "rb") as f:
+        data = f.read()
+    with open(p, "wb") as f:
+        f.write(with_media_time(data, 0))
+    e1 = mend_entry(p, first)
+    with open(p, "rb") as f:
+        data = f.read()
+    at = data.index(b"elst") + 22  # the edit's media_rate_fraction
+    with open(p, "wb") as f:
+        f.write(data[:at] + b"\x00\x01" + data[at + 2:])
+    e2 = mend_entry(p, "sha256:" + "0" * 64 if gap else e1["sha256After"], old=0, at="2026-10-02T12:00:00Z")
+    rechecksum(vp)
+    edit(pkg(vp), lambda d: d.update(mends=[e1, e2]))
+
+
+def changed_unrecorded(root):
+    """written_init's init segment changed as a mend changes it, and nothing recorded."""
+    vp = written_init(root)
+    p = os.path.join(vp, "hls", "v0", "init.mp4")
+    with open(p, "rb") as f:
+        data = f.read()
+    with open(p, "wb") as f:
+        f.write(with_media_time(data, 0))
+
+
+def mended_audio(root):
+    """An avsync-editlist entry naming the stereo rendition's init segment."""
+    vp = written_init(root)
+    a = os.path.join(vp, "hls", "a0", "init.mp4")
+    with open(a, "wb") as f:
+        f.write(init_segment(1024, 48000, b"soun"))
+    rechecksum(vp)
+    before = "sha256:" + digest(a)
+    with open(a, "rb") as f:
+        data = f.read()
+    with open(a, "wb") as f:
+        f.write(with_media_time(data, 0))
+    rechecksum(vp)
+    e = mend_entry(a, before, old=1024)
+    edit(pkg(vp), lambda d: d.update(mends=[e]))
+
+
+def mended_and_undone(root):
+    """A mend undone: the init segment's bytes back, its line in the checksums, the entry gone with
+    mends, .complete again."""
+    vp = mended(root)
+    p = os.path.join(vp, "hls", "v0", "init.mp4")
+    with open(p, "rb") as f:
+        data = f.read()
+    with open(p, "wb") as f:
+        f.write(with_media_time(data, 1328))
+    rechecksum(vp)
+    edit(pkg(vp), lambda d: d.pop("mends"))
+
+
 SUBTITLE_TEXT = "WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nGuten Tag\n"
 
 
@@ -1481,6 +1606,31 @@ CASES = [
      "library.numbering.dvd.episodeEnd is 1, but the last episode its file covers", []),
     ("an episode's numbering ending where no covered episode explains it is a note", True,
      lambda r: numbering_of(r, 4, episodeEnd=5), "and no episode names this one as the holder of its file", []),
+
+    # ---- mends: a package changed after it completed, its boxes only, as its record says
+    ("a package with an init segment, as written", True, written_init, "OK", ["--check-checksums"]),
+    ("a mended package", True, mended, "OK", ["--check-checksums"]),
+    ("a mended package, its files not hashed", True, mended, "OK", []),
+    ("a package mended twice, its entries a chain", True, mended_twice, "OK", ["--check-checksums"]),
+    ("a mend undone: the entry gone, the bytes and the line back", True, mended_and_undone, "OK", ["--check-checksums"]),
+    ("a gap between two mends of a file", False, lambda r: mended_twice(r, gap=True), "a gap in its mends", []),
+    ("the checksums not written again after a mend", False, lambda r: mended(r, summed=False),
+     "the checksums were not written again after it", []),
+    ("the checksums not written again after a mend, the files hashed", False, lambda r: mended(r, summed=False),
+     "hls/v0/init.mp4 does not match its checksum", ["--check-checksums"]),
+    ("an init segment changed with no entry in mends", False, changed_unrecorded,
+     "hls/v0/init.mp4 does not match its checksum", ["--check-checksums"]),
+    ("a mend whose sha256After is not the file's", False,
+     lambda r: mended(r, sha256After="sha256:" + "0" * 64), "the checksums were not written again after it", []),
+    ("a mend whose edit list holds another media_time than it wrote", False, lambda r: mended(r, media_time=7),
+     "its edit list's media_time is 7, and its mend wrote 0", []),
+    ("a mend of a kind the format does not list", False, lambda r: mended(r, kind="avsync-anything"),
+     "is not one of ['avsync-editlist']", []),
+    ("a mend with a field the format does not list", False, lambda r: mended(r, reason="lip sync"),
+     "'reason' was unexpected", []),
+    ("an avsync-editlist of an audio rendition", False, mended_audio, "the init segment of no video rendition", []),
+    ("an avsync-editlist that sets the edit to another value", False, lambda r: mended(r, new=40),
+     "$.mends[0].new", []),
 
     # ---- valid variations
     ("operating-system files in shared folders", True, lambda r: [open(os.path.join(x, ".DS_Store"), "w").write("x") for x in
