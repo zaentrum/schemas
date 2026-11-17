@@ -426,7 +426,11 @@ it changes — and `.complete` with it, so `sha256sum -c checksums.sha256` holds
 before. The entries are the file's history: the first one's `sha256Before` is the hash it had as
 the package was written, each next one's `sha256Before` the one before's `sha256After`, with no
 gap, and the last one's `sha256After` is the digest the checksums list now — which tells a mended
-package from one made right, and a file changed with no entry still fails its line. Undone, an
+package from one made right, and a file changed with no entry still fails its line. Each entry
+changed the one field it names and nothing else: its `old` written back into the bytes it left
+gives the bytes of its `sha256Before`, newest first. A mend writes `checksums.sha256` first, then
+the file, then `package.json` and `.complete`, so no reader takes a mend stopped mid-way for a
+whole package: until `.complete` is written the chain does not hold. Undone, an
 entry goes — `mends` with it when it was the last — and the file, its line, `package.json` and
 `.complete` are again the bytes they were. `library-v2-mend.py` makes and undoes mends; a new kind
 is a change of the format.
@@ -948,8 +952,9 @@ migrates automatically. Every change is listed here; regenerate the examples aft
   of it and its `mends`, `.complete` — so the checksums hold after it. The validator holds each
   entry to the checksums and the file: the entries of a file run with no gap, and the last one
   ends at the digest `checksums.sha256` lists and at the file — a mended init segment is hashed
-  whatever is asked — and an `avsync-editlist` names a video rendition's init segment whose edit
-  list holds the `media_time` it wrote; a file changed with no entry fails its line as before.
+  whatever is asked — and an `avsync-editlist` names a video rendition's init segment, a video
+  track's, whose edit list holds the `media_time` it wrote and whose `old` written back gives the
+  bytes of its `sha256Before`; a file changed with no entry fails its line as before.
   `library-v2-mend.py` is new: it decides from a version's boxes and its source's stored probe
   whether its picture is early by what its video edit list cuts, and mends it (`--apply`) or puts
   it back byte for byte (`--undo`), journaled under `.work/migration/<run>/mends.jsonl` for the

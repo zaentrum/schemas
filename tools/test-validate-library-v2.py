@@ -406,8 +406,8 @@ def mended(root, media_time=0, summed=True, **entry):
 
 
 def mended_twice(root, gap=False):
-    """Two mends of one file, the second made to the bytes the first left (a change of the same box:
-    its edit's media_rate_fraction) — or, with gap, to other bytes than those."""
+    """Two mends of one file, the second made to the bytes the first left (one that found the edit at
+    0 already and left the bytes as they were) — or, with gap, to other bytes than those."""
     vp = written_init(root)
     p = os.path.join(vp, "hls", "v0", "init.mp4")
     first = "sha256:" + digest(p)
@@ -416,14 +416,42 @@ def mended_twice(root, gap=False):
     with open(p, "wb") as f:
         f.write(with_media_time(data, 0))
     e1 = mend_entry(p, first)
-    with open(p, "rb") as f:
-        data = f.read()
-    at = data.index(b"elst") + 22  # the edit's media_rate_fraction
-    with open(p, "wb") as f:
-        f.write(data[:at] + b"\x00\x01" + data[at + 2:])
     e2 = mend_entry(p, "sha256:" + "0" * 64 if gap else e1["sha256After"], old=0, at="2026-10-02T12:00:00Z")
     rechecksum(vp)
     edit(pkg(vp), lambda d: d.update(mends=[e1, e2]))
+
+
+def mended_beyond(root):
+    """A mend whose entry is the file's history in hashes and not in bytes: the init changed in its edit
+    list and in its track header too, the entry naming the edit list's change alone."""
+    vp = written_init(root)
+    p = os.path.join(vp, "hls", "v0", "init.mp4")
+    before = "sha256:" + digest(p)
+    with open(p, "rb") as f:
+        data = bytearray(with_media_time(f.read(), 0))
+    data[data.index(b"tkhd") + 20] ^= 0xFF
+    with open(p, "wb") as f:
+        f.write(bytes(data))
+    rechecksum(vp)
+    e = mend_entry(p, before)
+    edit(pkg(vp), lambda d: d.update(mends=[e]))
+
+
+def mended_not_video(root):
+    """An avsync-editlist of a video rendition's init whose track is a sound track."""
+    vp = gone(root)
+    p = os.path.join(vp, "hls", "v0", "init.mp4")
+    with open(p, "wb") as f:
+        f.write(init_segment(1328, handler=b"soun"))
+    rechecksum(vp)
+    before = "sha256:" + digest(p)
+    with open(p, "rb") as f:
+        data = f.read()
+    with open(p, "wb") as f:
+        f.write(with_media_time(data, 0))
+    rechecksum(vp)
+    e = mend_entry(p, before)
+    edit(pkg(vp), lambda d: d.update(mends=[e]))
 
 
 def changed_unrecorded(root):
@@ -1629,6 +1657,12 @@ CASES = [
     ("a mend with a field the format does not list", False, lambda r: mended(r, reason="lip sync"),
      "'reason' was unexpected", []),
     ("an avsync-editlist of an audio rendition", False, mended_audio, "the init segment of no video rendition", []),
+    ("a mend that changed more of the file than its field", False, mended_beyond,
+     "the mend changed more of the file than the field it names", []),
+    ("a mend whose old is not the value the file had", False, lambda r: mended(r, old=1000),
+     "the mend changed more of the file than the field it names", []),
+    ("an avsync-editlist of an init whose track is no video track", False, mended_not_video,
+     "not a video track's ('vide')", []),
     ("an avsync-editlist that sets the edit to another value", False, lambda r: mended(r, new=40),
      "$.mends[0].new", []),
 

@@ -108,18 +108,21 @@ def the_version(root):
 
 
 def shape(root, video_start="0.083000", audio_start="0.062000", file_start="0.000000",
-          v_elst=1328, v_tfdt=0, v_cto=1328, a_elst=None, a_tfdt=1920):
+          v_elst=1328, v_tfdt=0, v_cto=1328, a_elst=None, a_tfdt=1920, per=None, probe_sha=True):
     """The version the_version names, its renditions given made-up boxes and its source a probe with
     these starts; every record and checksum written again so the tree is a valid one. The defaults
     are a package whose picture is 82.3 ms early: video 83 ms after the file in the source, its
-    package's video edit list cutting that, the stereo rendition starting where its source does."""
+    package's video edit list cutting that, the stereo rendition starting where its source does.
+    per: a dict of v_elst, v_tfdt, v_cto, init (the init's bytes) for each video rendition, by index,
+    that differs from the rest. probe_sha False: the source record keeps no hash of its probe."""
     vp, sid = the_version(root)
     item = os.path.dirname(os.path.dirname(vp))
     pkg = json.load(open(os.path.join(vp, "package.json")))
-    for r in pkg["renditions"]["video"]:
+    for i, r in enumerate(pkg["renditions"]["video"]):
         d = os.path.join(vp, r["dir"])
-        write(os.path.join(d, "init.mp4"), init_segment(16000, v_elst))
-        write(os.path.join(d, "seg-00001.m4s"), media_segment(v_tfdt, v_cto))
+        o = {"v_elst": v_elst, "v_tfdt": v_tfdt, "v_cto": v_cto, **((per or {}).get(i) or {})}
+        write(os.path.join(d, "init.mp4"), o.get("init") or init_segment(16000, o["v_elst"]))
+        write(os.path.join(d, "seg-00001.m4s"), media_segment(o["v_tfdt"], o["v_cto"]))
         write(os.path.join(d, "playlist.m3u8"), PLAYLIST)
     for r in pkg["renditions"]["audio"]:
         d = os.path.join(vp, r["dir"])
@@ -147,7 +150,7 @@ def shape(root, video_start="0.083000", audio_start="0.062000", file_start="0.00
     probe["format"]["start_time"] = file_start
     write(os.path.join(sd, "ffprobe.json"), json.dumps(probe, indent=2))
     src = json.load(open(os.path.join(sd, "source.json")))
-    src["probe"]["sha256"] = "sha256:" + sha(os.path.join(sd, "ffprobe.json"))
+    src["probe"]["sha256"] = "sha256:" + sha(os.path.join(sd, "ffprobe.json")) if probe_sha else None
     write(os.path.join(sd, "source.json"), json_bytes(src))
     listed = [line.split("  ", 1)[1].rstrip("\n") for line in open(os.path.join(sd, "checksums.sha256")) if "  " in line]
     sums_over(sd, listed)
@@ -312,21 +315,47 @@ def applies_again_undoes(t):
         shutil.rmtree(tmp)
 
 
-KILL_AFTER_FIRST = """
+STOPPED = """
 import importlib.util, os, sys
 spec = importlib.util.spec_from_file_location("mend", sys.argv[1])
 mend = importlib.util.module_from_spec(spec); spec.loader.exec_module(mend)
-real, n = mend.replace, [0]
+at, how = int(os.environ["STOP_AT"]), os.environ.get("STOP_HOW", "kill")
+real, real_rename, n, m = mend.replace, os.replace, [0], [0]
+def inside(path):
+    return "/versions/" in path and "/.work/" not in path
 def replace(path, data):
     real(path, data)
-    if "/versions/" in path and "/.work/" not in path:
+    if inside(path):
         n[0] += 1
-        if n[0] == 1:
+        if n[0] == at and how == "kill":
             os._exit(9)
-mend.replace = replace
+def rename(src, dst):
+    if src.endswith(".mending") and inside(dst):
+        m[0] += 1
+        if m[0] == at and how == "refused":
+            raise PermissionError(13, "Permission denied")
+    real_rename(src, dst)
+mend.replace, os.replace = replace, rename
 sys.argv = sys.argv[1:]
 mend.main()
 """
+
+
+def stopped(root, item, op, at, how="kill", run_name=None):
+    """A run stopped after its at-th file of the version (kill), or refused the at-th rename (refused)."""
+    return subprocess.run([sys.executable, "-c", STOPPED, TOOL, root, "--items", item, f"--{op}", "--by", "a test"]
+                          + (["--run", run_name] if run_name else []),
+                          capture_output=True, text=True, env=dict(os.environ, STOP_AT=str(at), STOP_HOW=how))
+
+
+def journal_of(root, run_name="mend-avsync-editlist"):
+    return [json.loads(x) for x in open(os.path.join(root, ".work", "migration", run_name, "mends.jsonl"))]
+
+
+def chain_broken(vp):
+    sys.path.insert(0, TOOLS)
+    import libv2_records
+    return bool(libv2_records.chain_problems(vp, full=True))
 
 
 def resumes(t):
@@ -334,24 +363,187 @@ def resumes(t):
     try:
         vp, item = shape(root)
         before = snapshot(root)
-        killed = subprocess.run([sys.executable, "-c", KILL_AFTER_FIRST, TOOL, root, "--items", item, "--apply", "--by", "a test"],
-                                capture_output=True, text=True)
+        killed = stopped(root, item, "apply", 1)
         t.eq("resumes: the run was killed after the first file", killed.returncode, 9)
-        os.remove(os.path.join(root, ".work", "migration", "mend-avsync-editlist", "mends.lock"))
         r = run(root, "--items", item, "--json")
-        t.eq("resumes: a dry run says the version was left mid-way", statuses(r.stdout).get(item), "interrupted")
+        t.eq("resumes: a dry run says the version was left mid-way, and exits 1",
+             (statuses(r.stdout).get(item), r.returncode), ("interrupted", 1))
         r = run(root, "--items", item, "--apply", "--by", "a test")
-        t.ok("resumes: --apply finishes it", "finished the mend an earlier run left" in r.stdout, r.stdout + r.stderr)
+        t.ok("resumes: --apply finishes it; the killed run left no lock", "finished the mend an earlier run left" in r.stdout, r.stdout + r.stderr)
         entries = json.load(open(os.path.join(vp, "package.json")))["mends"]
-        journaled = [json.loads(x) for x in open(os.path.join(root, ".work", "migration", "mend-avsync-editlist", "mends.jsonl"))]
-        t.eq("resumes: to the entries the killed run journaled", entries, journaled[0]["mends"])
+        t.eq("resumes: to the entries the killed run journaled", entries, journal_of(root)[0]["mends"])
         validates(t, "resumes: the tree validates", root)
-        killed = subprocess.run([sys.executable, "-c", KILL_AFTER_FIRST, TOOL, root, "--items", item, "--undo", "--by", "a test"],
-                                capture_output=True, text=True)
-        os.remove(os.path.join(root, ".work", "migration", "mend-avsync-editlist", "mends.lock"))
+        killed = stopped(root, item, "undo", 1)
         r = run(root, "--items", item, "--undo", "--by", "a test")
         t.ok("resumes: an undo killed mid-way is finished by the next --undo",
              killed.returncode == 9 and "finished the undo an earlier run left" in r.stdout and snapshot(root) == before, r.stdout + r.stderr)
+    finally:
+        shutil.rmtree(tmp)
+
+
+def stops(t):
+    """Stopped after each of its files, a mend or an undo leaves a version no reader takes for a
+    whole one until its last file, .complete, is written; the next run of either finishes it."""
+    names = {1: "checksums.sha256", 2: "the first init", 3: "the second init", 4: "package.json", 5: ".complete"}
+    base_tmp, base = tree()
+    try:
+        vp0, item = shape(base)
+        pristine = snapshot(base)
+        mended_tmp = tempfile.mkdtemp(prefix="mend-")
+        mended = os.path.join(mended_tmp, "library")
+        shutil.copytree(base, mended)
+        run(mended, "--items", item, "--apply", "--by", "a test")
+        for op, src in (("apply", base), ("undo", mended)):
+            for at in range(1, 6):
+                tmp = tempfile.mkdtemp(prefix="mend-")
+                try:
+                    root = os.path.join(tmp, "library")
+                    shutil.copytree(src, root)
+                    vp = os.path.join(root, os.path.relpath(vp0, base))
+                    stopped(root, item, op, at)
+                    t.eq(f"stops: an {op} killed after {names[at]} leaves a version whose chain {'holds' if at == 5 else 'fails'}",
+                         chain_broken(vp), at != 5)
+                    r = run(root, "--items", item, f"--{op}", "--by", "a test")
+                    t.ok(f"stops: the next --{op} finishes it", "finished the" in r.stdout and not chain_broken(vp)
+                         and (op == "apply" or snapshot(root) == pristine), r.stdout + r.stderr)
+                finally:
+                    shutil.rmtree(tmp)
+        # a rename refused (no space, no permission): its temporary file goes, the version is left mid-way
+        tmp = tempfile.mkdtemp(prefix="mend-")
+        try:
+            root = os.path.join(tmp, "library")
+            shutil.copytree(base, root)
+            r = stopped(root, item, "apply", 2, how="refused")
+            left = glob.glob(os.path.join(root, "**", "*.mending"), recursive=True)
+            t.eq("stops: a write refused takes its temporary file away, and the run exits 1 with the version interrupted",
+                 (left, r.returncode, statuses(run(root, "--items", item, "--json").stdout).get(item)), ([], 1, "interrupted"))
+            r = run(root, "--items", item, "--apply", "--by", "a test")
+            validates(t, "stops: the next --apply finishes it, and the tree validates", root)
+        finally:
+            shutil.rmtree(tmp)
+        shutil.rmtree(mended_tmp)
+    finally:
+        shutil.rmtree(base_tmp)
+
+
+def one_at_a_time(t):
+    """One run at a time on a library, whatever its name; a version another run left mid-way is
+    refused, and only the items a run is given are finished."""
+    import fcntl
+    tmp, root = tree()
+    try:
+        vp, item = shape(root)
+        before = snapshot(root)
+        os.makedirs(os.path.join(root, ".work", "migration"), exist_ok=True)
+        with open(os.path.join(root, ".work", "migration", "mends.lock"), "a") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            r = run(root, "--items", item, "--apply", "--by", "a test", "--run", "another")
+            fcntl.flock(held, fcntl.LOCK_UN)
+        t.ok("one at a time: a run is refused while another holds the library's lock, and changes nothing",
+             r.returncode != 0 and "mend lock" in r.stderr and snapshot(root) == before, r.stdout + r.stderr)
+        stopped(root, item, "apply", 2, run_name="mend-a")
+        r = run(root, "--items", item, "--apply", "--by", "a test", "--json")
+        got = [json.loads(x) for x in r.stdout.splitlines() if json.loads(x).get("itemId") == item][-1]
+        t.ok("one at a time: a version another run left mid-way is refused, naming that run, exit 1",
+             got["status"] == "interrupted" and "mend-a" in got["reason"] and r.returncode == 1, r.stdout)
+        other = os.path.basename(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*"))[0])
+        r = run(root, "--items", other, "--apply", "--by", "a test", "--run", "mend-a")
+        t.ok("one at a time: a run given other items does not finish it", "finished" not in r.stdout and chain_broken(vp),
+             r.stdout)
+        r = run(root, "--items", item, "--apply", "--by", "a test", "--run", "mend-a")
+        t.ok("one at a time: its own run, given the item, does", "finished the mend" in r.stdout and not chain_broken(vp), r.stdout)
+    finally:
+        shutil.rmtree(tmp)
+
+
+def ladders(t):
+    """Every video rendition is held to the rule: the version is affected when any is, only those
+    are mended, and one shifted for another reason is reported and left."""
+    cases = {
+        "the top rung in sync, the second affected": ({0: {"v_elst": 0}}, "affected", ["hls/v1/init.mp4"], []),
+        "the top rung affected, the second shifted for another reason":
+            ({1: {"v_elst": 0, "v_tfdt": 10672}}, "affected", ["hls/v0/init.mp4"], ["hls/v1"]),
+        "the top rung in sync, the second shifted for another reason":
+            ({0: {"v_elst": 0}, 1: {"v_elst": 0, "v_tfdt": 10672}}, "shifted-other", [], ["hls/v1"]),
+    }
+    for name, (per, want, files, left) in cases.items():
+        tmp, root = tree()
+        try:
+            vp, item = shape(root, per=per)
+            r = run(root, "--items", item, "--json")
+            d = [json.loads(x) for x in r.stdout.splitlines() if json.loads(x).get("itemId") == item][-1]
+            t.eq(f"ladders: {name}", (d["status"], [x["file"] for x in d["renditions"]], [x["dir"] for x in d["renditionsLeft"]]),
+                 (want, files, left))
+            if want == "affected":
+                init = {f: sha(os.path.join(vp, f)) for f in ("hls/v0/init.mp4", "hls/v1/init.mp4")}
+                run(root, "--items", item, "--apply", "--by", "a test")
+                t.eq(f"ladders: {name}: only that rung's init changes",
+                     sorted(f for f in init if sha(os.path.join(vp, f)) != init[f]), files)
+        finally:
+            shutil.rmtree(tmp)
+
+
+def refuses(t):
+    """Input it cannot hold to the rule fails that version alone: undecidable, the run goes on."""
+    good = init_segment(16000, 1328)
+    many = good[:good.index(b"elst") + 8] + struct.pack(">I", 1000) + good[good.index(b"elst") + 12:]
+    cases = {
+        "an edit list whose count runs past its box": dict(per={0: {"init": many}}),
+        "a video init whose handler is not vide": dict(per={0: {"init": init_segment(16000, 1328, b"soun")}}),
+        "a video init with a box after its moov": dict(per={0: {"init": good + box(b"uuid", bytes(24))}}),
+        "a video init over 4 MiB": dict(per={0: {"init": good + box(b"free", bytes(4 << 20))}}),
+        "a probe its source record keeps no hash of": dict(probe_sha=False),
+    }
+    for name, kw in cases.items():
+        tmp, root = tree()
+        try:
+            vp, item = shape(root, **kw)
+            other = os.path.basename(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*"))[0])
+            before = snapshot(root)
+            r = run(root, "--items", f"{item},{other}", "--apply", "--by", "a test", "--json")
+            got = statuses(r.stdout)
+            t.ok(f"refuses: {name} is undecidable, nothing changes, the run goes on",
+                 got.get(item) == "undecidable" and other in got and snapshot(root) == before, r.stdout + r.stderr)
+        finally:
+            shutil.rmtree(tmp)
+    # the stereo rendition made from a stream the probe does not have
+    tmp, root = tree()
+    try:
+        vp, item = shape(root)
+        pj = os.path.join(vp, "package.json")
+        pkg = json.load(open(pj))
+        pkg["renditions"]["audio"][0]["sourceStreamIndex"] = 7
+        write(pj, json_bytes(pkg))
+        write(os.path.join(vp, ".complete"), "sha256:" + sha(pj) + "\n")
+        t.eq("refuses: a stereo rendition made from a stream its probe does not have is undecidable",
+             statuses(run(root, "--items", item, "--json").stdout).get(item), "undecidable")
+    finally:
+        shutil.rmtree(tmp)
+
+
+def forged(t):
+    """An entry whose hashes are the file's history but whose bytes are not: the init changed
+    somewhere its entry does not name. --undo refuses it, and so does --apply of another rung."""
+    tmp, root = tree()
+    try:
+        vp, item = shape(root)
+        run(root, "--items", item, "--apply", "--by", "a test")
+        p = os.path.join(vp, "hls/v0/init.mp4")
+        data = bytearray(open(p, "rb").read())
+        data[data.index(b"tkhd") + 20] ^= 0xFF
+        write(p, bytes(data))
+        pkg = json.load(open(os.path.join(vp, "package.json")))
+        pkg["mends"][0]["sha256After"] = "sha256:" + sha(p)
+        sums = open(os.path.join(vp, "checksums.sha256")).read().replace(
+            [line.split("  ")[0] for line in open(os.path.join(vp, "checksums.sha256")) if line.rstrip().endswith("hls/v0/init.mp4")][0], sha(p))
+        write(os.path.join(vp, "checksums.sha256"), sums)
+        pkg["checksums"]["sha256"] = "sha256:" + sha(os.path.join(vp, "checksums.sha256"))
+        write(os.path.join(vp, "package.json"), json_bytes(pkg))
+        write(os.path.join(vp, ".complete"), "sha256:" + sha(os.path.join(vp, "package.json")) + "\n")
+        before = snapshot(root)
+        r = run(root, "--items", item, "--undo", "--by", "a test", "--json")
+        t.ok("forged: --undo refuses an entry that does not lead back to the bytes it names, exit 1",
+             statuses(r.stdout).get(item) == "conflict" and r.returncode == 1 and snapshot(root) == before, r.stdout + r.stderr)
     finally:
         shutil.rmtree(tmp)
 
@@ -361,6 +553,11 @@ def main():
     decides(t)
     applies_again_undoes(t)
     resumes(t)
+    stops(t)
+    one_at_a_time(t)
+    ladders(t)
+    refuses(t)
+    forged(t)
     print(f"{t.passed}/{t.passed + t.failed} checks pass")
     sys.exit(1 if t.failed else 0)
 

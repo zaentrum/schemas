@@ -254,33 +254,47 @@ def mp4_boxes(buf, off=0, end=None):
         off += size
 
 
-def edit_media_time(path):
-    """The media_time of the first media edit of an init segment's one track (moov/trak/edts/elst), 0 when
-    it has no edit list; None when the file is no init segment of one track."""
-    try:
-        with open(path, "rb") as f:
-            buf = f.read(1 << 22)
-    except OSError:
-        return None
-    moov = [(s, e) for k, s, e in mp4_boxes(buf) if k == b"moov"]
-    traks = [(s, e) for k, s, e in mp4_boxes(buf, *moov[0]) if k == b"trak"] if moov else []
+INIT_MAX = 1 << 22  # an init segment is read whole, up to this
+
+
+def init_edit(buf):
+    """(handler, offset of the first media edit's media_time, its width, media_time) of an init segment
+    of one track as a packager writes it -- an ftyp and a moov at its top, every edit inside its box --
+    the offset None when the track has no media edit; or a str that says why buf is none."""
+    if len(buf) > INIT_MAX:
+        return f"is larger than an init segment ({INIT_MAX} bytes)"
+    top = [k for k, s, e in mp4_boxes(buf)]
+    if top[:1] != [b"ftyp"] or top.count(b"moov") != 1 or not set(top) <= {b"ftyp", b"moov", b"free", b"skip"}:
+        return "is no init segment: an ftyp and a moov at its top"
+    moov = [(s, e) for k, s, e in mp4_boxes(buf) if k == b"moov"][0]
+    traks = [(s, e) for k, s, e in mp4_boxes(buf, *moov) if k == b"trak"]
     if len(traks) != 1:
-        return None
+        return f"has {len(traks)} tracks, one expected"
+    handler = None
+    for k, s, e in mp4_boxes(buf, *traks[0]):
+        if k == b"mdia":
+            for k2, s2, e2 in mp4_boxes(buf, s, e):
+                if k2 == b"hdlr" and s2 + 12 <= e2:
+                    handler = buf[s2 + 8:s2 + 12].decode("latin-1")
+    field = None
     for k, s, e in mp4_boxes(buf, *traks[0]):
         if k != b"edts":
             continue
         for k2, s2, e2 in mp4_boxes(buf, s, e):
-            if k2 != b"elst":
+            if k2 != b"elst" or field:
                 continue
-            version, count, p = buf[s2], int.from_bytes(buf[s2 + 4:s2 + 8], "big"), s2 + 8
+            version, count = buf[s2], int.from_bytes(buf[s2 + 4:s2 + 8], "big")
+            width = 8 if version == 1 else 4
+            if s2 + 8 + count * (2 * width + 4) > e2:
+                return "has an edit list whose entries run past its box"
+            p = s2 + 8
             for _ in range(count):
-                width = 8 if version == 1 else 4
                 media_time = int.from_bytes(buf[p + width:p + 2 * width], "big", signed=True)
                 if media_time != -1:
-                    return media_time
+                    field = (p + width, width, media_time)
+                    break
                 p += 2 * width + 4
-            return 0
-    return 0
+    return (handler,) + (field or (None, None, 0))
 
 
 def qh1(p):
@@ -1143,10 +1157,37 @@ class Checker:
             if now != ms[-1]["sha256After"]:
                 self.err(p, f"hashes to {now}, and its last mend left {ms[-1]['sha256After']}: changed since, with no "
                             f"entry in mends that says so")
-            elif ms[-1]["kind"] == "avsync-editlist":
-                mt = edit_media_time(p)
-                if mt != ms[-1]["new"]:
-                    self.err(p, f"its edit list's media_time is {mt}, and its mend wrote {ms[-1]['new']}")
+                continue
+            self.mends_lead_back(p, ms)
+
+    def mends_lead_back(self, p, ms):
+        """Each mend of the file p, newest first, changed the one field it names and nothing else: its old
+        value written back into the bytes it left gives the bytes it was made to, its sha256Before."""
+        with open(p, "rb") as f:
+            buf = f.read(INIT_MAX + 1)
+        for m in reversed(ms):
+            if "sha256:" + hashlib.sha256(buf).hexdigest() != m["sha256After"]:
+                return  # a gap, said above
+            edit = init_edit(buf)
+            if isinstance(edit, str):
+                self.err(p, f"{edit}, and its mends change its edit list")
+                return
+            handler, off, width, media_time = edit
+            if m["kind"] == "avsync-editlist" and handler != "vide":
+                self.err(p, f"its track's handler is {handler!r}, not a video track's ('vide'), and its mend changes "
+                            f"its edit list as a video rendition's")
+                return
+            if off is None or media_time != m["new"]:
+                self.err(p, f"its edit list's media_time is {media_time}, and its mend wrote {m['new']}")
+                return
+            try:
+                buf = buf[:off] + m["old"].to_bytes(width, "big", signed=True) + buf[off + width:]
+            except OverflowError:
+                buf = b""
+            if "sha256:" + hashlib.sha256(buf).hexdigest() != m["sha256Before"]:
+                self.err(p, f"its edit list's media_time put back to {m['old']}, it hashes to other bytes than its "
+                            f"mend's sha256Before: the mend changed more of the file than the field it names")
+                return
 
     def from_sidecars(self, vp, v, pkg, sources):
         """A subtitle made from a sidecar names the copy of it a source of this version keeps: one its
