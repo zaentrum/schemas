@@ -13,7 +13,7 @@ Published contracts for the zaentrum platform, in two families:
 ## Status
 
 The Avro schemas cover five event domains: library item lifecycle, transcode
-processing, playback sessions, download-gateway adapters, and push-notification
+processing, playback sessions, the legacy adapters' completion events, and push-notification
 fan-out. The library storage schemas are a draft; see their changelog below.
 
 ## Layout
@@ -23,7 +23,7 @@ stube/
   library/    item lifecycle events (created/updated/deleted)
   processing/ transcoder task + result events
   playback/   session lifecycle from chino-stream / tv-stream / musig-stream
-  download/   download-gateway adapter completion events
+  download/   completion events of the legacy adapters, kept for the published contract
   notify/     fan-out push notification requests
 library/v1/
   manifest.schema.json, metadata.schema.json, defs.schema.json

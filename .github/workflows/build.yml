@@ -6,6 +6,15 @@ on:
   pull_request:
 
 jobs:
+  # The organisation's shared neutrality check.
+  neutrality:
+    permissions:
+      contents: read
+    uses: zaentrum/.github/.github/workflows/neutrality.yml@v1
+    with:
+      exceptions: |
+        stube/download/  legacy events of a published contract; their retirement is decided separately
+
   # The check pages.yml makes before it publishes: every schema's $id is the
   # URL it is served at. Here on every pull request too, not only on main.
   ids:
