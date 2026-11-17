@@ -430,7 +430,11 @@ package from one made right, and a file changed with no entry still fails its li
 changed the one field it names and nothing else: its `old` written back into the bytes it left
 gives the bytes of its `sha256Before`, newest first. A mend writes `checksums.sha256` first, then
 the file, then `package.json` and `.complete`, so no reader takes a mend stopped mid-way for a
-whole package: until `.complete` is written the chain does not hold. Undone, an
+whole package: until `.complete` is written the chain does not hold. Mends of a library are run
+from one host: `library-v2-mend.py` holds the library's lock (`.work/migration/mends.lock`, `flock`)
+and refuses a file system that gives none, and it claims each version before it writes it
+(`.work/migration/claims/<versionId>.claim`, made only where there is none), so that two runs never
+write one version even where the lock does not hold across hosts. Undone, an
 entry goes — `mends` with it when it was the last — and the file, its line, `package.json` and
 `.complete` are again the bytes they were. `library-v2-mend.py` makes and undoes mends; a new kind
 is a change of the format.

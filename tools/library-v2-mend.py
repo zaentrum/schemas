@@ -52,22 +52,30 @@ mended files' lines; package.json no longer names it, so the chain fails), then 
 then package.json with the checksums file's new hash and an entry in its mends,
   {kind, file, box, old, new, sha256Before, sha256After, at, by}
 (nothing else of it changes), and .complete last with package.json's new hash; `sha256sum -c
-checksums.sha256` holds after it as before. The entry keeps the hash the file had before. Each
-file is written to a temporary file in its folder and renamed into place, the temporary file taken
-away when the write fails; the bytes it replaces are kept until the mend is recorded, and the
-version is reported mended only once its record holds.
+checksums.sha256` holds after it as before. The entry keeps the hash the file had before, and its
+at the moment it was made (entries are ordered by their moments, whatever their zone or precision).
+Each file is written to a temporary file of the process's own beside it (<name>.<pid>-<random>
+.mending) and renamed into place, the temporary file taken away when the write fails; the bytes it
+replaces are kept until the mend is recorded, and the version is reported mended only once its
+record holds.
 
 A dry run (the default) changes nothing and lists, per affected rendition, the file, the byte offset
 of the field, the old and the new media_time and the file's old and new sha256, and the old and new
-sha256 of checksums.sha256, package.json and .complete. --apply and --undo hold the library's mend
-lock (LIBRARY/.work/migration/mends.lock, flock: one run at a time, whatever its name, and none left
-behind by a run that died) and journal under LIBRARY/.work/migration/<run>/ (the run is
-mend-avsync-editlist unless --run names another), every path relative to LIBRARY:
+sha256 of checksums.sha256, package.json and .complete, and names a mend's files not yet put in
+place (*.mending) it finds in a version. Runs come from one host: --apply and --undo hold the
+library's mend lock (LIBRARY/.work/migration/mends.lock, flock: one run at a time, whatever its name,
+and none left behind by a run that died; a file system that gives no lock is refused), and claim
+each version before they write it (.work/migration/claims/<versionId>.claim, made only where there is
+none, so that two runs never write one version even where the lock does not hold across hosts; a
+claim a run of the same name left on the same host by a process that is gone is taken over, any
+other refused). They journal under LIBRARY/.work/migration/<run>/ (the run is mend-avsync-editlist
+unless --run names another), every path relative to LIBRARY:
   mends.jsonl       {"op": "mend", "dir", "itemId", "versionId", "packageId", "files": [{file, before,
                     after}], "mends": [the entries], "by"} before a version's files are replaced, and
                     {"op": "mended", ..., "complete": "sha256:<hex>"} once they are, the .complete
                     then: the catalog notes and verifies each version from these lines; "undo" and
-                    "undone" lines alike for --undo
+                    "undone" lines alike for --undo; ASCII, one JSON object a line (a line a crash
+                    cut short is skipped, with a warning)
   before/<dir>/     the files a step replaced, until its last line is written
 --apply and --undo first finish what an earlier run of the same name left between a step's first
 line and its last, for the items they are given; a version another run left so is refused, naming
@@ -75,7 +83,8 @@ that run. Running either again changes nothing. --undo puts back each avsync-edi
 version, newest first -- the field's old value, held to the entry's sha256Before -- removes the
 entries, writes the file's line in checksums.sha256, the file, package.json and .complete again,
 and leaves the version byte for byte as it was before it was mended. A run exits 1 when a version
-is in conflict, was left mid-way, or what an earlier run left could not be finished.
+is in conflict, was left mid-way, or what an earlier run left could not be finished, and when an
+item asked for is not in the library.
 
 It reads only the item folders it is given, never an original or the database, and writes nothing
 but the files above. Python 3.11 or later, nothing to install.
@@ -89,6 +98,8 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import socket
 import struct
 import sys
 
@@ -102,6 +113,8 @@ MAX_INIT = 1 << 22  # what the validator reads of an init segment
 # an entry's fields, in the order the record keeps them
 ENTRY = ("kind", "file", "box", "old", "new", "sha256Before", "sha256After", "at", "by")
 COMPLETE = re.compile(r"^sha256:[0-9a-f]{64}$")
+MENDING = ".mending"  # the end of the name of a file written beside the one it replaces
+HOST = socket.gethostname()
 UNREADABLE = (struct.error, ValueError, ZeroDivisionError, IndexError, KeyError, TypeError, OSError, OverflowError)
 
 
@@ -109,6 +122,16 @@ UNREADABLE = (struct.error, ValueError, ZeroDivisionError, IndexError, KeyError,
 def now(precise=False):
     t = datetime.datetime.now(datetime.timezone.utc)
     return t.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if precise else t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def moment(value):
+    """A record's date-time as an aware datetime, None when it is none: entries made in other time
+    zones or at other precisions are ordered by when they were made, not by their text."""
+    try:
+        t = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
 
 
 def sha_bytes(b):
@@ -130,9 +153,10 @@ def complete_bytes(package_bytes):
 
 
 def replace(path, data):
-    """data at path in one step: a temporary file in its folder, written through, renamed. A write
-    that fails (no space, no permission, an interrupt) takes its temporary file away."""
-    tmp = path + ".mending"
+    """data at path in one step: a temporary file of this process's own in its folder (<name>.<pid>-
+    <random>.mending), written through, renamed. A write that fails (no space, no permission, an
+    interrupt) takes its temporary file away."""
+    tmp = f"{path}.{os.getpid()}-{secrets.token_hex(4)}{MENDING}"
     try:
         with open(tmp, "wb") as f:
             f.write(data)
@@ -168,6 +192,8 @@ def boxes(buf, off=0, end=None):
             raise ValueError(f"box {kind!r} at {off} runs past its parent")
         yield kind, off, hdr, size
         off += size
+    if off != end:
+        raise ValueError(f"{end - off} bytes at {off} are no box")
 
 
 def find(buf, path, off=0, end=None):
@@ -588,7 +614,9 @@ def plan(v, at, by):
         return why
     sums = read(os.path.join(v.dir, SUMS))
     entries = list(pkg.get("mends") or [])
-    at = max([at] + [str(m.get("at") or "") for m in entries])  # the entries in the order they were made
+    last = max((m.get("at") for m in entries if moment(m.get("at"))), key=moment, default=None)
+    if last is not None and moment(last) > moment(at):
+        at = last  # this host's clock is behind the last entry's: the entries stay in the order they were made
     changes = {}
     for r in v.renditions:
         data = read(os.path.join(v.dir, r["file"]))
@@ -636,13 +664,21 @@ def lock_library(root, exclusive):
     p = os.path.join(d, "mends.lock")
     if not exclusive and not os.path.isfile(p):
         return None  # no run ever wrote: a dry run creates nothing
-    os.makedirs(d, exist_ok=True)
-    fd = os.open(p, os.O_CREAT | os.O_RDWR if exclusive else os.O_RDONLY, 0o644)
+    try:
+        os.makedirs(d, exist_ok=True)
+        fd = os.open(p, os.O_CREAT | os.O_RDWR if exclusive else os.O_RDONLY, 0o644)
+    except OSError as e:
+        sys.exit(f"cannot open the library's mend lock ({e.strerror}: {p}): a run writes under .work/migration/, "
+                 f"which must be writable" if exclusive else f"cannot read the library's mend lock ({e.strerror}: {p})")
     try:
         fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(fd)
         sys.exit("another mend run holds the library's mend lock (.work/migration/mends.lock): wait for it to end")
+    except OSError as e:
+        os.close(fd)
+        sys.exit(f"the library's file system gives no lock ({e.strerror}): runs come from one host, on a file "
+                 f"system that locks (.work/migration/mends.lock)")
     return fd
 
 
@@ -670,22 +706,30 @@ class Run:
         self.journal = os.path.join(self.dir, "mends.jsonl")
 
     def lines(self):
+        """The journal's lines; one that cannot be read -- cut short by a crash or a full disk, in the
+        middle of a character too -- is skipped, with a warning."""
         if not os.path.isfile(self.journal):
             return []
         out = []
-        with open(self.journal, encoding="utf-8") as f:
-            for line in f:
+        with open(self.journal, "rb") as f:
+            for n, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
                 try:
-                    out.append(json.loads(line))
-                except ValueError:
-                    pass  # a line a crash or a full disk cut short
+                    e = json.loads(line.decode("utf-8"))
+                    if not isinstance(e, dict):
+                        raise ValueError("no object")
+                    out.append(e)
+                except ValueError:  # UnicodeDecodeError is one
+                    print(f"warning: {os.path.relpath(self.journal, self.root)} line {n} cannot be read "
+                          f"(cut short?): skipped", file=sys.stderr)
         return out
 
     def add(self, **entry):
         """One line, written through; a line before it cut short ends first, and one this write
         could not finish is taken back off."""
         os.makedirs(self.dir, exist_ok=True)
-        line = (json.dumps({"at": now(precise=True), **entry}, ensure_ascii=False, sort_keys=True) + "\n").encode()
+        line = (json.dumps({"at": now(precise=True), **entry}, ensure_ascii=True, sort_keys=True) + "\n").encode("ascii")
         with open(self.journal, "ab+") as f:
             size = f.seek(0, os.SEEK_END)
             if size:
@@ -699,6 +743,46 @@ class Run:
             except BaseException:
                 f.truncate(size)
                 raise
+
+    def claim(self, version_id, vrel):
+        """Claim the version for this run: .work/migration/claims/<versionId>.claim, made only where
+        there is none (O_EXCL), so that two runs never write one version, whichever host they run on.
+        A claim this run's name left on this host, by a process that is gone, is taken over (it is
+        what a run that died leaves); any other is refused with what it says (ClaimHeld)."""
+        d = os.path.join(self.root, ".work", "migration", "claims")
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, f"{version_id}.claim")
+        mine = json.dumps({"run": self.name, "host": HOST, "pid": os.getpid(), "at": now(precise=True), "dir": vrel},
+                          ensure_ascii=True, sort_keys=True).encode("ascii") + b"\n"
+        for _ in range(2):
+            try:
+                fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            except FileExistsError:
+                try:
+                    held = json.loads(read(p))
+                except (OSError, ValueError):
+                    held = {}
+                if held.get("run") == self.name and held.get("host") == HOST and held.get("pid") == os.getpid():
+                    return p
+                if held.get("run") == self.name and held.get("host") == HOST and not alive(held.get("pid")):
+                    os.remove(p)  # left by this run's name on this host by a process that died
+                    continue
+                raise ClaimHeld(held, p)
+            try:
+                os.write(fd, mine)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            return p
+        raise ClaimHeld({}, p)
+
+    def unclaim(self, version_id):
+        p = os.path.join(self.root, ".work", "migration", "claims", f"{version_id}.claim")
+        try:
+            if json.loads(read(p)).get("pid") == os.getpid():
+                os.remove(p)
+        except (OSError, ValueError):
+            pass
 
     def kept(self, vrel, name):
         return os.path.join(self.dir, "before", vrel, name)
@@ -720,6 +804,49 @@ class Run:
                 d = os.path.dirname(d)
 
 
+class ClaimHeld(RuntimeError):
+    def __init__(self, held, path):
+        self.held = held
+        who = (f"run {held.get('run')} on {held.get('host')} (process {held.get('pid')}) since {held.get('at')}"
+               if held else "a claim that cannot be read")
+        super().__init__(f"claimed by {who}: another run is at it, or one that died on that host left it "
+                         f"({os.path.basename(path)}; once no run is going on, that run's name on that host "
+                         f"finishes it)")
+
+
+def alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except (TypeError, ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def strays(vdir):
+    """The files a mend writes beside the ones it replaces before it renames them (*.mending), in
+    the folders of the version folder vdir it writes in -- the folder itself and its renditions'
+    (hls/<rendition>/): relative paths."""
+    out = []
+    for d in [vdir] + sorted(glob.glob(os.path.join(glob.escape(vdir), "hls", "*", ""))):
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        out += [os.path.relpath(os.path.join(d, n), vdir).replace(os.sep, "/") for n in names if n.endswith(MENDING)]
+    return out
+
+
+def clear_strays(d, files):
+    """Take away what an earlier process of this step left beside the files it writes (their
+    *.mending), once the version is claimed for this run."""
+    for f in files:
+        for p in glob.glob(glob.escape(os.path.join(d, f["file"])) + ".*" + MENDING) + [os.path.join(d, f["file"]) + MENDING]:
+            if os.path.isfile(p):
+                os.remove(p)
+
+
 def write_planned(d, files, new):
     """Each file in order: left where it is the new one already, replaced where it is the old one,
     else a conflict."""
@@ -738,10 +865,15 @@ def write_planned(d, files, new):
 def step(run, v, op, files, new, extra):
     """Journal op, keep the old bytes, write files in order, check, journal its end, drop them."""
     names = [f["file"] for f in files]
-    for n in names:
-        run.keep(v.rel, n, read(os.path.join(v.dir, n)))
-    run.add(op=op, dir=v.rel, itemId=v.item_id, versionId=v.version_id, packageId=v.package_id,
-            files=files, **extra)
+    run.claim(v.version_id, v.rel)
+    try:
+        for n in names:
+            run.keep(v.rel, n, read(os.path.join(v.dir, n)))
+        run.add(op=op, dir=v.rel, itemId=v.item_id, versionId=v.version_id, packageId=v.package_id,
+                files=files, **extra)
+    except BaseException:
+        run.unclaim(v.version_id)  # nothing of the version was written yet
+        raise
     write_planned(v.dir, files, new)
     finish(run, v.rel, v.item_id, v.version_id, v.package_id, op, files, names)
 
@@ -757,6 +889,7 @@ def finish(run, vrel, item_id, version_id, package_id, op, files, names):
     run.add(op=op + ("ed" if op == "mend" else "ne"), dir=vrel, itemId=item_id, versionId=version_id,
             packageId=package_id, complete=read(os.path.join(d, ".complete")).decode().strip())
     run.drop(vrel, names)
+    run.unclaim(version_id)
 
 
 def resume(run, steps, named):
@@ -769,6 +902,8 @@ def resume(run, steps, named):
             continue
         d = os.path.join(run.root, vrel)
         try:
+            run.claim(e["versionId"], vrel)
+            clear_strays(d, e["files"])
             kept = {f["file"]: read(run.kept(vrel, f["file"])) for f in e["files"]}
             new = rebuilt(kept, e)
             write_planned(d, e["files"], new)
@@ -851,8 +986,9 @@ def targets(a):
     return items
 
 
-def versions_of(root, item_id, hint, by):
-    """The item's folder and its versions, decided; (None, why) when there is no such folder."""
+def item_folder(root, item_id, hint):
+    """The item's folder, (None, why) when there is none: one a CSV names must hold the item's
+    item.json."""
     idir = item_dir_of(root, item_id, hint)
     if idir is None:
         return None, "no item folder of a library v2 tree"
@@ -863,6 +999,14 @@ def versions_of(root, item_id, hint, by):
             named = None
         if named != item_id:
             return None, f"the folder {hint} is not the item's: its item.json names {named}"
+    return idir, None
+
+
+def versions_of(root, item_id, hint, by):
+    """The item's folder and its versions, decided; (None, why) when there is no such folder."""
+    idir, why = item_folder(root, item_id, hint)
+    if idir is None:
+        return None, why
     evs = events_of(idir)
     removed = {e.get("versionId") for e in evs if e.get("kind") == "version-removed"}
     superseded = {e.get("packageId") for e in evs if e.get("kind") == "package-superseded"}
@@ -920,7 +1064,7 @@ def main():
     wanted = targets(a)
     folders = {}
     for item_id, hint in wanted:
-        idir = item_dir_of(root, item_id, hint)
+        idir, _ = item_folder(root, item_id, hint)  # only an item's own folder is finished for it
         if idir:
             for vdir in glob.glob(os.path.join(idir, "versions", "*")):
                 folders[os.path.relpath(vdir, root).replace(os.sep, "/")] = item_id
@@ -933,16 +1077,25 @@ def main():
     for item_id, hint in wanted:
         idir, vs = versions_of(root, item_id, hint, a.by)
         if idir is None:
+            failed = True  # an item asked for that this library does not hold is no success
             counts["undecidable"] = counts.get("undecidable", 0) + 1
             print(json.dumps({"itemId": item_id, "status": "undecidable", "reason": vs}) if a.json
                   else f"{'undecidable':13} {item_id}  {vs}")
             continue
         for v in vs:
+            left = strays(v.dir)
             if v.rel in steps:
                 name = steps[v.rel][0]
                 v.status, failed = "interrupted", True
                 v.reason = (f"run {name} stopped mid-way through a {steps[v.rel][1]['op']} of it: "
-                            f"--run {name} --apply or --undo finishes it")
+                            f"--run {name} --apply or --undo finishes it"
+                            + (f"; its files not yet put in place: {', '.join(left)}" if left else ""))
+                v.renditions, v.files, v.left = [], [], []
+            elif left:
+                v.status, failed = "conflict", True
+                v.reason = (f"a mend's files not yet put in place are in it ({', '.join(left)}), and no run's journal "
+                            f"has a step of it open: another run is writing it, or they were left; once no run is "
+                            f"going on, take them away")
                 v.renditions, v.files, v.left = [], [], []
             elif a.undo and v.status != "skipped":
                 try:

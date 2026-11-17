@@ -247,9 +247,9 @@ def decides(t):
         r = run(root, "--items", item, "--apply", "--by", "a test", "--json")
         t.eq("decides: a package.json not written as the library writes it is a conflict, and left",
              (statuses(r.stdout).get(item), snapshot(root) == before), ("conflict", True))
-        t.eq("decides: an item that is not there is undecidable",
-             statuses(run(root, "--items", "00000000-0000-4000-8000-000000000000", "--json").stdout),
-             {"00000000-0000-4000-8000-000000000000": "undecidable"})
+        r = run(root, "--items", "00000000-0000-4000-8000-000000000000", "--json")
+        t.eq("decides: an item that is not there is undecidable, and the run exits 1",
+             (statuses(r.stdout), r.returncode), ({"00000000-0000-4000-8000-000000000000": "undecidable"}, 1))
     finally:
         shutil.rmtree(tmp)
 
@@ -334,6 +334,8 @@ def rename(src, dst):
         m[0] += 1
         if m[0] == at and how == "refused":
             raise PermissionError(13, "Permission denied")
+        if m[0] == at and how == "torn":
+            os._exit(9)  # its temporary file written, not renamed
     real_rename(src, dst)
 mend.replace, os.replace = replace, rename
 sys.argv = sys.argv[1:]
@@ -548,6 +550,113 @@ def forged(t):
         shutil.rmtree(tmp)
 
 
+def claims_and_strays(t):
+    """A version another run claimed is not written; a run that died with its temporary file beside
+    a file leaves it named by a dry run, and the next run of its name takes it away; a CSV row that
+    names this item's folder for another item finishes nothing of it."""
+    tmp, root = tree()
+    try:
+        vp, item = shape(root)
+        before = snapshot(root)
+        vid = os.path.basename(vp)
+        claims = os.path.join(root, ".work", "migration", "claims")
+        os.makedirs(claims)
+        write(os.path.join(claims, vid + ".claim"), json.dumps({"run": "elsewhere", "host": "another-host", "pid": 1,
+                                                                 "at": "2026-11-17T00:00:00.000000Z"}) + "\n")
+        r = run(root, "--items", item, "--apply", "--by", "a test", "--json")
+        got = [json.loads(x) for x in r.stdout.splitlines() if json.loads(x).get("itemId") == item][-1]
+        t.ok("claims: a version another run claimed is not written, the claim named, exit 1",
+             got["status"] == "conflict" and "elsewhere" in got["reason"] and "another-host" in got["reason"]
+             and r.returncode == 1 and snapshot(root) == before, r.stdout + r.stderr)
+        os.remove(os.path.join(claims, vid + ".claim"))
+        killed = stopped(root, item, "apply", 2, how="torn")
+        left = [p for p in glob.glob(os.path.join(vp, "**", "*.mending"), recursive=True)]
+        r = run(root, "--items", item, "--json")
+        got = [json.loads(x) for x in r.stdout.splitlines() if json.loads(x).get("itemId") == item][-1]
+        t.ok("strays: a run killed between writing a file and renaming it leaves its temporary file, which a dry run names",
+             killed.returncode == 9 and len(left) == 1 and got["status"] == "interrupted"
+             and os.path.relpath(left[0], vp) in got["reason"], got["reason"])
+        count = os.path.join(tmp, "rows.csv")
+        write(count, "itemId,itemDir\n00000000-0000-4000-8000-0000000000ff," + os.path.relpath(os.path.dirname(os.path.dirname(vp)), root) + "\n")
+        r = run(root, "--csv", count, "--apply", "--by", "a test")
+        t.ok("claims: a CSV row naming this item's folder for another item finishes nothing of it, exit 1",
+             "finished" not in r.stdout and chain_broken(vp) and r.returncode == 1, r.stdout)
+        r = run(root, "--items", item, "--apply", "--by", "a test")
+        t.ok("strays: the next run of its name takes the temporary file away and finishes the mend; no claim is left",
+             "finished the mend" in r.stdout and not glob.glob(os.path.join(vp, "**", "*.mending"), recursive=True)
+             and not chain_broken(vp) and not os.listdir(claims), r.stdout + r.stderr)
+    finally:
+        shutil.rmtree(tmp)
+
+
+NOLOCK = """
+import errno, fcntl, runpy, sys
+def flock(fd, op):
+    raise OSError(errno.ENOLCK, "No locks available")
+fcntl.flock = flock
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
+
+def journals_and_shares(t):
+    """The journal is ASCII, and a line cut in the middle of a character is skipped with a warning; a
+    file system that gives no lock, and a library that cannot be written, are said, not crashed on."""
+    tmp, root = tree()
+    try:
+        vp, item = shape(root)
+        r = run(root, "--items", item, "--apply", "--by", "Zoë Müller")
+        journal = os.path.join(root, ".work", "migration", "mend-avsync-editlist", "mends.jsonl")
+        data = open(journal, "rb").read()
+        t.ok("journals: written ASCII, the name given kept", data.isascii() and "Zoë Müller" in [json.loads(x).get("by") for x in data.splitlines()],
+             data[:200])
+        with open(journal, "ab") as f:
+            f.write(b'{"at": "2026-11-17T00:00:00Z", "op": "mend", "by": "Zo\xc3')
+        r = run(root, "--items", item, "--json")
+        t.ok("journals: a line cut in the middle of a character is skipped with a warning, and the run goes on",
+             r.returncode == 0 and "Traceback" not in r.stderr and "cannot be read" in r.stderr
+             and statuses(r.stdout).get(item) == "mended", r.stdout + r.stderr)
+        r = run(root, "--items", item, "--undo", "--by", "a test")
+        t.ok("journals: and an undo after it writes on a line of its own", r.returncode == 0 and
+             [json.loads(x)["op"] for x in open(journal, "rb").read().splitlines()[-2:]] == ["undo", "undone"], r.stdout + r.stderr)
+    finally:
+        shutil.rmtree(tmp)
+    tmp, root = tree()
+    try:
+        vp, item = shape(root)
+        before = snapshot(root, outside_work=False)
+        r = subprocess.run([sys.executable, "-c", NOLOCK, TOOL, root, "--items", item, "--apply", "--by", "a test"],
+                           capture_output=True, text=True)
+        t.ok("shares: a file system that gives no lock is said, nothing written",
+             r.returncode != 0 and "Traceback" not in r.stderr and "gives no lock" in r.stderr, r.stderr)
+        snap = snapshot(root, outside_work=False)
+        t.eq("shares: nothing of the library changes but the lock file", sorted(k for k in snap if before.get(k) != snap[k]),
+             [os.path.join(".work", "migration", "mends.lock")])
+        if os.geteuid() != 0:
+            subprocess.run(["chmod", "-R", "a-w", root], check=True)
+            try:
+                r = run(root, "--items", item, "--apply", "--by", "a test")
+            finally:
+                subprocess.run(["chmod", "-R", "u+w", root], check=True)
+            t.ok("shares: a library that cannot be written is said, not crashed on",
+                 r.returncode != 0 and "Traceback" not in r.stderr and "must be writable" in r.stderr, r.stderr)
+    finally:
+        shutil.rmtree(tmp)
+
+
+def moments(t):
+    """Entries are ordered by when they were made, not by their text."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mend", TOOL)
+    mend = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mend)
+    t.ok("moments: a moment with a fraction comes after the same second without",
+         mend.moment("2026-11-17T10:00:00Z") < mend.moment("2026-11-17T10:00:00.500Z"))
+    t.ok("moments: one in another zone is ordered by when it was",
+         mend.moment("2026-11-17T10:30:00+01:00") < mend.moment("2026-11-17T10:00:00Z"))
+    t.eq("moments: one with no zone is none", mend.moment("2026-11-17T10:00:00"), None)
+
+
 def main():
     t = Tally()
     decides(t)
@@ -558,6 +667,9 @@ def main():
     ladders(t)
     refuses(t)
     forged(t)
+    claims_and_strays(t)
+    journals_and_shares(t)
+    moments(t)
     print(f"{t.passed}/{t.passed + t.failed} checks pass")
     sys.exit(1 if t.failed else 0)
 

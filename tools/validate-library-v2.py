@@ -238,23 +238,40 @@ def sha_file(p):
 
 
 def mp4_boxes(buf, off=0, end=None):
-    """(kind, payload start, end) of each ISO BMFF box in buf[off:end]; it stops at a box that runs past
-    its parent."""
+    """(kind, payload start, end) of each ISO BMFF box in buf[off:end]. Raises ValueError at a box that
+    runs past its parent, or bytes after the last box that are none."""
     end = len(buf) if end is None else end
+    out = []
     while off + 8 <= end:
         size, kind = int.from_bytes(buf[off:off + 4], "big"), buf[off + 4:off + 8]
         hdr = 8
         if size == 1:
+            if off + 16 > end:
+                raise ValueError(f"has a box {kind!r} at {off} that runs past its parent")
             size, hdr = int.from_bytes(buf[off + 8:off + 16], "big"), 16
         elif size == 0:
             size = end - off
         if size < hdr or off + size > end:
-            return
-        yield kind, off + hdr, off + size
+            raise ValueError(f"has a box {kind!r} at {off} that runs past its parent")
+        out.append((kind, off + hdr, off + size))
         off += size
+    if off != end:
+        raise ValueError(f"has {end - off} bytes at {off} that are no box")
+    return out
+
+
+def at_time(value):
+    """A record's date-time as a moment, or None when it is none: entries made in other time zones or
+    at other precisions are told apart by when they were made."""
+    try:
+        t = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
 
 
 INIT_MAX = 1 << 22  # an init segment is read whole, up to this
+MENDING = ".mending"  # what library-v2-mend.py names the file it writes beside one before it puts it in place
 
 
 def init_edit(buf):
@@ -263,6 +280,13 @@ def init_edit(buf):
     the offset None when the track has no media edit; or a str that says why buf is none."""
     if len(buf) > INIT_MAX:
         return f"is larger than an init segment ({INIT_MAX} bytes)"
+    try:
+        return init_boxes(buf)
+    except ValueError as e:
+        return str(e)
+
+
+def init_boxes(buf):
     top = [k for k, s, e in mp4_boxes(buf)]
     if top[:1] != [b"ftyp"] or top.count(b"moov") != 1 or not set(top) <= {b"ftyp", b"moov", b"free", b"skip"}:
         return "is no init segment: an ftyp and a moov at its top"
@@ -283,6 +307,8 @@ def init_edit(buf):
         for k2, s2, e2 in mp4_boxes(buf, s, e):
             if k2 != b"elst" or field:
                 continue
+            if s2 + 8 > e2:
+                return "has an edit list too short to hold its count"
             version, count = buf[s2], int.from_bytes(buf[s2 + 4:s2 + 8], "big")
             width = 8 if version == 1 else 4
             if s2 + 8 + count * (2 * width + 4) > e2:
@@ -1128,9 +1154,14 @@ class Checker:
         video = {r["dir"].rstrip("/") for r in ren["video"]}
         every = video | {r["dir"].rstrip("/") for r in ren["audio"] + (ren.get("audioSurround") or [])}
         by_file = {}
+        last = None
         for i, m in enumerate(entries):
-            if i and m["at"] < entries[i - 1]["at"]:
+            at = at_time(m["at"])
+            if at is None:
+                self.err(where, f"mends[{i}] says no moment it was made (its at, {m['at']!r}, is no date-time with its offset)")
+            elif last is not None and at < last:
                 self.err(where, f"mends[{i}] is dated before the one before it: mends are in the order they were done")
+            last = at or last
             folder = m["file"].rsplit("/", 1)[0]
             if m["kind"] == "avsync-editlist" and folder not in video:
                 self.err(where, f"mends[{i}] changes the edit list of {m['file']}, the init segment of no video "
@@ -1234,6 +1265,10 @@ class Checker:
         records are checked always; the package files, which can be many and large, with
         --check-media and --check-checksums."""
         self.head(vp)
+        for name in sorted(os.listdir(vp)) + package_files(vp):
+            if name.endswith(MENDING):
+                self.err(os.path.join(vp, name), "a mend's file not yet put in place: a mend of the package stopped "
+                                                 "mid-way, or is under way (library-v2-mend.py finishes it)")
         sums = os.path.join(vp, SUMS)
         if not os.path.isfile(sums):
             return  # package() says so

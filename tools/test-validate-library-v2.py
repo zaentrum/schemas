@@ -405,9 +405,10 @@ def mended(root, media_time=0, summed=True, **entry):
     return vp
 
 
-def mended_twice(root, gap=False):
+def mended_twice(root, gap=False, ats=("2026-10-01T12:00:00Z", "2026-10-02T12:00:00Z")):
     """Two mends of one file, the second made to the bytes the first left (one that found the edit at
-    0 already and left the bytes as they were) — or, with gap, to other bytes than those."""
+    0 already and left the bytes as they were) — or, with gap, to other bytes than those; ats, when
+    each was made."""
     vp = written_init(root)
     p = os.path.join(vp, "hls", "v0", "init.mp4")
     first = "sha256:" + digest(p)
@@ -415,8 +416,8 @@ def mended_twice(root, gap=False):
         data = f.read()
     with open(p, "wb") as f:
         f.write(with_media_time(data, 0))
-    e1 = mend_entry(p, first)
-    e2 = mend_entry(p, "sha256:" + "0" * 64 if gap else e1["sha256After"], old=0, at="2026-10-02T12:00:00Z")
+    e1 = mend_entry(p, first, at=ats[0])
+    e2 = mend_entry(p, "sha256:" + "0" * 64 if gap else e1["sha256After"], old=0, at=ats[1])
     rechecksum(vp)
     edit(pkg(vp), lambda d: d.update(mends=[e1, e2]))
 
@@ -435,6 +436,43 @@ def mended_beyond(root):
     rechecksum(vp)
     e = mend_entry(p, before)
     edit(pkg(vp), lambda d: d.update(mends=[e]))
+
+
+TRAILING = (4096).to_bytes(4, "big") + b"free" + bytes(8)  # says 4096 bytes, holds 16
+
+
+def mended_odd_init(root, written, mended_to):
+    """A mend whose history is consistent in hashes, of an init segment as written whose bytes are
+    written, mended to mended_to."""
+    vp = gone(root)
+    p = os.path.join(vp, "hls", "v0", "init.mp4")
+    with open(p, "wb") as f:
+        f.write(written)
+    rechecksum(vp)
+    before = "sha256:" + digest(p)
+    with open(p, "wb") as f:
+        f.write(mended_to)
+    rechecksum(vp)
+    e = mend_entry(p, before)
+    edit(pkg(vp), lambda d: d.update(mends=[e]))
+
+
+def empty_elst_last():
+    """An init segment whose last box, inside its track, is an edit list with nothing in it."""
+    mdhd = mp4_full(b"mdhd", bytes(8) + (16000).to_bytes(4, "big") + bytes(8))
+    hdlr = mp4_full(b"hdlr", bytes(4) + b"vide" + bytes(13))
+    trak = mp4_box(b"trak", mp4_full(b"tkhd", bytes(80), flags=3)
+                   + mp4_box(b"mdia", mdhd + hdlr + mp4_box(b"minf", mp4_box(b"stbl", b"")))
+                   + mp4_box(b"edts", mp4_box(b"elst", b"")))
+    mvhd = mp4_full(b"mvhd", bytes(8) + (1000).to_bytes(4, "big") + bytes(84))
+    return mp4_box(b"ftyp", b"iso6" + bytes(4) + b"iso6cmfc") + mp4_box(b"moov", mvhd + trak)
+
+
+def mending_left(root, where="hls/v0/init.mp4.4242-0a1b2c3d.mending"):
+    """A mended package with a mend's file not yet put in place beside one of its files."""
+    vp = mended(root)
+    with open(os.path.join(vp, where), "wb") as f:
+        f.write(b"half")
 
 
 def mended_not_video(root):
@@ -1663,6 +1701,21 @@ CASES = [
      "the mend changed more of the file than the field it names", []),
     ("an avsync-editlist of an init whose track is no video track", False, mended_not_video,
      "not a video track's ('vide')", []),
+    ("mends in the order they were made, the second's moment with a fraction", True,
+     lambda r: mended_twice(r, ats=("2026-11-17T10:00:00Z", "2026-11-17T10:00:00.500Z")), "OK", []),
+    ("mends in the order they were made, the first's moment in another zone", True,
+     lambda r: mended_twice(r, ats=("2026-11-17T10:30:00+01:00", "2026-11-17T10:00:00Z")), "OK", []),
+    ("mends out of the order they were made, the first's moment with a fraction", False,
+     lambda r: mended_twice(r, ats=("2026-11-17T10:00:00.500Z", "2026-11-17T10:00:00Z")), "dated before the one before it", []),
+    ("mends out of the order they were made, the second's moment in another zone", False,
+     lambda r: mended_twice(r, ats=("2026-11-17T10:00:00Z", "2026-11-17T10:30:00+01:00")), "dated before the one before it", []),
+    ("a mended init with a box after its moov that runs past its end", False,
+     lambda r: mended_odd_init(r, init_segment(1328) + TRAILING, init_segment(0) + TRAILING), "that runs past its parent", []),
+    ("a mended init whose edit list is empty and its last bytes", False,
+     lambda r: mended_odd_init(r, init_segment(1328), empty_elst_last()), "has an edit list too short to hold its count", []),
+    ("a mend's file not yet put in place, in a rendition", False, mending_left, "a mend's file not yet put in place", []),
+    ("a mend's file not yet put in place, beside the records", False,
+     lambda r: mending_left(r, "package.json.4242-0a1b2c3d.mending"), "a mend's file not yet put in place", []),
     ("an avsync-editlist that sets the edit to another value", False, lambda r: mended(r, new=40),
      "$.mends[0].new", []),
 
