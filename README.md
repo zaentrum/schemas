@@ -919,6 +919,144 @@ package that never finished, a version's or an extra's, and an extra its writer 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
 
+- **2026-11-16** — closed captions as an original's frames, packets and tracks carry them; what a package's
+  video shows of them; what a package's picture is as far as fields go; and the deletion gate, computed by
+  every reader with the same code, that keeps an original with closed captions or whose captions are not
+  known, and one in fields (ADR-0015). Closed captions (EIA/CEA-608/708) are in a video stream itself, an
+  A53 `cc_data` with each picture, and nothing in a container says so: ffprobe gives a stream's
+  `closed_captions` (7.1) only once it has decoded a frame of it, and (9.0) not at all, so a source
+  record, made from a probe that decodes no frame, said none of an original that had them. An encoder may
+  write caption data only where there is text, so the first frames of a programme whose captions start
+  late carry none either.
+
+  **The plan.** Every reader reads an original's captions by one plan, `library/v2/caption-windows.json`:
+  data the code checks itself against, not configuration. The record logic carries the file's bytes in its
+  code (`CAPTION_PLAN_JSON`) and its tests hold them to the file and to its pinned sha256; every other
+  reader vendors the file, pinned, and a copy that differs fails its build; nothing reads it from a path a
+  setting could change. The plan's picture is the stored probe's film (`film_of`): its one video stream
+  that is no cover by the closed lists' rule (`attached_picture`: marked by the attached_pic disposition or
+  by both a filename and a mimetype tag, of a cover's codec - mjpeg, png, bmp -, of at most one frame and no
+  DURATION tag), wherever a cover lies; where two streams could each be it there is no plan. The plan's span is what the gate knows without reading
+  (`plan_of`): the stored probe's picture `start_time` (the format's where the picture gives none) to that plus its `duration`
+  (where the picture gives none, the record's `container.durationMs`, and the format's duration only where
+  the record gives none); its frame step (`frameStep`) is one over the probe's picture `avg_frame_rate`,
+  or its `r_frame_rate` where `avg_frame_rate` is 0/0, which the gate knows without reading too; where the
+  probe states no rate there is no plan, and the read is not known - no reader measures a frame step of
+  its own, which the gate could not check. Six windows on it (`plan_places`): the start, at the start itself and never capped
+  by the tail, then 10, 30, 50, 70 and 90 % of the span, each at most 30 s short of its end - never half
+  the span or any other share of it -, each the 48 packets decoded from the keyframe its seek lands on, at
+  least half of them and 24 frames (`packetsShare`, `minFrames`). A reader measures the first frame
+  of its start and the end of the picture's last video packet, and reports that span beside the file's
+  length: a read whose measured span does not lie with both its start and its end within one frame step
+  and 0.5 s (`endTolerance`) of the plan's start and end fails and tells nothing. It reports its gop too: the longest run
+  between two keyframes among the picture's first 1200 packets, 0 where they list fewer than two. A
+  window counts only where its first frame lies at its place by the plan's slack (`placeSlack`,
+  `window_lands`): within max(10 s, gop + 0.5 s) of it, before or after, or up to 30 s before it where the
+  packets from its seek show no keyframe between its first frame and its place (`keyframeBefore`); of a
+  gop of 0 only at its own place, within the tolerance, so a file whose gop is 0 never tells none of
+  windows that overlap or don't start at their places. Where two places lie closer than a window reaches -
+  48 frame steps, the gop and 0.5 s (`shortReach`, `plan_short`), as on a span too short for six disjoint
+  windows at most 30 s short of its end -, the picture is read whole, every packet counted and decoded:
+  one window at 0 with `whole: true`, its `packets` and its `leading` pictures, which stands for the six. Every read - a window's,
+  the keyframe listings, the end's and the short picture's whole read - runs under the same bounds, on
+  every side: one thread, 1280 MiB of address space, 600 s of CPU time and 180 s of wall time a read; a
+  bound that is hit means not known, never none. The read of every packet of an HEVC picture for a
+  caption signature, which is deferred, is not bound by them: it gets a bound of its own once its form is
+  fixed. A record keeps
+  each window as `{at, start, end, frames, captions, interlacedFrames, repeatFrames, keyframeBefore}` (a whole read with
+  `whole` and `packets`), beside the span the read measured (`captionSpan`) and its gop (`captionGop`); a
+  deletion's `captionsRead` carries `span` and `gop` the same way. A window that decoded none
+  (`frames: 0`) failed, the record logic writes it with `captions: false`, a reader may write `null`, and
+  an entry that is no window is kept as a failed one, never dropped.
+
+  Windows tell that a picture carries no captions only by the plan (`windows_tell_none`), over the plan's
+  span of the record's probe: a read whose span is the plan's within the tolerance; all six windows, one
+  at each place as above, on frames of their own (their spans disjoint and rising), each of at least half
+  its 48 packets and 24 frames, none showing captions, of a picture whose places are not too close; or
+  the whole read, complete (`wholeComplete`, `whole_complete`): it decoded every packet but the stream's
+  own leading pictures - the packets before its first keyframe in decode order and the first gop's
+  packets timed before that keyframe, at most 16, which the read reports as `leading` beside `packets`
+  and `frames` -, or those too (packets - leading <= frames <= packets), its first frame and its end
+  within the same tolerance of the plan's start and end; one that gives no leading is not complete. A whole read of a
+  picture long enough for six windows is accepted too: it is the stronger proof. Anything else - five
+  windows without the start, as reads made before the plan have them, four windows of a short title,
+  six of a picture whose places are too close, windows on one another's frames or off their places, one
+  of fewer frames than that, a span that is not the probe's, a probe without a start, a length or
+  a frame rate, a whole read one packet short of its leading pictures or without them - is not known.
+
+  **What says captions.** A window that shows them; `caption_signature`, which reads every packet of the
+  picture as ffmpeg copies it for a caption signature (of an MPEG-2 picture, user data with A53, DVD or
+  SCTE-20 captions; of any other, A53 in an SEI) and says so in `captionSignature`; and a subtitle or data
+  stream that is closed captions of its own (`eia_608`, a `c608` or `c708` track), which says
+  `closedCaptions: true`. The essence knows its captions (`closedCaptionsKnown`) where one of them says
+  them, or where the windows tell none of a file on the closed lists; HEVC carries A53 in a suffix SEI its
+  decoder does not export, so its windows - six or the whole picture - tell none only where its packets
+  were read whole and carry no signature (`captionSignature: false`).
+
+  **The closed lists**, the same as the analyzer's, by its names: the containers (`CONTAINERS`), the
+  codecs of the film's picture (`VIDEO_CODECS`), one film beside attached pictures (`COVER_CODECS`),
+  streams of captions of their own (`CAPTION_CODECS`, `CAPTION_TAGS`), the subtitle and data streams that
+  carry none (`SUBTITLE_CODECS`, `DATA_CODECS`, `DATA_TAGS`), no picture of an analog capture's height
+  (`VBI_HEIGHTS`), and an MP4's chapter track: a data stream is the file's chapter track, and on the list,
+  only where all of these hold in the stored probe: the container is the MP4 family; the stream is
+  codec_type data, codec_name bin_data, codec_tag_string text; the file has chapters; the stream's sample
+  count equals the number of chapters; and it is the file's only such stream. A probe that lacks the tag
+  or the count leaves it off the list. That is safe: a package's chapters come from the catalog's marks,
+  read from the original's record or header, handed to the packager by the build, and kept by the
+  version, so retiring an original loses none. A source record keeps what of its file is off the lists
+  (`offList`, in the analyzer's names; `off_list`); a record written before says it by its container and
+  streams (`record_off_list`), and can't tell a timecode or a chapter track from another data stream, so it
+  stays off. A file off the lists never knows it has no captions, and the gate keeps it for both.
+
+  **The scan.** A manifest's `scan` - what the transcoder made of the picture as far as fields go - is the
+  package's, as the contract says it (`scan_block`): `done` and `found` in the transcoder's words, a word
+  not known here kept as it is, how it was judged and done, the examination's counts (`idet`) and the
+  read-through of the whole title (`verified`, with its `leading` pictures and its `packets`). The essence
+  carries what was done (`scan`).
+
+  **The gate** (`deletion_gate(sources, package, held)`, `held` required) is one block of code, the same
+  text byte for byte in `libv2_records.py`, `validate-library-v2.py` and `library-v2-rebuild.py`, held
+  equal by the tests. An original is kept - `closedCaptions` - where its closed captions are carried or
+  not known (not exactly false and known), whatever its package carries: the gate does not use the
+  package's captions. An original in fields is kept - `interlaced` - whatever was done to make its package
+  progressive: no word of `done` lets it go. Fields are read widely (`in_fields`): the record's mark; a
+  field order of its record or its kept probe that is not exactly `progressive` (none given is unknown);
+  a window of its picture, or of a deletion's read, that counted interlaced frames or a count that can't
+  be read; and the scan of any package of the title, of other sources too, that does not let it go
+  (`scan_holds`): a scan keeps it unless its `found` is exactly `progressive`, its read-through is ok and
+  complete with `frames = packets - leading` (`read_through`; one without `leading`, from before that
+  rule, never is), and its `done` is `progressive` or `none`. A package without a scan says nothing.
+  `gate_holds` reads what an essence may not say: no source, a record or a probe that can't be read, a
+  record whose streams are no list, one off the lists (both keys); a caption stream, a record's picture
+  that carries captions (a window that shows them, a signature found) whatever its essence says, an
+  essence that says it knows its captions where its record's streams don't bear that out, an HEVC picture
+  whose packets were not read whole (`closedCaptions`); and in fields (`interlaced`). An original-deleted event may carry the read that
+  allowed it (`captionsRead: {windows, at}`, by the plan); every read of a source is kept and the worst
+  decides (`essence_as_read`).
+
+  **The rule from 2026-11-16 on** (ADR-0015): an original-deleted event dated then or later deletes no
+  original the gate keeps - closed captions carried or not known, in fields, off the lists, a record or a
+  probe that can't be read; the validator refuses one that does, and notes one before that date with
+  what it lost. No event accepts `closedCaptions` or `interlaced` (the event schema refuses them too). A
+  read that does not tell the captions by the plan - one of five windows made before it among them - is a
+  note: it tells nothing, and the deletion is held to what the records tell. The example episode whose
+  picture carries captions keeps its original.
+
+  `library-v2-rebuild.py` computes the loss of every version one of whose sources was deleted, whichever
+  version's event says so, with every read; a deleted source whose record is gone or can't be read loses
+  both, and its original counts as deleted; and a source a version is made of whose original no version
+  folder lists, and no event says was deleted - a folder removed by hand - counts as deleted, its loss as
+  the gate says, with a note; an event or a record that gives a key twice can't be read - the event's
+  deletion stands, its read does not -, so both. The validator notes such a tree (the original is gone
+  outside the record), and refuses a key given twice in a record, a
+  read dated after the deletion it allowed, a read whose span is not its record's within one frame step and
+  0.5 s, a kept probe that is no probe, a record whose container
+  format, picture field order or offList is not its probe's, a whole read beside other windows or
+  without its packets, and a window that counts more frames than it decoded. The fields are new and
+  optional, the `$id`s are the published ones, and every record and tree written before validates as it
+  is, but an original-deleted event that accepts `closedCaptions` or `interlaced`; a deletion before
+  2026-11-16 of an original the gate keeps today is a note.
+
 - **2026-11-02** — styled subtitles as they are, with their fonts. A package carried every ASS/SSA
   subtitle as a WebVTT copy alone and none of the fonts the original carried, so its essence had no
   `styledSubtitles` and no `fonts`, and the deletion gate kept every original that had them. The

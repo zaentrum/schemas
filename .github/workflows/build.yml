@@ -95,7 +95,13 @@ jobs:
             tools/library-v2-media-check.py tools/library-v2-upgrade.py tools/library-v2-sweep.py \
             tools/library-v2-neutral-names.py tools/library-v2-fill-checksums.py tools/libv2_records.py \
             tools/test-library-v2-tools.py
+      # The record logic reads an original's closed captions from its frames: the tests make clips with
+      # ffmpeg and read them, and fail, rather than skip, where there is no ffmpeg to make them with.
+      - name: ffmpeg for the made clips
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && ffprobe -version | head -1
       - name: the tools write a tree, read it back, keep it and catch a broken one
+        env:
+          LIBRARY_V2_CLIPS: required
         run: python tools/test-library-v2-tools.py
       - name: examples are up to date with their generator
         run: python tools/make-library-v2-examples.py && git diff --exit-code -- library/v2/examples

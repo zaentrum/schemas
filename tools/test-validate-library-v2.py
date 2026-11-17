@@ -112,6 +112,102 @@ def movie_source(root):
     return sorted(glob.glob(os.path.join(movie(root), "sources", "*", "source.json")))[0]
 
 
+def gone_sources(root):
+    """The probed source records of the movie version whose original was deleted."""
+    v = json.load(open(ver(gone(root))))
+    paths = [os.path.join(movie(root), "sources", s, "source.json") for s in v["sourceIds"]]
+    return [p for p in paths if os.path.isfile(p) and json.load(open(p)).get("streams")]
+
+
+def picture(d):
+    return next(x for x in d["streams"] if x["type"] == "video" and not x["dispositions"].get("attachedPic"))
+
+
+PLACES = (0.0, 0.1, 0.3, 0.5, 0.7, 0.9)
+MOVIE_LENGTH = 734.0  # the movie's deleted original's length, as its record and its probe give it
+
+
+def windows(shows=(), failed=(), start=0.0, length=MOVIE_LENGTH):
+    """The plan's six caption windows of a picture of length seconds from 0 - the movie's deleted original by
+    default -, 2 s (48 frames at 24 a second) at its start and at 10 to 90 % of it, each but the start at most
+    30 s short of its end, moved by start: those at the fractions shows names show captions, those at failed
+    could not be read."""
+    places = [0.0] + [min(f * length, length - 30) for f in PLACES[1:]]
+    return [{"at": f, "start": round(start + p, 3), "end": round(start + p + (0 if f in failed else 2), 3),
+             "frames": 0 if f in failed else 48, "captions": f in shows and f not in failed}
+            for f, p in zip(PLACES, places)]
+
+
+def read_of(length=MOVIE_LENGTH, gop=2.0, **kw):
+    """A read by the plan of a picture of length seconds from 0: its windows (windows), the span it measured, the
+    probe's, and its gop."""
+    return {"windows": windows(length=length, **kw), "span": {"start": 0.0, "end": length}, "gop": gop}
+
+
+def picture_read(length=MOVIE_LENGTH, gop=2.0, **kw):
+    """A record's picture's keys of a read by the plan (read_of): captionWindows, captionSpan, captionGop."""
+    r = read_of(length, gop, **kw)
+    return {"captionWindows": r["windows"], "captionSpan": r["span"], "captionGop": r["gop"]}
+
+
+def knows_captions(path, has=False, shows=None):
+    """A source record whose picture's caption read was made by the plan over the span its probe gives, every
+    window read: they show captions (at the fractions shows names, or at all of them) or none."""
+    def change(d):
+        r = read_of(d["container"]["durationMs"] / 1000, shows=shows if shows is not None else (PLACES if has else ()))
+        picture(d).update(closedCaptions=any(x["captions"] for x in r["windows"]), captionWindows=r["windows"],
+                          captionSpan=r["span"], captionGop=r["gop"])
+        d["essence"].update(closedCaptions=any(x["captions"] for x in r["windows"]), closedCaptionsKnown=True)
+    edit(path, change)
+
+
+def carries(vp, shows, offset=None, encoder=None):
+    """A package whose top rendition was read at the times of the source's windows, on a timeline offset
+    seconds ahead of the original's (its timestampOffset): those at shows show captions."""
+    def change(d):
+        w = windows(shows, start=offset or 0.0)
+        d["renditions"]["video"][0].update(closedCaptions=bool(shows), captionWindows=w,
+                                           **({} if offset is None else {"timestampOffset": offset}),
+                                           **({} if encoder is None else {"encoder": encoder}))
+        d["essence"].update(closedCaptions=bool(shows))
+    edit(pkg(vp), change)
+
+
+def in_fields(path):
+    """A source record of an original in fields, its kept probe saying so too."""
+    def change(d):
+        picture(d)["fieldOrder"] = "tb"
+        d["essence"]["interlaced"] = True
+    reprobe(path, lambda d: next(x for x in d["streams"] if x["codec_type"] == "video").update(field_order="tb"))
+    edit(path, change)
+
+
+def later(r):
+    """The movie's deletion as one made after the rule, on 18 November 2026."""
+    edit(deletion(r), lambda d: d.update(at="2026-11-18T08:15:00Z"))
+    rename_event(deletion(r), "20261118T081500Z-f2c3e669-original-deleted")
+
+
+def reprobe(path, change):
+    """A source record whose kept probe change made otherwise, the record unchanged but for the probe's hash."""
+    probe_path = os.path.join(os.path.dirname(path), "ffprobe.json")
+    edit_raw(probe_path, change)
+    edit(path, lambda d: d["probe"].update(sha256="sha256:" + digest(probe_path)))
+
+
+def scanned(vp, done, **more):
+    """A package whose manifest said what its picture is as far as fields go: what was done, of one found in
+    fields."""
+    scan = {"found": "fields", "done": done, "judgedBy": "pictures", "fieldOrder": "tb", "order": "tff",
+            "orderBy": "mark", "frameRate": "50/1", "filter": "bwdif=mode=send_field:parity=tff:deint=all",
+            **more}
+    edit(pkg(vp), lambda d: (d.update(scan=scan), d["essence"].update(scan=done)))
+
+
+def accept(root, name):
+    edit(deletion(root), lambda d: d["accepted"].append(name))
+
+
 def sums(folder):
     return os.path.join(folder, "checksums.sha256")
 
@@ -596,6 +692,21 @@ def superseded_removed(root):
     return old_pkg
 
 
+def remove_superseded(root, delete_folder):
+    """The re-packaged episode's first version - superseded, and keeping its source's original, as the gate
+    keeps it - removed by a version-removed event: its folder left where it is, or deleted with the original
+    in it, as the sweep never does, and no event saying the original was deleted."""
+    ev = json.load(open(supersede(root)))
+    d = os.path.dirname(os.path.dirname(os.path.dirname(supersede(root))))
+    vp = os.path.join(d, "versions", ev["versionId"])
+    if delete_folder:
+        remove_version(d, vp)
+    else:
+        new_event(d, {"schema": "zaentrum.library.event/2", "eventId": "0e000000-0000-4000-8000-0000000000e1",
+                      "at": "2026-09-22T10:00:00Z", "by": "test", "kind": "version-removed",
+                      "versionId": ev["versionId"], "reason": "superseded, after the grace"})
+
+
 def all_removed(root):
     """Every version of the movie removed — the second after superseding the first, so only the
     supersession, as its successor, names the second's package — and the projection deciding nothing."""
@@ -917,6 +1028,378 @@ CASES = [
     ("HDR10 static metadata in an HLG rendition", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].update(videoRange="HLG")), "video rendition v0 says its init segment carries HDR10 static metadata, which only a rendition in PQ carries", []),
     ("HDR10 static metadata in an SDR rendition", False, lambda r: edit(pkg(gone(r)), lambda d: d["renditions"]["video"][0].update(hdr10Metadata=True)), "video rendition v0 says its init segment carries HDR10 static metadata", []),
     ("HDR10 static metadata in a rendition that does not say its range", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].pop("videoRange")), "video rendition v0 says its init segment carries HDR10 static metadata", []),
+    ("closed captions a source never read, accepted with the deletion of its encode's original", False,
+     lambda r: accept(r, "closedCaptions"), "'closedCaptions' should not be valid under", []),
+    ("closed captions a source knows it has none of, accepted with the deletion", False,
+     lambda r: ([knows_captions(p) for p in gone_sources(r)], accept(r, "closedCaptions")),
+     "'closedCaptions' should not be valid under", []),
+    ("fields accepted of an original marked as fields whose package made every field a frame", False,
+     lambda r: ([in_fields(p) for p in gone_sources(r)], scanned(gone(r), "deinterlaced-field"), accept(r, "interlaced")),
+     "'interlaced' should not be valid under", []),
+    ("fields accepted of an original that is not in fields", False, lambda r: accept(r, "interlaced"),
+     "'interlaced' should not be valid under", []),
+    ("an original marked as fields deleted before, nothing of its fields accepted", True,
+     lambda r: [in_fields(p) for p in gone_sources(r)], "OK", []),
+    ("a deletion whose read shows closed captions", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"]["windows"][2].update(captions=True)),
+     "the read it carries shows closed captions", []),
+    ("a deletion before the rule whose read has a window that could not be read: a note", True,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"]["windows"][2].update(
+         frames=0, end=d["captionsRead"]["windows"][2]["start"], interlacedFrames=0, repeatFrames=0)), "OK", []),
+    ("a deletion after the rule whose read has a window that could not be read", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"]["windows"][2].update(
+         frames=0, end=d["captionsRead"]["windows"][2]["start"], interlacedFrames=0, repeatFrames=0))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose read is the plan's, clean", True, lambda r: later(r), "OK", []),
+    ("a deletion after the rule whose read is five windows without the start, made before the plan", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(
+         windows=d["captionsRead"]["windows"][1:] + [dict(d["captionsRead"]["windows"][1], at=0.2, start=146.8,
+                                                         end=148.8)]))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion before the rule whose read is five windows and a stray one, made before the plan: a note", True,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"].update(
+         windows=d["captionsRead"]["windows"][1:] + [dict(d["captionsRead"]["windows"][1], at=0.2, start=146.8,
+                                                         end=148.8)])), "OK", []),
+    ("a deletion after the rule whose read is the whole picture, every packet decoded", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17616, "captions": False, "interlacedFrames": 0,
+          "repeatFrames": 0, "whole": True, "packets": 17616, "leading": 0}]))), "OK", []),
+    ("a deletion after the rule whose whole read missed a packet", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17615, "captions": False, "whole": True, "packets": 17616,
+          "leading": 0}]))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose whole read decoded every packet but the stream's two leading pictures", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17614, "captions": False, "whole": True, "packets": 17616,
+          "leading": 2}]))), "OK", []),
+    ("a deletion after the rule whose whole read decoded one fewer than every packet but its leading pictures", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17613, "captions": False, "whole": True, "packets": 17616,
+          "leading": 2}]))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose whole read decoded its leading pictures too", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17616, "captions": False, "whole": True, "packets": 17616,
+          "leading": 2}]))), "OK", []),
+    ("a deletion after the rule whose whole read gives no leading pictures", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17616, "captions": False, "whole": True, "packets": 17616}]))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a whole read with more than 16 leading pictures", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17599, "captions": False, "whole": True, "packets": 17616,
+          "leading": 17}])), "17 is greater than the maximum of 16", []),
+    # the plan's span, its tolerance, its gop and its windows of all their packets
+    ("a deletion after the rule whose read reports a span its record's probe does not give", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"]["span"].update(end=736.0))),
+     "reports the span 0.0-736.0 s, where its record's probe gives 0.000-734.000 s", []),
+    ("a deletion whose read's span is its record's within a frame step and 0.5 s", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"]["span"].update(start=-0.5, end=734.54))),
+     "OK", []),
+    ("a deletion whose read's span lies a hair more than a frame step and 0.5 s off its record's", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"]["span"].update(start=-0.55)),
+     "reports the span -0.55-734.0 s", []),
+    ("a deletion after the rule whose read reports no span", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].pop("span"))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose record's probe gives no frame rate to place the windows by", False,
+     lambda r: (later(r), [reprobe(p, lambda d: [next(x for x in d["streams"] if x["codec_type"] == "video").pop(k)
+                                                for k in ("avg_frame_rate", "r_frame_rate")]) for p in gone_sources(r)]),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose read has a seventh window past the plan's six", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"]["windows"].append(
+         dict(d["captionsRead"]["windows"][-1], at=0.95, start=700.0, end=702.0)))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose read has a window of fewer frames than half its packets", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"]["windows"][3].update(
+         frames=23, interlacedFrames=0, repeatFrames=0))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose read has a window of half its packets", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"]["windows"][3].update(
+         frames=24, end=round(d["captionsRead"]["windows"][3]["start"] + 1, 3), interlacedFrames=0, repeatFrames=0))),
+     "OK", []),
+    ("a deletion after the rule whose windows start 20 s before their places, each its keyframe the last before", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: [w.update(start=round(w["start"] - 20, 3), end=round(w["end"] - 20, 3),
+                                                               keyframeBefore=True)
+                                                      for w in d["captionsRead"]["windows"][1:]])), "OK", []),
+    ("a deletion after the rule whose windows start 20 s before their places, no keyframe said", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: [w.update(start=round(w["start"] - 20, 3), end=round(w["end"] - 20, 3))
+                                                      for w in d["captionsRead"]["windows"][1:]])),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion whose read's keyframeBefore is no boolean", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"]["windows"][2].update(keyframeBefore="yes")),
+     "'yes' is not of type 'boolean'", []),
+    ("a deletion after the rule whose windows start a keyframe before their places, within the slack", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: [w.update(start=round(w["start"] - 1.5, 3), end=round(w["end"] - 1.5, 3))
+                                                      for w in d["captionsRead"]["windows"][1:]])), "OK", []),
+    ("a deletion after the rule whose windows start a keyframe before their places, a gop of 0", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: (d["captionsRead"].update(gop=0), [
+         w.update(start=round(w["start"] - 1.5, 3), end=round(w["end"] - 1.5, 3)) for w in d["captionsRead"]["windows"][1:]]))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose windows overlap, a gop of 0", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: (d["captionsRead"].update(gop=0),
+                                                      d["captionsRead"]["windows"][2].update(end=d["captionsRead"]["windows"][3]["start"] + 1)))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule whose windows lie closer than a window reaches by the gop its read reports", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(gop=80.0))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule of such a picture whose read is the whole picture", True,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(gop=80.0, windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 17616, "captions": False, "interlacedFrames": 0,
+          "repeatFrames": 0, "whole": True, "packets": 17616, "leading": 0}]))), "OK", []),
+    ("a deletion after the rule whose whole read does not cover its record's span", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 700.0, "frames": 16800, "captions": False, "whole": True, "packets": 16800}]))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a picture whose read measured an end its probe does not give, its essence knowing it has no captions", False,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(**dict(picture_read(), captionSpan={"start": 0.0, "end": 744.0})),
+                                                d["essence"].update(closedCaptionsKnown=True))),
+     "the essence knows the closed captions exactly when", []),
+    ("a picture whose read measured an end its probe does not give, its captions not known", True,
+     lambda r: edit(movie_source(r), lambda d: picture(d).update(**dict(picture_read(), captionSpan={"start": 0.0, "end": 744.0}))),
+     "OK", []),
+    ("a whole read beside other windows", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"]["windows"].append(
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 10, "captions": False, "whole": True, "packets": 10})),
+     "a read of the whole picture beside other windows", []),
+    ("a whole read without its packets", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"].update(windows=[
+         {"at": 0, "start": 0.0, "end": 734.0, "frames": 10, "captions": False, "whole": True}])),
+     "'packets' is a dependency of 'whole'", []),
+    ("a deletion after the rule of an original whose windows show captions, no read", False,
+     lambda r: (later(r), [knows_captions(p, has=True) for p in gone_sources(r)],
+                edit(deletion(r), lambda d: d.pop("captionsRead"))),
+     "deletes an original the gate keeps (closedCaptions", []),
+    ("a deletion after the rule of an original never read, no read", False,
+     lambda r: (later(r), edit(deletion(r), lambda d: d.pop("captionsRead"))),
+     "deletes an original the gate keeps (closedCaptions: its closed captions are not known)", []),
+    ("a deletion after the rule of an original in fields", False,
+     lambda r: (later(r), [in_fields(p) for p in gone_sources(r)]),
+     "deletes an original the gate keeps (interlaced: its record is marked interlaced)", []),
+    ("a deletion after the rule of an original off the closed lists", False,
+     lambda r: (later(r), [(reprobe(p, lambda d: next(x for x in d["streams"] if x["codec_type"] == "video").update(
+         codec_name="vc1")), edit(p, lambda d: (picture(d).update(codec="vc1"), d.update(offList=["codec:vc1"]))))
+                           for p in gone_sources(r)]),
+     "deletes an original the gate keeps (closedCaptions: off the closed lists: codec:vc1", []),
+    ("a deletion after the rule of an original whose kept probe can't be read", False,
+     lambda r: (later(r), [(open(os.path.join(os.path.dirname(p), "ffprobe.json"), "w").write("[]"),
+                            edit(p, lambda d, p=p: d["probe"].update(
+                                sha256="sha256:" + digest(os.path.join(os.path.dirname(p), "ffprobe.json")))))
+                           for p in gone_sources(r)]),
+     "its probe can't be read", []),
+    ("a deletion before the rule of an original in fields: a note of what was lost", True,
+     lambda r: [in_fields(p) for p in gone_sources(r)], "OK", []),
+    ("a deletion whose read is dated after it", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"].update(at="2027-01-01T00:00:00Z")),
+     "the read it carries is dated 2027-01-01T00:00:00Z, after the deletion it allowed", []),
+    ("a record that gives a key twice", False,
+     lambda r: (lambda text: (open(deletion(r), "w").write(text.replace('"captions": false',
+                                                                       '"captions": true,\n "captions": false', 1)),
+                               write_sums(os.path.dirname(deletion(r)), ["event.json"])))(open(deletion(r)).read()),
+     "gives the key captions twice", []),
+    ("a source whose picture's field order is not its probe's", False,
+     lambda r: edit(movie_source(r), lambda d: picture(d).update(fieldOrder=None)),
+     "the picture's field order is None, where its probe gives 'progressive'", []),
+    ("a source whose container's format is not its probe's", False,
+     lambda r: edit(movie_source(r), lambda d: d["container"].update(format="mpegts")),
+     "the container's format is 'mpegts', where its probe gives 'matroska,webm'", []),
+    ("a source whose kept probe is no probe", False,
+     lambda r: reprobe(movie_source(r), lambda d: d.update(streams=[])), "its probe is no probe", []),
+    ("a deletion whose read has no window", False, lambda r: edit(deletion(r), lambda d: d["captionsRead"].update(windows=[])),
+     "should be non-empty", []),
+    ("a deletion whose read counted interlaced frames", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"]["windows"][0].update(interlacedFrames=12)),
+     "the read it carries counted interlaced frames", []),
+    ("a deletion whose read counts more interlaced frames than it decoded", False,
+     lambda r: edit(deletion(r), lambda d: d["captionsRead"]["windows"][0].update(repeatFrames=60)),
+     "counts 60 repeatFrames of the 48 frames it decoded", []),
+    ("a read on an event that deletes nothing", False,
+     lambda r: edit(supersede(r), lambda d: d.update(captionsRead={"windows": [], "at": d["at"]})),
+     "captionsRead", []),
+    ("a picture whose packets carry a caption signature, its captions known", True,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(captionSignature=True, closedCaptions=True),
+                                                d["essence"].update(closedCaptions=True, closedCaptionsKnown=True))),
+     "OK", []),
+    ("a picture whose packets carry a caption signature, its stream not saying the captions", False,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(captionSignature=True),
+                                                d["essence"].update(closedCaptionsKnown=True))),
+     "shows closed captions its stream does not say", []),
+    ("a source with a caption track of its own, its captions known", True,
+     lambda r: edit(movie_source(r), lambda d: (d["streams"].append(dict(
+         next(x for x in d["streams"] if x["type"] == "subtitle"), index=9, codec="eia_608", closedCaptions=True)),
+         d["essence"].update(closedCaptions=True, closedCaptionsKnown=True,
+                             subtitleTracks=d["essence"]["subtitleTracks"] + 1))),
+     "OK", []),
+    ("a source with a caption track of its own, its essence not saying the captions", False,
+     lambda r: edit(movie_source(r), lambda d: (d["streams"].append(dict(
+         next(x for x in d["streams"] if x["type"] == "subtitle"), index=9, codec="eia_608", closedCaptions=True)),
+         d["essence"].update(closedCaptionsKnown=True, subtitleTracks=d["essence"]["subtitleTracks"] + 1))),
+     "a stream carries closed captions the essence does not say", []),
+    ("a caption window that counts more interlaced frames than it decoded", False,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: picture(d)["captionWindows"][1].update(
+         interlacedFrames=49))),
+     "counts 49 interlacedFrames of the 48 frames it decoded", []),
+    ("a caption window that counted interlaced frames, its essence not in fields", False,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: picture(d)["captionWindows"][1].update(
+         interlacedFrames=20))),
+     "counted interlaced frames, and the essence does not say the picture is in fields", []),
+    ("a caption window that counted interlaced frames, its essence in fields", True,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: (
+         picture(d)["captionWindows"][1].update(interlacedFrames=20), d["essence"].update(interlaced=True)))),
+     "OK", []),
+    ("an essence that knows a source its offList and its probe put off the closed lists has no captions", False,
+     lambda r: (knows_captions(movie_source(r)), reprobe(movie_source(r), lambda d: d["format"].update(format_name="flv")),
+                edit(movie_source(r), lambda d: (d["container"].update(format="flv"),
+                                                 d.update(offList=["container:flv"])))),
+     "the essence knows the closed captions exactly when", []),
+    ("a source record whose offList is what the closed lists say of its probe", True,
+     lambda r: edit(movie_source(r), lambda d: d.update(offList=[])), "OK", []),
+    ("a source record whose offList is not what the closed lists say of its probe", False,
+     lambda r: edit(movie_source(r), lambda d: d.update(offList=["codec:vc1"])),
+     "offList says ['codec:vc1'], where the closed lists say [] of its probe", []),
+    ("an HEVC picture whose windows show no captions, its essence knowing it has none though its packets were "
+     "not read whole", False,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: picture(d).update(codec="hevc"))),
+     "the essence knows the closed captions exactly when", []),
+    ("an HEVC picture whose windows show no captions and whose packets carry no caption signature, its essence "
+     "knowing it has none", True,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: picture(d).update(
+         codec="hevc", captionSignature=False))), "OK", []),
+    ("an essence that knows a source in a container off the closed list has no captions", False,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: (d["container"].update(format="flv"), d.pop("offList", None))),
+                reprobe(movie_source(r), lambda d: d["format"].update(format_name="flv"))),
+     "the essence knows the closed captions exactly when", []),
+    ("a source in a container off the closed list, its captions not known", True,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: (
+         (d["container"].update(format="flv"), d.pop("offList", None)), d["essence"].pop("closedCaptionsKnown"))),
+                reprobe(movie_source(r), lambda d: d["format"].update(format_name="flv"))), "OK", []),
+    ("an essence that knows a picture in a codec off the closed list has no captions", False,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: (picture(d).update(codec="vc1"),
+                                                                                  d.pop("offList", None)))),
+     "the essence knows the closed captions exactly when", []),
+    ("an essence that knows a source with a stream of a kind off the closed list has no captions", False,
+     lambda r: (knows_captions(movie_source(r)), edit(movie_source(r), lambda d: (d["streams"].append(
+         {"index": 9, "type": "data", "codec": None, "language": None, "languageRaw": None, "title": None,
+          "dispositions": picture(d)["dispositions"]}), d.pop("offList", None)))),
+     "the essence knows the closed captions exactly when", []),
+    ("an essence that knows a picture whose window showed captions in a container off the closed list", True,
+     lambda r: (knows_captions(movie_source(r), has=True), edit(movie_source(r), lambda d: (d["container"].update(
+         format="flv"), d.pop("offList", None))), reprobe(movie_source(r), lambda d: d["format"].update(
+             format_name="flv"))), "OK", []),
+    ("a source whose picture's caption windows were read, and show captions", True,
+     lambda r: knows_captions(movie_source(r), has=True), "OK", []),
+    ("a source essence that knows closed captions its picture's windows do not tell", False,
+     lambda r: edit(movie_source(r), lambda d: d["essence"].update(closedCaptionsKnown=True)),
+     "the essence knows the closed captions exactly when", []),
+    ("a picture whose caption windows tell its captions, its essence not knowing them", False,
+     lambda r: edit(movie_source(r), lambda d: picture(d).update(**picture_read())),
+     "the essence knows the closed captions exactly when", []),
+    ("a picture with a window that could not be read, its essence not knowing its captions", True,
+     lambda r: edit(movie_source(r), lambda d: picture(d).update(captionWindows=windows(failed=(0.5,)))), "OK", []),
+    ("a caption window that decoded nothing and says it shows captions", False,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(
+         closedCaptions=True,
+         captionWindows=[dict(w, captions=True) if w["at"] == 0.5 else w for w in windows(failed=(0.5,))]),
+         d["essence"].update(closedCaptions=True, closedCaptionsKnown=True))),
+     "decoded no frame and says it shows captions", []),
+    ("a caption window that shows captions its picture does not say", False,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(captionWindows=windows((0.9,))),
+                                                d["essence"].update(closedCaptionsKnown=True))),
+     "shows closed captions its stream does not say", []),
+    ("a rendition whose caption windows show captions it does not say", False,
+     lambda r: edit(pkg(kept(r)), lambda d: d["renditions"]["video"][0].update(captionWindows=windows((0.5,)))),
+     "carries closed captions exactly when a caption window of it shows them", []),
+    ("captions an original shows, its package carrying them in every window, accepted with the deletion", False,
+     lambda r: ([knows_captions(p, shows=(0.5, 0.9)) for p in gone_sources(r)],
+                carries(gone(r), (0.1, 0.3, 0.5, 0.7, 0.9)), accept(r, "closedCaptions")),
+     "'closedCaptions' should not be valid under", []),
+    ("captions not known, a window of the original failed and none shows them, accepted with the deletion", False,
+     lambda r: ([edit(p, lambda d: (picture(d).update(captionWindows=windows(failed=(0.5,))),
+                                    d["essence"].pop("closedCaptionsKnown", None))) for p in gone_sources(r)],
+                accept(r, "closedCaptions")), "'closedCaptions' should not be valid under", []),
+    ("a reader's failed caption window, captions null", True,
+     lambda r: edit(movie_source(r), lambda d: picture(d).update(
+         captionWindows=[dict(w, captions=None) if w["at"] == 0.5 else w for w in windows(failed=(0.5,))])),
+     "OK", []),
+    ("a caption window that decoded frames and says nothing of captions", False,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(
+         captionWindows=[dict(w, captions=None) if w["at"] == 0.5 else w for w in windows()]),
+         d["essence"].update(closedCaptionsKnown=True))),
+     "says nothing of captions: null is a failed window's", []),
+    ("captions a copied package's windows lack where the original's show them, accepted with the deletion", False,
+     lambda r: ([knows_captions(p, shows=(0.5, 0.9)) for p in gone_sources(r)],
+                carries(gone(r), (0.5,), encoder="copy"), accept(r, "closedCaptions")),
+     "'closedCaptions' should not be valid under", []),
+    ("a picture read in the plan's six windows, the start among them, knowing it has no captions", True,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(**picture_read()),
+                                                d["essence"].update(closedCaptionsKnown=True))),
+     "OK", []),
+    ("a picture read in five windows without the start, knowing it has no captions", False,
+     lambda r: edit(movie_source(r), lambda d: (picture(d).update(**dict(picture_read(), captionWindows=windows()[1:])),
+                                                d["essence"].update(closedCaptionsKnown=True))),
+     "the essence knows the closed captions exactly when", []),
+    ("a caption window past the picture's end", False,
+     lambda r: edit(movie_source(r), lambda d: picture(d).update(
+         captionWindows=[{"at": 1.5, "start": 0.0, "end": 2.0, "frames": 48, "captions": False}])),
+     "1.5 is greater than the maximum of 1", []),
+    ("a package whose top rendition carries closed captions, and its essence", True,
+     lambda r: edit(pkg(kept(r)), lambda d: (d["renditions"]["video"][0].update(closedCaptions=True),
+                                                            d["essence"].update(closedCaptions=True))), "OK", []),
+    ("a top rendition that carries closed captions its package's essence lacks", False,
+     lambda r: edit(pkg(kept(r)), lambda d: d["renditions"]["video"][0].update(closedCaptions=True)),
+     "the essence has closed captions exactly when the top video rendition's stream carries them", []),
+    ("closed captions on a rendition that are no boolean", False,
+     lambda r: edit(pkg(kept(r)), lambda d: d["renditions"]["video"][0].update(closedCaptions="yes")),
+     "'yes' is not of type 'boolean'", []),
+    ("a package's essence that knows closed captions", False,
+     lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["essence"].update(closedCaptionsKnown=True)),
+     "closedCaptionsKnown is a source's", []),
+    ("a package with a scan its essence carries", True, lambda r: scanned(primary(episode(r, 2)), "inverse-telecine"),
+     "OK", []),
+    ("a package's scan done in words no record knows, kept as it is", True,
+     lambda r: scanned(primary(episode(r, 2)), "woven"), "OK", []),
+    ("a package's scan of a source left as it is, its fields too few to make it over", True,
+     lambda r: scanned(primary(episode(r, 2)), "fields-left", found="mixed", filter=None), "OK", []),
+    ("a package's scan of a source whose pictures were not examined", True,
+     lambda r: scanned(primary(episode(r, 2)), "unexamined", found="unexamined", judgedBy="failed"), "OK", []),
+    ("a package's scan with the transcoder's counts, its windows and its read-through", True,
+     lambda r: scanned(primary(episode(r, 2)), "deinterlaced-frame", orderSeen=True, idet={
+         "frames": 1000, "tff": 980, "bff": 0, "progressive": 0, "undetermined": 20, "repeatedTop": 0,
+         "repeatedBottom": 0, "matchedCombed": 560, "matchedDetermined": 1000, "matchedRun": 14, "cadenceBlocks": 0,
+         "otherBlocks": 200, "blindBlocks": 0, "windows": {"film": 0, "video": 5, "whole": 0, "unsure": 0, "detail": 0}},
+         verified={"ok": True, "complete": True, "why": None, "sampleDone": "deinterlaced-frame",
+                   "sampleFound": "fields", "frames": 5000, "seen": 5000, "blindRun": 0}), "OK", []),
+    ("a package's scan found in a blank word", False,
+     lambda r: scanned(primary(episode(r, 2)), "deinterlaced-frame", found=" "), "does not match", []),
+    ("a package's read-through with its leading pictures and its packets", True,
+     lambda r: scanned(primary(episode(r, 2)), "progressive", found="progressive", filter=None, verified={
+         "ok": True, "complete": True, "why": None, "sampleDone": "progressive", "sampleFound": "progressive",
+         "frames": 1000, "packets": 1002, "leading": 2}), "OK", []),
+    ("a package's read-through whose leading pictures are below 0", False,
+     lambda r: scanned(primary(episode(r, 2)), "progressive", found="progressive", filter=None, verified={
+         "ok": True, "complete": True, "why": None, "sampleDone": "progressive", "sampleFound": "progressive",
+         "frames": 1000, "packets": 1002, "leading": -1}), "-1 is less than the minimum of 0", []),
+    ("a package's read-through whose leading pictures are no whole number", False,
+     lambda r: scanned(primary(episode(r, 2)), "progressive", found="progressive", filter=None, verified={
+         "ok": True, "complete": True, "why": None, "sampleDone": "progressive", "sampleFound": "progressive",
+         "frames": 1000, "packets": 1002, "leading": "2"}), "'2' is not of type 'integer'", []),
+    ("a package whose scan is no object", False,
+     lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d.update(scan="fields")), "is not of type 'object'", []),
+    ("a package's scan with a count the transcoder does not write", False,
+     lambda r: scanned(primary(episode(r, 2)), "deinterlaced-frame", idet={"frames": 1000, "cadence": 0.5}),
+     "Additional properties", []),
+    ("a package's scan that keeps more than the transcoder's words of it", False,
+     lambda r: scanned(primary(episode(r, 2)), "progressive", kind="progressive"), "Additional properties", []),
+    ("a package's scan found in words no record knows, kept as it is", True,
+     lambda r: scanned(primary(episode(r, 2)), "progressive", found="woven"), "OK", []),
+    ("a package's scan without the transcoder's words of how", False,
+     lambda r: edit(pkg(primary(episode(r, 2))), lambda d: (d.update(scan={"found": "fields", "done": "progressive"}),
+                                                            d["essence"].update(scan="progressive"))),
+     "is a required property", []),
+    ("an essence whose scan is not the package's", False,
+     lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["essence"].update(scan="progressive")),
+     "the essence's scan is progressive, but the package's scan says None was done", []),
     ("HDR10 static metadata that is no boolean", False, lambda r: edit(pkg(primary(episode(r, 2))), lambda d: d["renditions"]["video"][0].update(hdr10Metadata="yes")), "'yes' is not of type 'boolean'", []),
     ("a styled original beside its WebVTT copy, and a font the original carried", True, styled, "OK", ["--check-checksums"]),
     ("a styled original and a font the essence says nothing of", True, lambda r: styled(r, essence=False), "OK", ["--check-checksums"]),
@@ -1149,6 +1632,12 @@ CASES = [
     ("a version superseded, then removed and its folder deleted", True, superseded_removed, "OK", ["--check-checksums"]),
     ("an original deleted, then its version removed and its folder deleted", True, lambda r: remove_version(movie(r), gone(r)), "OK", ["--check-checksums"]),
     ("a removed version named by its package alone", True, lambda r: note(r, packageId=superseded_removed(r)), "OK", []),
+    ("a superseded version that keeps its source's original removed, its folder still there", True,
+     lambda r: remove_superseded(r, delete_folder=False), "OK", []),
+    ("a superseded version that keeps its source's original removed and its folder deleted, no event deleting the "
+     "original: a note", True, lambda r: remove_superseded(r, delete_folder=True),
+     "whose original no version folder lists and no original-deleted event says was deleted: it is gone outside "
+     "the record", []),
     ("every version of an item removed, the second after superseding the first", True, all_removed, "OK", ["--check-checksums"]),
     ("a version removed by another item's event", False, lambda r: remove_version(movie(r), gone(r), events_in=episode(r, 1)),
      "names no version folder under versions/, nor one a version-removed event of this item removed", []),

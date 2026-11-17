@@ -63,6 +63,273 @@
         "subtitleGroup": { "type": ["string", "null"], "minLength": 1 }
       }
     },
+    "scan": {
+      "type": "object",
+      "description": "What the package's picture is as far as fields go, as the transcoder's contract says it and the packager's manifest keeps it (libv2_records.scan_block): what was done (done) and what the picture was found to be (found), in the words the transcoder says them in, and how it was judged and done, the examination's counts (idet) and what the read-through of the whole title found (verified). A word the record does not know is kept as it is. Left out where the manifest says nothing of it. Its essence carries done (scan). The deletion gate does not read done: no word of it lets an original in fields go. A scan keeps the original in fields unless its found is exactly progressive, its read-through (verified) is ok and complete with frames = packets - leading, and its done is progressive or none (libv2_records.scan_holds).",
+      "required": [
+        "found",
+        "done",
+        "judgedBy",
+        "fieldOrder",
+        "order",
+        "orderBy",
+        "frameRate",
+        "filter"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "found": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "What the picture was found to be: fields, film, telecine, mixed, progressive, unknown, field-pictures or unexamined, in the transcoder's words, or a word not known here, kept as it is; unknown where the manifest says what was done alone. Any word but progressive keeps the original by the deletion gate, as one in fields."
+        },
+        "done": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "What was done to the picture as far as fields go: inverse-telecine, progressive, deinterlaced-field, deinterlaced-frame, fields-kept, field-matched, fields-left, none or unexamined, or a word not known here, kept as it is; null where the manifest says what was found alone. Not read by the deletion gate."
+        },
+        "judgedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What judged it: its pictures, its mark, its bitstream, or nothing read (failed)."
+        },
+        "fieldOrder": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The field order the source was marked with, as ffprobe says it."
+        },
+        "order": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The field order the filters took."
+        },
+        "orderBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What named that order."
+        },
+        "orderSeen": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Whether the examination saw that order."
+        },
+        "frameRate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The package's frame rate, as ffprobe gives a rate: '50/1', '24000/1001'."
+        },
+        "filter": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The filters it took."
+        },
+        "idet": {
+          "type": "object",
+          "description": "The counts of the examination of a sample, as the transcoder writes them: as the frames are, after fieldmatch, the 3:2 blocks, and its windows by what each saw. Each is left out where it gives none, and the whole where no examination read a frame.",
+          "additionalProperties": false,
+          "properties": {
+            "frames": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tff": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bff": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "progressive": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "undetermined": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "repeatedTop": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "repeatedBottom": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "matchedCombed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "matchedDetermined": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "matchedRun": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cadenceBlocks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "otherBlocks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blindBlocks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "windows": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "film": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "video": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "whole": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "unsure": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "detail": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        "verified": {
+          "type": "object",
+          "description": "What the read-through of the whole title found, left out where none ran: whether it bore the sample's word out (ok), whether it reached the end (complete), why not, what the sample said, and its counts.",
+          "required": [
+            "ok",
+            "complete",
+            "why",
+            "sampleDone",
+            "sampleFound"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "leading": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The stream's own leading pictures: the packets before its first keyframe in decode order, and the first group's packets timed before it, counted apart from frames not decoded. Complete is frames = packets - leading, no other slack; a read-through without leading, from before that rule, is never complete for the gate."
+            },
+            "packets": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The stream's packets the read-through counted."
+            },
+            "ok": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "complete": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "why": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sampleDone": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sampleFound": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "frames": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "chunksInFields": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "otherOrder": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "offCadence": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "repeats": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "matchedUnsure": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "combedOut": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "combedOutRun": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "droppedDistinct": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uncertainCycles": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "seen": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blindRun": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
     "trailers": { "type": "array", "items": { "$ref": "#/$defs/trailer" }, "description": "v1 playback field: trailers packaged into this folder. Trailers published elsewhere are listed by reference in metadata.json, and a trailer that is a local file of its own is an extra of kind trailer (extras/<extraId>/), not one of these." },
 
     "sizeBytes": { "type": ["integer", "null"], "minimum": 0, "description": "Total size of the package's files: its rendition, subtitle, trickplay and trailer folders, not the records beside them, nor a subtitle attached to the version later." },
@@ -132,7 +399,10 @@
         "videoRange": { "enum": ["SDR", "PQ", "HLG"], "description": "The VIDEO-RANGE the master playlist gives the rendition." },
         "label": { "type": "string", "description": "The rung's name in the ladder, e.g. 'source', '1080p'." },
         "encoder": { "type": "string", "description": "What made the rung: 'copy' when it is the original's own stream, otherwise the encoder." },
-        "hdr10Metadata": { "type": "boolean", "description": "True when the rendition's init segment carries the original's HDR10 static metadata — its mastering display colour volume, its content light level, or both (the sample entry's mdcv and clli boxes) — whatever its own bitstream carries; left out otherwise. Only a rendition in PQ carries it." }
+        "hdr10Metadata": { "type": "boolean", "description": "True when the rendition's init segment carries the original's HDR10 static metadata — its mastering display colour volume, its content light level, or both (the sample entry's mdcv and clli boxes) — whatever its own bitstream carries; left out otherwise. Only a rendition in PQ carries it." },
+        "closedCaptions": { "type": "boolean", "description": "True when the rendition's own stream carries closed captions — CEA-608/708 in its SEI, as a window of its frames shows them; left out otherwise." },
+        "captionWindows": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/captionWindow" }, "description": "The windows the rendition was read in for closed captions, at the same presentation times as its source's (or, where its source keeps none, at the same fractions of the rendition's own presentation span), on the package's timeline: what its video shows, kept for a later day. The deletion gate does not use the package's captions: an original with closed captions, or with captions not known, is kept (ADR-0015)." },
+        "timestampOffset": { "type": "number", "description": "The seconds the package's presentation times run ahead of its original's: a picture at t in the original is at t + timestampOffset here, what puts its caption windows beside the original's. Left out where the packager did not measure it, and read as 0." }
       }
     },
     "audioRendition": {

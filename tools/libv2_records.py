@@ -97,8 +97,26 @@ import copy, datetime, hashlib, json, os, re, shutil, subprocess, threading, uui
 # opentype, truetype, sfnt), by a font's file name (.ttf .otf .ttc .woff .woff2), or, where neither says
 # so and no picture's MIME type says otherwise, by its first bytes — a font's signature (attachment_role;
 # attachment_heads reads them, and the stream then says it: signature) — in a source and as a package
-# carries it alike, so no font goes uncounted with its original.
-LIBV2_RECORDS = 10
+# carries it alike, so no font goes uncounted with its original. 11: a video rendition whose manifest
+# entry says its own stream carries closed captions (closedCaptions: CEA-608/708 in its SEI, as the
+# packager read them from its frames) says so in its record, and the package's essence has closed
+# captions when its top rendition says so (package_essence), where it had none whatever it carried; a
+# rendition keeps the caption windows it was read in (captionWindows: {at, start, end, frames,
+# captions}) and how far its times run ahead of its original's (timestampOffset), what its video
+# shows, kept for a later day. A manifest that says nothing of them gives the record it gave. A
+# source's picture whose caption windows were read (captions: caption_windows) keeps them
+# (captionWindows), and its essence knows its captions where they tell them (closedCaptionsKnown); one
+# they weren't read of says what the probe says, which can't tell none from not seen. A manifest's scan
+# — what the transcoder made of the picture as far as fields go — is the package's (scan: done, found
+# and how) and its essence's done of it (scan). The deletion gate does not use the package's captions:
+# an original that has closed captions, or whose captions are not known, is kept (closedCaptions);
+# and an original in fields, read widely (in_fields), is kept whatever was done to make its package
+# progressive (interlaced): the gate does not read a scan's done. A stream that is closed captions of its
+# own (eia_608, c608, c708) and a picture whose packets carry a caption signature (captionSignature) carry
+# them, known; a window that counted interlaced frames (interlacedFrames) puts its picture in fields; a
+# file off the closed lists of how captions and fields are carried (offList) knows neither, and is kept;
+# and a deletion event's read (captionsRead) tells what its record did not (essence_as_read).
+LIBV2_RECORDS = 11
 
 NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://zaentrum.github.io/schemas/library")
 PACKAGE_DIRS = ("hls", "subs", "trickplay", "trailers")
@@ -150,6 +168,81 @@ class AttachmentTimeout(Exception):
     """attachment_heads got no first bytes of an attachment within HEAD_TIMEOUT. What the attachment is
     can't be told then — a font by its bytes alone is none to a record without them — so a writer records
     no source of the file this time rather than one that may not count a font it holds."""
+
+
+# Closed captions (EIA/CEA-608/708) are in a video stream itself — an A53 cc_data with each picture, in
+# an H.264 or HEVC SEI or an MPEG-2 picture's user data — and nothing in a container says so: ffprobe
+# gives a stream's closed_captions (7.1) only once it has decoded a frame of it, and (9.0) not at all.
+# What tells is the decoder's own reading, the side data it exports with each frame that carries them:
+# caption_windows decodes CAPTION_PACKETS packets of an original's picture in each window of the plan
+# (library/v2/caption-windows.json, the shared gate block's CAPTION_PLAN), over the plan's span the gate knows
+# without reading (plan_of: the probe's picture start_time + duration): the start, then 10, 30, 50, 70 and 90 %
+# of it, each but the start at most CAPTION_TAIL_S short of its end, each from the keyframe the seek lands on
+# and read within CAPTION_TIMEOUT seconds under the plan's bounds; a picture whose places lie closer than a
+# window reaches (plan_short, by the gop of its first CAPTION_GOP_PACKETS packets) is read whole. An encoder
+# may write caption data only where there is text, so the first frames of a programme whose captions start
+# later carry none. A window tells only where it decoded at least CAPTION_MIN_FRAMES frames (half its
+# packets, and 24 at least) and landed at its place by the plan's slack. A record keeps each window as
+# caption_window makes it, {at, start, end, frames, captions}: the fraction it is at, the presentation seconds
+# its decoded frames cover, how many were decoded — none: the window could not be read, its captions false
+# says nothing — and whether one carried captions, and of the frames it decoded how many were interlaced
+# (interlacedFrames) and how many repeat a field (repeatFrames), and keyframeBefore where its packets showed
+# its first frame's keyframe the last before its place; a whole read keeps whole and its packets;
+# and beside them the span the read measured (captionSpan: its start's first frame to the end of the last
+# video packet) and its gop (captionGop). A package's renditions are read at the same times, for what their
+# video shows. A window whose ffprobe exits with an error, or whose first frame is not at its place by the
+# plan's slack (window_lands), failed: it landed elsewhere.
+# How many packets picture_span reads from the last keyframe for the picture's end: past a group of
+# pictures of any stream; a read that reaches this many did not land near the end.
+SPAN_PACKETS = 2000
+# How far after a window's first frame its keyframe may lie (an open group's leading pictures come before it),
+# and how near its place the packets listed from it must reach (keyframe_before).
+KEY_LEAD = 1.0
+CAPTION_SIDE_DATA = "ATSC A53 Part 4 Closed Captions"
+# What says a picture's packets carry closed captions (caption_signature): of an MPEG-2 picture, user
+# data after its start code with A53 (GA94, type 3), DVD (CC 0x01 0xF8) or SCTE-20 (type 3, 0x01) captions,
+# the three ffmpeg's MPEG-2 decoder exports; of any other, A53 in an SEI (ITU-T T.35: country 0xB5,
+# provider 0x0031, GA94, type 3), as H.264 and HEVC carry it. caption_signature reads every packet of the
+# picture SIGNATURE_CHUNK bytes at a time, and gives up on an ffmpeg that hands it nothing for
+# SIGNATURE_STALL seconds.
+T35_SIGNATURES = (b"\xb5\x00\x31GA94\x03",)
+USER_DATA_SIGNATURES = (b"\x00\x00\x01\xb2GA94\x03", b"\x00\x00\x01\xb2CC\x01\xf8", b"\x00\x00\x01\xb2\x03\x01",
+                        b"\x00\x00\x01\xb2\x03\x81")
+SIGNATURE_CHUNK = 8 << 20
+SIGNATURE_STALL = 120
+
+
+class CaptionsTimeout(Exception):
+    """caption_windows got no answer of a window of a picture's frames within CAPTION_TIMEOUT. Whether it carries
+    closed captions can't be told then, so a writer records no source of the file this time rather than
+    one that says it carries none."""
+
+
+# What a package's video is as far as fields go, as the transcoder's contract says it (scan) and the
+# manifest keeps it: what was done (done) — a film at its own frames (inverse-telecine), whole frames as
+# found (progressive), video deinterlaced at the field rate (deinterlaced-field, one frame a field) or
+# at the frame rate (deinterlaced-frame, every second moment dropped), HEVC field pictures kept as they
+# are (fields-kept), film and video field-matched at the source's rate (field-matched), fields too few
+# to make a source over left as they are (fields-left), nothing to do (none), or an examination that
+# told nothing (unexamined) — and what the picture was found to be (found): the words the transcoder
+# says them in. A word not known here is kept as it is. The deletion
+# gate does not read done: no word of it lets an original in fields go. It reads found: any word but
+# progressive, one not known here among them, says the original is in fields (in_fields).
+SCAN_DONE = ("inverse-telecine", "progressive", "deinterlaced-field", "deinterlaced-frame", "fields-kept",
+             "field-matched", "fields-left", "none", "unexamined")
+SCAN_FOUND = ("fields", "film", "telecine", "mixed", "progressive", "unknown", "field-pictures", "unexamined")
+# The words of a scan a record keeps beside done and found; the counts of the examination of a sample
+# (idet: as the frames are, after fieldmatch, the 3:2 blocks, and its windows by what each saw); and what
+# the read-through of the whole title found (verified), as the transcoder writes them. Each is kept
+# where it is one, and left out where not.
+SCAN_WORDS = ("judgedBy", "fieldOrder", "order", "orderBy", "frameRate", "filter")
+SCAN_COUNTS = ("frames", "tff", "bff", "progressive", "undetermined", "repeatedTop", "repeatedBottom",
+               "matchedCombed", "matchedDetermined", "matchedRun", "cadenceBlocks", "otherBlocks", "blindBlocks")
+SCAN_WINDOWS = ("film", "video", "whole", "unsure", "detail")
+VERIFIED_WORDS = ("why", "sampleDone", "sampleFound")
+VERIFIED_COUNTS = ("frames", "chunksInFields", "otherOrder", "offCadence", "repeats", "matchedUnsure", "combedOut",
+                   "combedOutRun", "droppedDistinct", "uncertainCycles", "seen", "blindRun", "leading", "packets")
+VERIFIED_FLAGS = ("ok", "complete")
 
 
 # ---------------------------------------------------------------- small helpers
@@ -649,15 +742,350 @@ def attachment_heads(path, probe):
     return out
 
 
-def norm_stream(s, head=None):
+def picture_stream(probe):
+    """The stream of a probe whose closed captions are read (caption_windows, caption_signature): its film, the
+    one video stream that is no cover by the closed lists' rule (film_of, the plan's picture), wherever a cover
+    lies; None where there is none, two streams could each be it, or it has no index."""
+    film = film_of(probe)
+    return film if film is not None and isinstance(film.get("index"), int) else None
+
+
+def seconds(v):
+    """A time ffprobe gives ('12.345000'), as seconds, or None."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def caption_window(at, frames, where, code=0, lands=None):
+    """One window of a picture as a record keeps it, {at, start, end, frames, captions}, from the frames
+    ffprobe decoded of it (-show_frames, best_effort_timestamp_time or pts_time, duration_time and the
+    side data): at, the fraction of the picture's span it is at (0 to 1, CAPTION_WINDOWS); start and end, the
+    presentation seconds its frames cover, the first one's time to the last one's end, rounded to the
+    millisecond; frames, how many were decoded; captions, whether one exports A53 captions; and, where
+    ffprobe gave each frame's interlaced_frame and repeat_pict, how many were interlaced
+    (interlacedFrames) and how many repeat a field (repeatFrames). A window that decoded none could not
+    be read: it covers its place, where (seconds), alone, and its captions false says nothing — no frames: it
+    failed, never one without them, and a picture with such a window and none that shows captions does not
+    know its captions (source_essence). So does one whose ffprobe exited with an error (code not 0), and,
+    where lands is given, one whose first frame lands says is not at its place (window_lands): it landed
+    elsewhere than it aimed."""
+    spans = []
+    for f in frames:
+        t = seconds(f.get("best_effort_timestamp_time")) if f.get("best_effort_timestamp_time") not in (None, "N/A") \
+            else seconds(f.get("pts_time"))
+        if t is not None:
+            spans.append((t, t + (seconds(f.get("duration_time")) or 0.0)))
+    first = min((a for a, _ in spans), default=None)
+    if not frames or not spans or code != 0 or lands is not None and not lands(first):
+        point = round(float(where or 0.0), 3)
+        return {"at": at, "start": point, "end": point, "frames": 0, "captions": False}
+    out = {"at": at, "start": round(min(a for a, _ in spans), 3), "end": round(max(b for _, b in spans), 3),
+           "frames": len(frames),
+           "captions": any(x.get("side_data_type") == CAPTION_SIDE_DATA for f in frames for x in f.get("side_data_list") or [])}
+    if all("interlaced_frame" in f for f in frames):
+        out["interlacedFrames"] = sum(1 for f in frames if num(f.get("interlaced_frame")))
+    if all("repeat_pict" in f for f in frames):
+        out["repeatFrames"] = sum(1 for f in frames if (num(f.get("repeat_pict")) or 0) > 0)
+    return out
+
+
+def record_duration_ms(probe):
+    """The container.durationMs the record of a probe keeps (probed), or None where its format gives no length."""
+    duration = seconds(((probe or {}).get("format") or {}).get("duration"))
+    return int(duration * 1000) if duration else None
+
+
+def picture_span(path, probe, picture):
+    """The presentation span of the stream picture (a probe's stream) of the file at path as the plan places
+    its windows (plan_of, as the gate knows it without reading): (start, end) in seconds, the stream's start_time
+    (the file's where it gives none) to that plus its duration - where it gives none, the record's
+    container.durationMs (record_duration_ms), and the format's duration only where the record gives none.
+    None without a start, a length or a frame rate."""
+    plan = plan_of(probe, record_duration_ms(probe))
+    return None if plan is None else (plan["start"], plan["end"])
+
+
+def picture_end(path, picture, past):
+    """The end of the last video packet of the stream picture (a probe's stream) of the file at path, read from
+    the last keyframe a seek to past (seconds, beyond the end the plan gives) lands on, no frame decoded, in
+    seconds; None where that read fails or does not reach the file's end. An ffprobe that answers nothing
+    within CAPTION_TIMEOUT raises CaptionsTimeout."""
+    try:
+        p = bounded_probe(["-select_streams", str(picture["index"]), "-read_intervals", f"{past:.3f}%+#{SPAN_PACKETS}",
+                           "-show_entries", "packet=pts_time,duration_time", "-of", "json"], path)
+        packets = json.loads(p.stdout or b"{}").get("packets") or []
+    except subprocess.TimeoutExpired:
+        raise CaptionsTimeout(f"ffprobe gave nothing of the end of stream {picture['index']} of {path} within "
+                              f"{CAPTION_TIMEOUT} s")
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return None
+    ends = [t + (seconds(x.get("duration_time")) or 0.0) for x in packets if isinstance(x, dict)
+            and (t := seconds(x.get("pts_time"))) is not None]
+    if p.returncode != 0 or not ends or len(packets) >= SPAN_PACKETS:
+        return None
+    return round(max(ends), 3)
+
+
+def picture_keys(path, picture, step):
+    """What the first CAPTION_GOP_PACKETS packets of the stream picture of the file at path, none decoded, listed in
+    decode order with their times and flags, say of its keyframes: (gop, leading). gop, the longest run between two
+    keyframes among them at the frame step step, in seconds: 0 where they list fewer than two keyframes, or the
+    listing fails. leading, the stream's own leading pictures (the plan's wholeComplete): the packets before its
+    first keyframe and the first gop's packets timed before that keyframe; None where no keyframe is listed, its
+    time is not, or they are more than wholeLeadingMax."""
+    try:
+        p = bounded_probe(["-select_streams", str(picture["index"]), "-read_intervals", f"%+#{CAPTION_GOP_PACKETS}",
+                           "-show_entries", "packet=pts_time,flags", "-of", "json"], path)
+        packets = json.loads(p.stdout or b"{}").get("packets") or []
+    except subprocess.TimeoutExpired:
+        raise CaptionsTimeout(f"ffprobe gave nothing of the keyframes of stream {picture['index']} of {path} "
+                              f"within {CAPTION_TIMEOUT} s")
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return 0.0, None
+    listed = [(seconds(x.get("pts_time")), str(x.get("flags") or "").startswith("K"))
+              for x in packets[:CAPTION_GOP_PACKETS] if isinstance(x, dict)]
+    keys = [i for i, (_, key) in enumerate(listed) if key]
+    gop = round(max((b - a for a, b in zip(keys, keys[1:])), default=0) * step, 3)
+    if not keys or listed[keys[0]][0] is None:
+        return gop, None
+    first, at = keys[0], listed[keys[0]][0]
+    end = keys[1] if len(keys) > 1 else len(listed)
+    leading = first + sum(1 for t, _ in listed[first + 1:end] if t is not None and t < at)
+    return gop, leading if leading <= CAPTION_PLAN["wholeLeadingMax"] else None
+
+
+def read_bounds():
+    """Set the bounds of the plan (CAPTION_BOUNDS) on a read's ffprobe before it runs: its address space and its
+    CPU time, where the platform takes them (its thread count is ffprobe's -threads). A bound that is hit ends the
+    read with an error: the window failed, not known. Each bound is set on its own: a platform that does not
+    take one (macOS refuses an address space) still gets the other."""
+    try:
+        import resource
+    except ImportError:
+        return
+    for limit, value in ((resource.RLIMIT_AS, CAPTION_BOUNDS["addressSpaceMiB"] << 20),
+                         (resource.RLIMIT_CPU, CAPTION_BOUNDS["cpuS"])):
+        try:
+            resource.setrlimit(limit, (value, value))
+        except (ValueError, OSError):
+            pass
+
+
+def bounded_probe(args, path):
+    """ffprobe of the file at path with args, under the plan's bounds and CAPTION_TIMEOUT (raising
+    subprocess.TimeoutExpired)."""
+    return subprocess.run(["ffprobe", "-v", "error", "-threads", str(CAPTION_BOUNDS["threads"]), *args, path],
+                          stdin=subprocess.DEVNULL, capture_output=True, timeout=CAPTION_TIMEOUT,
+                          preexec_fn=read_bounds if os.name == "posix" else None)
+
+
+FRAME_ENTRIES = ("frame=best_effort_timestamp_time,pts_time,duration_time,interlaced_frame,repeat_pict:"
+                 "frame_side_data=side_data_type")
+
+
+def frames_of(p):
+    """The frames an ffprobe run gave, [] of one that gave none or garbage."""
+    try:
+        return [f for f in json.loads(p.stdout or b"{}").get("frames") or [] if isinstance(f, dict)]
+    except ValueError:
+        return []
+
+
+def keyframe_before(path, picture, first, place):
+    """Whether the packets of the stream picture of the file at path from a window's first frame (first, seconds)
+    to its place, none decoded, show that frame's keyframe as the last one before its place: a keyframe where
+    its frames begin (up to KEY_LEAD seconds after its first frame, past an open group's leading pictures), none
+    between it and the place, and the packets reaching the place within KEY_LEAD. False where the listing fails.
+    An ffprobe that answers nothing within CAPTION_TIMEOUT raises CaptionsTimeout."""
+    try:
+        p = bounded_probe(["-select_streams", str(picture["index"]), "-read_intervals", f"{first:.3f}%{place:.3f}",
+                           "-show_entries", "packet=pts_time,flags", "-of", "json"], path)
+        packets = json.loads(p.stdout or b"{}").get("packets") or []
+    except subprocess.TimeoutExpired:
+        raise CaptionsTimeout(f"ffprobe gave nothing of the keyframes of stream {picture['index']} of {path} "
+                              f"before {place:.3f} s within {CAPTION_TIMEOUT} s")
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return False
+    listed = [(t, str(x.get("flags") or "").startswith("K")) for x in packets if isinstance(x, dict)
+              and (t := seconds(x.get("pts_time"))) is not None]
+    keys = sorted(t for t, key in listed if key)
+    own = next((t for t in keys if t >= first - 1e-3), None)  # none of an empty listing
+    if p.returncode != 0 or own is None or own > first + KEY_LEAD or max(t for t, _ in listed) < place - KEY_LEAD:
+        return False
+    return not any(own + 1e-3 < t <= place + 1e-3 for t in keys)
+
+
+def caption_windows(path, probe):
+    """The caption read of the picture of the file at path, by its stream index: {index: {windows, span, gop}}
+    for the stream its essence reads (picture_stream), read by the plan (CAPTION_PLAN) over the plan's span the
+    gate knows without reading (plan_of: the probe's start_time, duration and frame rate; of a probe that states
+    no rate there is no plan, and nothing is read): gop, the longest run
+    between two keyframes of its first CAPTION_GOP_PACKETS packets, and its leading pictures (picture_keys);
+    then, where two of the plan's places lie closer than a window reaches (plan_short), the whole picture, every
+    packet counted and decoded, one window at 0 (whole, packets, leading); else one window (caption_window) at
+    each place (plan_places), the
+    CAPTION_PACKETS packets ffprobe decodes from the keyframe its seek to it lands on, at its place by the plan's
+    slack (window_lands; where its first frame lies further before its place, up to 30 s, the packets listed
+    from it showing no keyframe between - keyframe_before - say so: keyframeBefore). A window ffprobe fails on,
+    exits with an error of, decodes no frame of or lands elsewhere for is kept as one that could not be read;
+    one of fewer frames than CAPTION_MIN_FRAMES is kept as read, and tells nothing; a whole read that fails,
+    or hits a bound, leaves the windows as they were read (of a short picture, a failed one at its start) -
+    not known. span is what the read measured: the first frame of its start to the end of the picture's last
+    video packet (picture_end), left out where either can't be read; a span that is not the plan's within the
+    tolerance tells nothing (windows_tell_none). Every read runs under the plan's bounds (bounded_probe).
+    Empty - nothing told - for a file without such a stream, without ffprobe, or of no plan. Nothing is
+    written. An ffprobe that gives no answer within CAPTION_TIMEOUT seconds is killed, and CaptionsTimeout
+    raised: what the picture carries can't be told."""
+    v = picture_stream(probe)
+    if v is None or not shutil.which("ffprobe"):
+        return {}
+    plan = plan_of(probe, record_duration_ms(probe))
+    if plan is None:
+        return {}
+    tolerance = caption_tolerance(plan)
+    gop, leading = picture_keys(path, v, plan["step"])
+    end = picture_end(path, v, plan["end"] + 60)
+
+    def window(at, where):
+        try:
+            p = bounded_probe(["-select_streams", str(v["index"]), "-read_intervals",
+                               f"{where:.3f}%+#{CAPTION_PACKETS}", "-show_frames", "-show_entries", FRAME_ENTRIES,
+                               "-of", "json"], path)
+        except subprocess.TimeoutExpired:
+            raise CaptionsTimeout(f"ffprobe gave nothing of the frames of stream {v['index']} of {path} from "
+                                  f"{where:.3f} s within {CAPTION_TIMEOUT} s")
+        except (OSError, subprocess.SubprocessError):
+            return caption_window(at, [], where)
+        w = caption_window(at, frames_of(p), where, p.returncode)
+        if w["frames"] and not window_lands(w["start"], where, gop, plan):
+            back = CAPTION_PLAN["placeSlack"]["backS"]
+            if gop and where - back <= w["start"] <= where and keyframe_before(path, v, w["start"], where):
+                w["keyframeBefore"] = True
+            else:
+                w = caption_window(at, [], where)
+        return w
+
+    def whole():
+        try:
+            counted = bounded_probe(["-select_streams", str(v["index"]), "-count_packets", "-show_entries",
+                                     "stream=nb_read_packets", "-of", "json"], path)
+            packets = int(((json.loads(counted.stdout or b"{}").get("streams") or [{}])[0]).get("nb_read_packets"))
+            p = bounded_probe(["-select_streams", str(v["index"]), "-show_frames", "-show_entries", FRAME_ENTRIES,
+                               "-of", "json"], path)
+        except (subprocess.SubprocessError, OSError, ValueError, TypeError, IndexError, AttributeError):
+            return None
+        if counted.returncode != 0 or p.returncode != 0:
+            return None
+        w = caption_window(0.0, frames_of(p), plan["start"], p.returncode,
+                           lambda first: abs(first - plan["start"]) <= tolerance)
+        return [dict(w, whole=True, packets=packets, **({} if leading is None else {"leading": leading}))] \
+            if w["frames"] else None
+
+    if plan_short(plan, gop):
+        out = whole() or [caption_window(0.0, [], plan["start"])]
+    else:
+        out = [window(at, where) for at, where in zip(CAPTION_WINDOWS, plan_places(plan))]
+    read = {"windows": out, "gop": gop}
+    if out[0]["frames"] and end is not None:
+        read["span"] = {"start": out[0]["start"], "end": end}
+    return {v["index"]: read}
+
+
+def picture_windows(record):
+    """The caption windows a source record's picture keeps (its first video stream that is no attached
+    picture), or None where it keeps none."""
+    picture = next((x for x in (record or {}).get("streams") or []
+                    if x.get("type") == "video" and not (x.get("dispositions") or {}).get("attachedPic")), None)
+    return caption_windows_of((picture or {}).get("captionWindows"))
+
+
+def caption_signature(path, probe):
+    """Whether the packets of the picture of the file at path (picture_stream) carry a closed-caption
+    signature (USER_DATA_SIGNATURES of an MPEG-2 picture, T35_SIGNATURES of any other), every one of them
+    read as ffmpeg copies it: {index: True} at the first
+    that does, {index: False} where it read them all and none does: ffmpeg, stopping at the first error
+    (-xerror), exited 0, said no error, and handed on some bytes. Empty — nothing told — for a file without
+    such a stream, without ffmpeg, or that ffmpeg could not read to its end. Nothing is written.
+    An ffmpeg that hands nothing on for SIGNATURE_STALL seconds is killed, and CaptionsTimeout raised.
+    A guard beside the windows (caption_windows): captions outside them are found, and a picture without
+    the signature is told nothing more by it."""
+    v = picture_stream(probe)
+    if v is None or not shutil.which("ffmpeg"):
+        return {}
+    try:
+        p = subprocess.Popen(["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", path, "-map", f"0:{v['index']}",
+                              "-c", "copy", "-f", "data", "pipe:1"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    moved, stalled, said = threading.Event(), threading.Event(), []
+
+    def errors():
+        for line in p.stderr:
+            if len(said) < 20:
+                said.append(line)
+
+    reader = threading.Thread(target=errors, daemon=True)
+    reader.start()
+
+    def watch():
+        while p.poll() is None:
+            if not moved.wait(SIGNATURE_STALL):
+                stalled.set()
+                p.kill()
+                return
+            moved.clear()
+
+    threading.Thread(target=watch, daemon=True).start()
+    signatures = USER_DATA_SIGNATURES if (v.get("codec_name") or "") in ("mpeg1video", "mpeg2video") else T35_SIGNATURES
+    keep = max(len(x) for x in signatures) - 1
+    found, tail, total = False, b"", 0
+    try:
+        while True:
+            chunk = p.stdout.read(SIGNATURE_CHUNK)
+            moved.set()
+            if not chunk:
+                break
+            total += len(chunk)
+            data = tail + chunk
+            if any(x in data for x in signatures):
+                found = True
+                break
+            tail = data[-keep:]
+    finally:
+        p.stdout.close()
+        if found:
+            p.kill()
+        code = p.wait(timeout=60)
+        moved.set()
+        reader.join(timeout=10)
+    if found:
+        return {v["index"]: True}
+    if stalled.is_set():
+        raise CaptionsTimeout(f"ffmpeg handed nothing of stream {v['index']} of {path} on for {SIGNATURE_STALL} s")
+    return {v["index"]: False} if code == 0 and total > 0 and not any(x.strip() for x in said) else {}
+
+
+def norm_stream(s, head=None, captions=None, signature=None):
     """One stream of a probe as a record keeps it. head is an attachment's first bytes, where they were
-    read (attachment_heads): what its role is told by when its MIME type and its name say nothing."""
+    read (attachment_heads): what its role is told by when its MIME type and its name say nothing.
+    captions are a video stream's caption read, where it was read (caption_windows: {windows, span, gop}, or
+    its windows alone): the stream keeps its windows (captionWindows), the span it measured (captionSpan) and
+    its gop (captionGop), and carries closed captions when a window shows them; without them only a
+    probe that decoded a frame of it says it carries them, and one that says none may not have looked.
+    signature is whether its packets carry a caption signature, where they were read for one
+    (caption_signature): it keeps it (captionSignature), and carries closed captions where they do. A
+    subtitle or data stream that is closed captions of its own (caption_stream) says so (closedCaptions)."""
     t = s.get("codec_type")
     tags = s.get("tags") or {}
     language, raw = lang(tags.get("language"))
     base = {"index": s["index"], "codec": s.get("codec_name"), "language": language, "languageRaw": raw,
             "title": text(tags.get("title")), "dispositions": dispositions(s)}
     if t == "video":
+        read = captions if isinstance(captions, dict) else {"windows": captions}
+        windows = caption_windows_of(read.get("windows"))
         base.update({
             "type": "video", "profile": s.get("profile"),
             "level": s.get("level") if isinstance(s.get("level"), (int, float)) and s.get("level") >= 0 else None,
@@ -668,9 +1096,19 @@ def norm_stream(s, head=None):
             "fieldOrder": s.get("field_order"), "bitrate": num(s.get("bit_rate")),
             "colour": {"primaries": s.get("color_primaries"), "transfer": s.get("color_transfer"),
                        "matrix": s.get("color_space"), "range": s.get("color_range")},
-            "hdr": hdr_info(s), "stereo3d": stereo3d(s), "closedCaptions": bool(s.get("closed_captions")),
+            "hdr": hdr_info(s), "stereo3d": stereo3d(s),
+            "closedCaptions": bool(s.get("closed_captions")) or windows_show(windows) or signature is True,
             "encoder": text(tags.get("ENCODER") or tags.get("encoder")),
         })
+        if windows is not None:
+            base["captionWindows"] = windows
+            span = read.get("span") if isinstance(read.get("span"), dict) else {}
+            if gate_number(span.get("start")) is not None and gate_number(span.get("end")) is not None:
+                base["captionSpan"] = {"start": round(float(span["start"]), 3), "end": round(float(span["end"]), 3)}
+            if gate_number(read.get("gop")) is not None and read["gop"] >= 0:
+                base["captionGop"] = round(float(read["gop"]), 3)
+        if isinstance(signature, bool):
+            base["captionSignature"] = signature
         return base
     if t == "audio":
         codec = (s.get("codec_name") or "").lower()
@@ -698,6 +1136,8 @@ def norm_stream(s, head=None):
                      "styled": codec in ("ass", "ssa"), "variant": title_variant(tags.get("title")),
                      "events": events})
         base["purpose"], base["purposeFrom"] = subtitle_purpose(s)
+        if caption_stream(s):
+            base["closedCaptions"] = True
         return base
     if t == "attachment":
         fname, mime = tags.get("filename"), tags.get("mimetype")
@@ -707,6 +1147,8 @@ def norm_stream(s, head=None):
             base["signature"] = font_signature(head)
         return base
     base.update({"type": "data"})
+    if caption_stream(s):
+        base["closedCaptions"] = True
     return base
 
 
@@ -734,12 +1176,28 @@ def track_essence(audio, subs, closed_captions):
             "closedCaptions": bool(closed_captions)}
 
 
-def source_essence(streams, chapters):
+def source_essence(streams, chapters, off=None, plan=None):
+    """What a file carries, reduced to what a package can fail to carry. Its closed captions are its
+    first picture's, or a stream's that is closed captions of its own (closedCaptions of a subtitle or
+    data stream), and known (closedCaptionsKnown) where such a stream or the picture's caption signature
+    (captionSignature) says them, or where the picture's caption windows tell them — one shows them, or
+    every one was read and none does, of a file on the closed lists of how captions are carried (off,
+    its off_list, empty) and, of a picture whose packets carry A53 its decoder does not export
+    (SCANNED_CODECS), whose packets were read whole and carry no caption signature: of a stream they
+    weren't read of, of one a window of which could not be read (no frames, captions false) and none
+    shows them, or of a file off the lists, closedCaptions false says nothing was seen, not that there is
+    nothing, and the deletion gate keeps the original for it.
+    Its picture is in fields (interlaced) where its field order marks it so (tt, bb, tb, bt) or a caption
+    window of it counted interlaced frames (windows_count_fields). The picture's read tells none as
+    windows_tell_none holds it over the plan's span of its probe (plan, plan_of): six at their places, on
+    frames of their own, each of half its packets and 24 frames, or the whole picture (captions_known, the shared gate
+    block's)."""
     v = [x for x in streams if x["type"] == "video" and not x["dispositions"].get("attachedPic")]
     a = [x for x in streams if x["type"] == "audio"]
     sub = [x for x in streams if x["type"] == "subtitle"]
     v0 = v[0] if v else {}
     hdr = v0.get("hdr") or {}
+    own = any(x.get("closedCaptions") for x in streams if x["type"] in ("subtitle", "data"))
     return {
         "maxAudioChannels": max([x["channels"] for x in a], default=0),
         "surround": any(x["channels"] > 2 for x in a),
@@ -748,7 +1206,8 @@ def source_essence(streams, chapters):
         "maxVideoHeight": v0.get("height"), "videoBitDepth": v0.get("bitDepth"),
         "hdr10Metadata": bool(hdr.get("masteringDisplay") or hdr.get("contentLightLevel")),
         "dolbyVision": hdr.get("format") == "dolby-vision", "stereo3d": bool(v0.get("stereo3d")),
-        "interlaced": (v0.get("fieldOrder") or "progressive") not in ("progressive", "unknown", None),
+        "interlaced": (v0.get("fieldOrder") or "progressive") not in ("progressive", "unknown", None)
+        or "captionWindows" in v0 and windows_count_fields(v0.get("captionWindows")),
         "audioLanguages": sorted({x["language"] for x in a if x.get("language")}),
         "subtitleLanguages": sorted({x["language"] for x in sub if x.get("language")}),
         "subtitleTracks": len(sub), "imageSubtitles": any(x.get("form") == "image" for x in sub),
@@ -756,8 +1215,48 @@ def source_essence(streams, chapters):
         "fonts": any(x["type"] == "attachment" and x.get("role") == "font" for x in streams),
         "chapters": bool(chapters),
         "commentaryTracks": sum(1 for x in a if x.get("purpose") == "commentary"),
-        **track_essence(a, sub, v0.get("closedCaptions", False)),
+        **track_essence(a, sub, v0.get("closedCaptions", False) or own),
+        **({"closedCaptionsKnown": True} if captions_known(streams, off, plan) else {}),
     }
+
+
+def counts_of(doc, keys):
+    """The counts of doc (a dict) by keys, each a whole number from 0, and those alone."""
+    return {k: doc[k] for k in keys if isinstance(doc.get(k), int) and not isinstance(doc.get(k), bool)
+            and doc[k] >= 0}
+
+
+def scan_block(scan):
+    """A package's scan as its record keeps it, from the manifest's — the transcoder's contract's, as the
+    packager copies it: what was done (done) and found (found), in the words it says them in, known here
+    (SCAN_DONE, SCAN_FOUND) or not; the words of how (SCAN_WORDS: what judged it, the field order it was
+    marked with and the one taken and what named it, the package's frame rate, the filters), each a text
+    or null, and whether the examination saw that order (orderSeen, or null); the counts of the
+    examination (idet: SCAN_COUNTS, and its windows, SCAN_WINDOWS), left out where it gives none; and
+    what the read-through of the whole title found (verified: VERIFIED_FLAGS, VERIFIED_WORDS and
+    VERIFIED_COUNTS),
+    left out where none ran. None for a manifest without one: no object, or one that says neither what
+    was done nor what was found. One that says what was done and not what was found was found unknown,
+    and one that says what was found and not what was done did nothing it names (done null)."""
+    if not isinstance(scan, dict) or not (text(scan.get("done")) or text(scan.get("found"))):
+        return None
+    out = {"found": text(scan.get("found")) or "unknown", "done": text(scan.get("done")),
+           **{k: text(scan.get(k)) for k in SCAN_WORDS},
+           "orderSeen": scan["orderSeen"] if isinstance(scan.get("orderSeen"), bool) else None}
+    idet = scan.get("idet")
+    if isinstance(idet, dict):
+        counts = counts_of(idet, SCAN_COUNTS)
+        windows = counts_of(idet.get("windows"), SCAN_WINDOWS) if isinstance(idet.get("windows"), dict) else {}
+        if windows:
+            counts["windows"] = windows
+        if counts:
+            out["idet"] = counts
+    verified = scan.get("verified")
+    if isinstance(verified, dict):
+        out["verified"] = {**{k: verified[k] if isinstance(verified.get(k), bool) else None for k in VERIFIED_FLAGS},
+                           **{k: text(verified.get(k)) for k in VERIFIED_WORDS},
+                           **counts_of(verified, VERIFIED_COUNTS)}
+    return out
 
 
 def package_essence(man, source=None, streams=None):
@@ -769,6 +1268,16 @@ def package_essence(man, source=None, streams=None):
     which in PQ, the top one among them, says its init segment carries the original's (hdr10Metadata),
     encoded or not. One in PQ that says nothing of it — one whose init segment could not take it — and
     anything else re-encoded is taken to have lost it.
+
+    A package has closed captions when its top video rendition says its own stream carries them
+    (closedCaptions): CEA-608/708 captions in the stream's SEI, as the packager read them from the
+    rendition's frames — a copy of the original's stream keeps the original's, an encode those
+    its encoder wrote. The top rendition is the package's full picture, as a source's essence has the
+    captions of its first video stream: what a lower rung lacks, the top one still carries. A top
+    rendition that says nothing of them has none, and neither has the package.
+
+    A package whose manifest says what its picture is as far as fields go (scan, scan_block) has what
+    was done of it (scan: its done), and none says nothing of it.
 
     A package has styled subtitles when a subtitle keeps its styled original (styled), and fonts when
     it lists a font file (fonts). Where the source's streams are given — a source record's streams —
@@ -808,7 +1317,8 @@ def package_essence(man, source=None, streams=None):
         "fonts": carried(fonts, lambda x: x.get("type") == "attachment" and x.get("role") == "font"),
         "chapters": False,
         "commentaryTracks": sum(1 for x in auds if x.get("purpose") == "commentary"),
-        **track_essence(auds, subs, False),
+        **track_essence(auds, subs, v0.get("closedCaptions") is True),
+        **({"scan": scan["done"]} if (scan := scan_block(man.get("scan"))) and scan["done"] else {}),
     }
 
 
@@ -880,9 +1390,93 @@ def losses_against(src, pkg_essence, streams, renditions, subs):
     return out
 
 
-# What an original carries that a package can fail to carry, in the terms an original-deleted event
-# accepts. 'chapters' is not here (the version keeps the marks, not the file) and neither is
-# 'interlaced' (a deinterlaced picture is not a poorer one).
+# ==== the deletion gate, shared ====
+# From here to the end of this block the text is the same, byte for byte, in tools/libv2_records.py,
+# tools/validate-library-v2.py and tools/library-v2-rebuild.py: every reader computes the gate with it, and
+# test-library-v2-tools.py holds the three copies equal. It needs nothing but the modules json and re.
+#
+# A picture's closed captions are read in windows, by ONE plan for every reader: library/v2/caption-windows.json,
+# whose bytes are CAPTION_PLAN_JSON here, held to the file by test-library-v2-tools.py and to its pinned sha256
+# by every repository that vendors it. It is data the code checks itself against, not configuration: nothing
+# reads it at run time from a path a setting could change. The plan's span is what the gate knows without
+# reading (plan_of: the stored probe's picture start_time + duration); the start, then 10, 30, 50, 70 and 90 %
+# of it, each but the start at most CAPTION_TAIL_S short of its end (plan_places), CAPTION_PACKETS packets
+# each, at least CAPTION_MIN_FRAMES of them decoded (half, and 24 at least), each starting at its place by
+# the plan's slack (window_lands: max(10 s, gop + 0.5 s), up to 30 s before it where no keyframe lies between,
+# of a gop of 0 within the tolerance alone). A read whose span is not the plan's within the tolerance
+# (caption_tolerance: a frame step and 0.5 s) tells nothing. Where two places lie closer than a window reaches (plan_short), the picture is read
+# whole (a window that says so, whole, and counts its packets), and tells none only where every packet of it
+# was decoded (windows_tell_none).
+CAPTION_PLAN_JSON = r'''{
+  "schema": "zaentrum.library.caption-windows/1",
+  "note": "The plan every reader of an original's closed captions reads its windows by, and the data it checks itself against: not configuration. tools/libv2_records.py carries these bytes in its code and its tests hold them to this file; every other reader vendors this file, pinned by its sha256, and a copy that differs fails its build. No installation edits it, and nothing reads it from a path a setting could change.",
+  "start": true,
+  "at": [0.1, 0.3, 0.5, 0.7, 0.9],
+  "span": "picture",
+  "picture": "the stored probe's film: its one video stream that is no cover by the closed lists' rule, a cover being all of these - marked as an attachment (the attached_pic disposition, or both a filename and a mimetype tag, never one alone), of a cover's codec (mjpeg, png, bmp; its mimetype, where it has one, image/*, and never in the codec's stead), of at most one frame (nb_frames, NUMBER_OF_FRAMES) and of no length of its own (no DURATION tag) -, wherever a cover lies; any other video stream may be the picture: where none is, or two could each be it, there is no plan",
+  "end": "the stored probe's picture start_time + duration; the format's start_time where the picture gives none; where it gives no duration, the record's container.durationMs, and the format's duration only where the record gives none",
+  "frameStep": "one over the stored probe's picture avg_frame_rate, or its r_frame_rate where avg_frame_rate is 0/0: what the gate can know without reading; where the probe states no rate there is no plan, and the read is not known; no reader measures a frame step of its own, which the gate could not check",
+  "endTolerance": {"frameSteps": 1, "s": 0.5, "words": "frameStep + 0.5: one frame step of the picture plus 0.5 s, the same on every side: both the start and the end of a read's measured span, and both the first frame and the end of a whole read, lie within it of the plan's span"},
+  "tailS": 30,
+  "startCapped": false,
+  "packets": 48,
+  "minFrames": 24,
+  "packetsShare": 0.5,
+  "gopPackets": 1200,
+  "placeSlack": {"s": 10, "gopPlus": 0.5, "backS": 30, "words": "a window's first frame lies within max(10 s, gop + 0.5 s) of its place, before or after it; or up to backS before it where the packets from its seek show no keyframe between its first frame and its place (keyframeBefore); of a gop of 0 a window counts only at its own place, within endTolerance"},
+  "shortReach": {"packets": 48, "gop": true, "s": 0.5, "words": "packets x frameStep + gop + 0.5"},
+  "short": "whole",
+  "wholeLeadingMax": 16,
+  "wholeComplete": "packets - leading <= frames <= packets: leading the stream's own leading pictures, the packets before its first keyframe in decode order and the first gop's packets timed before that keyframe, at most wholeLeadingMax; a decoder that outputs the leading pictures too is complete as well; a read that gives no leading is not complete",
+  "bounds": {"threads": 1, "addressSpaceMiB": 1280, "cpuS": 600, "timeoutS": 180},
+  "rule": "The picture is the stored probe's film by the closed lists' cover rule (picture); where two streams could each be it there is no plan. The plan's span is what the gate knows without reading: from the stored probe's picture start_time (the format's where the picture gives none) to that plus its duration (where the picture gives none, the record's container.durationMs, and the format's duration only where the record gives none); frameStep is one over the stored probe's picture avg_frame_rate, or its r_frame_rate where avg_frame_rate is 0/0; where the probe states no rate there is no plan, and the read is not known. A read places six windows on it: the start, at the start itself, never capped by the tail; then each of at, at start + at x (end - start), at most tailS short of the end and never before the start - never half the span or any other share of it. A reader measures the end of the picture's last video packet, and the first frame of its start: a read whose measured span does not lie with both its start and its end within endTolerance of the plan's start and end fails, and tells nothing; it reports its span beside the file's length (duration), and a validator holds the span a read reports to its record's plan within endTolerance. gop is the longest run between two keyframes among the picture's first gopPackets packets, at frameStep, and 0 where they list fewer than two keyframes; a read reports it. Each window decodes packets packets from the keyframe its seek lands on, and counts only where it decoded at least packetsShare of them and at least minFrames frames, and its first frame lies at its place by placeSlack. The six tell none only where all six are such windows, one at each place, none shows captions, and their spans, in the order of their places, are disjoint and rise: a file whose gop is 0 never tells none of windows that overlap or don't start at their own places. Where two of the places lie closer than shortReach (packets x frameStep + gop + 0.5 s), as on a span too short for six disjoint windows at most tailS short of its end, the read is the whole picture, every packet decoded: one window at 0, whole: true, with its frames, its packets and its leading pictures (leading) counted. It stands for the six, and tells none only where it is complete by wholeComplete - it decoded every packet but the stream's own leading pictures, the packets before its first keyframe in decode order and the first gop's packets timed before that keyframe, at most wholeLeadingMax, or those too -, none shows captions, and its first frame and its end lie within endTolerance of the plan's start and end. A record tells the two apart by their shape: six windows, or one whole window alone; a picture whose places lie closer than shortReach tells none by a whole read alone, and a whole read of a picture long enough for six windows is accepted too: it is the stronger proof. Every read, a window's, the keyframe listings, the end's and the short picture's whole read alike, runs under the same bounds, on every side: threads decoding threads, addressSpaceMiB of address space, cpuS of CPU time and timeoutS seconds of wall time for each read; a bound that is hit means not known, never none. The read of every packet of an HEVC picture for a caption signature, which is deferred, is not bound by these: it gets a bound of its own once its form is fixed. Neither a whole read nor windows say none of a picture whose packets carry captions its decoder does not export (HEVC's suffix SEI) unless every packet of it was read for a caption signature and none carries one. Any other read is not known."
+}
+'''
+CAPTION_PLAN = json.loads(CAPTION_PLAN_JSON)
+CAPTION_PACKETS = CAPTION_PLAN["packets"]
+CAPTION_WINDOWS = (0.0, *CAPTION_PLAN["at"]) if CAPTION_PLAN["start"] else tuple(CAPTION_PLAN["at"])
+CAPTION_TAIL_S = float(CAPTION_PLAN["tailS"])
+CAPTION_GOP_PACKETS = CAPTION_PLAN["gopPackets"]
+CAPTION_MIN_FRAMES = max(CAPTION_PLAN["minFrames"], -(-CAPTION_PACKETS * CAPTION_PLAN["packetsShare"] // 1))
+CAPTION_BOUNDS = CAPTION_PLAN["bounds"]
+# The closed lists of how closed captions and fields are carried, kept the same as the analyzer's, by its
+# names: the containers (CONTAINERS, ffprobe's format_name); the codecs of the film's picture (VIDEO_CODECS),
+# of them those whose packets carry A53 the decoder does not export (SCANNED_CODECS: HEVC's suffix SEI); one
+# film, beside attached pictures (an image the container marks as an attached file, of no length of its own:
+# COVER_CODECS); streams of captions of their own (CAPTION_CODECS, CAPTION_TAGS); the subtitle streams
+# (SUBTITLE_CODECS) and data streams (DATA_CODECS, DATA_TAGS) that carry none; audio and attachments of any
+# kind; and no picture of an analog capture's height, whose blanking lines keep line 21 (VBI_HEIGHTS). A file
+# with anything off them is one whose captions and fields can't be told (off_list, in the analyzer's offList
+# names: container:flv, stream:data:bin_data, video-streams:2, codec:vc1, picture:vbi-lines), and the gate
+# keeps it.
+CONTAINERS = ("matroska,webm", "mov,mp4,m4a,3gp,3g2,mj2", "mpegts", "mpeg", "avi")
+VIDEO_CODECS = ("h264", "hevc", "mpeg1video", "mpeg2video", "av1")
+SCANNED_CODECS = ("hevc",)
+COVER_CODECS = ("mjpeg", "png", "bmp")
+CAPTION_CODECS = ("eia_608",)
+CAPTION_TAGS = ("c608", "c708")
+SUBTITLE_CODECS = ("subrip", "srt", "ass", "ssa", "webvtt", "mov_text", "text", "microdvd", "hdmv_pgs_subtitle",
+                   "dvd_subtitle", "dvb_subtitle", "dvb_teletext")
+DATA_CODECS = ("scte_35", "timed_id3", "epg")
+DATA_TAGS = ("tmcd",)
+# And an MP4's chapter track (chapter_track), by this rule, the same words in the analyzer, the record logic and
+# the waves' check: a data stream is the file's chapter track, and on the list, only where all of these hold in
+# the stored probe: the container is the MP4 family (mov,mp4,m4a,3gp,3g2,mj2); the stream is codec_type data,
+# codec_name bin_data, codec_tag_string text; the file has chapters; the stream's sample count (nb_frames)
+# equals the number of chapters; and it is the file's only such stream. A probe that lacks the tag or the
+# count leaves it off the list. A package loses no chapters by it: they come from the catalog's marks, the
+# build hands them to the packager, and the version keeps them.
+CHAPTER_CONTAINER = "mov,mp4,m4a,3gp,3g2,mj2"
+CHAPTER_CODEC, CHAPTER_TAG = "bin_data", "text"
+VBI_HEIGHTS = (486, 512, 608)
+# The one word, of a picture's field order (ffprobe's field_order) and of a scan's found, that says a picture
+# is whole frames, as it is written. Every other — tt, bb, tb, bt, unknown, a word not known here, the same
+# word written otherwise, and no field order at all, which is how ffprobe's JSON gives an unknown one — says
+# it may be in fields.
+WHOLE_FRAMES = "progressive"
+# What an original carries that a package can fail to carry, in the terms an original-deleted event accepts.
+# 'chapters' is not here (the version keeps the marks, not the file); 'closedCaptions' and 'interlaced' are
+# the gate's own rules, which no event accepts (deletion_gate).
 LOSS_FLAGS = ("surround", "losslessAudio", "objectAudio", "hdr10Metadata", "dolbyVision", "stereo3d",
               "imageSubtitles", "styledSubtitles", "fonts", "closedCaptions")
 LOSS_COUNTS = ("maxAudioChannels", "maxVideoHeight", "videoBitDepth", "subtitleTracks",
@@ -890,14 +1484,595 @@ LOSS_COUNTS = ("maxAudioChannels", "maxVideoHeight", "videoBitDepth", "subtitleT
 LOSS_LANGUAGES = ("audioLanguages", "subtitleLanguages", "sdhSubtitleLanguages", "forcedSubtitleLanguages")
 
 
-def deletion_gate(sources, package):
-    """What deleting a version's originals costs: the essence of its sources minus that of its
-    package, sorted. Nothing records it, so every reader computes it the same way, and an
-    original-deleted event accepts no more than it."""
+def gate_number(v):
+    """v where it is a number (no boolean, no text), as a float, else None."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def gate_count(v, top=None):
+    """v where it is a whole number from 0 (to top, where given), else None."""
+    if not isinstance(v, int) or isinstance(v, bool) or v < 0 or (top is not None and v > top):
+        return None
+    return v
+
+
+def window_of(w):
+    """One entry of a picture's or a read's caption windows as every reader reads it: (window, sound). sound: it
+    is a window — an object whose at is a number from 0 to 1, start and end numbers, end not before start,
+    frames a whole number from 0, captions a boolean (null too, of one that decoded no frame; never true of
+    one), and interlacedFrames and repeatFrames, where it gives them, whole numbers from 0 to frames; a read of
+    the whole picture (whole true) at 0, its packets (packets) a whole number from frames, its leading pictures
+    (leading), where it gives them, a whole number from 0 to wholeLeadingMax; keyframeBefore, where
+    it gives it, a boolean (the packets from its seek show no keyframe between its first frame and its place).
+    window: the window as
+    a record keeps it; of an entry that is no window, a failed one (frames 0, captions false, at its fraction
+    where it has one), never left out."""
+    d = w if isinstance(w, dict) else {}
+    at, start, end = gate_number(d.get("at")), gate_number(d.get("start")), gate_number(d.get("end"))
+    frames, captions = gate_count(d.get("frames")), d.get("captions")
+    counts = {k: d[k] for k in ("interlacedFrames", "repeatFrames") if k in d}
+    whole = {k: d[k] for k in ("whole", "packets", "leading") if k in d}
+    keyed = {"keyframeBefore": True} if d.get("keyframeBefore") is True else {}
+    sound = (isinstance(w, dict) and at is not None and 0 <= at <= 1 and start is not None and end is not None
+             and end >= start and frames is not None
+             and (isinstance(captions, bool) and not (frames == 0 and captions) or captions is None and frames == 0)
+             and all(gate_count(v, frames) is not None for v in counts.values())
+             and ("keyframeBefore" not in d or isinstance(d["keyframeBefore"], bool))
+             and (not whole or whole.get("whole") is True and at == 0 and gate_count(whole.get("packets")) is not None
+                  and whole["packets"] >= frames
+                  and ("leading" not in whole or gate_count(whole["leading"], CAPTION_PLAN["wholeLeadingMax"]) is not None)))
+    if not sound:
+        a = at if at is not None and 0 <= at <= 1 else 0.0
+        p = start if start is not None else 0.0
+        return {"at": round(a, 3), "start": round(p, 3), "end": round(p, 3), "frames": 0, "captions": False}, False
+    return ({"at": round(at, 3), "start": round(start, 3), "end": round(end, 3), "frames": frames,
+             "captions": captions is True, **counts, **whole, **keyed}, True)
+
+
+def caption_windows_of(windows):
+    """The caption windows a manifest, a reading or a record gives, as a record keeps them (window_of), in their
+    order, every entry: one that is no window is a failed one. None for anything that is no list."""
+    return [window_of(w)[0] for w in windows] if isinstance(windows, list) else None
+
+
+def windows_show(windows):
+    """Whether a window of windows (as given) is one that decoded frames and shows captions."""
+    return isinstance(windows, list) and any(s and w["captions"] for w, s in map(window_of, windows))
+
+
+def gate_seconds(v):
+    """A time or a length as ffprobe gives one ('12.345000') or a record keeps one (a number), as seconds, or
+    None."""
+    if isinstance(v, bool):
+        return None
+    try:
+        t = float(v)
+    except (TypeError, ValueError):
+        return None
+    return t if t == t and abs(t) != float("inf") else None
+
+
+def frame_step_of(stream):
+    """One over the frame rate of a probe's picture stream (the plan's frameStep: avg_frame_rate, or r_frame_rate
+    where that is 0/0, as 'num/den'), in seconds, or None where neither gives one."""
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", str((stream or {}).get(key) or ""))
+        if m and int(m.group(1)) > 0 and int(m.group(2)) > 0:
+            return int(m.group(2)) / int(m.group(1))
+    return None
+
+
+def plan_of(probe, duration_ms=None):
+    """The plan's span of the picture of a stored probe, as the gate knows it without reading: {start, end, step},
+    start its picture's start_time (the format's where the picture gives none), end that plus its duration -
+    where the picture gives none, the record's container.durationMs (duration_ms), and the format's duration
+    only where the record gives none -, step its frame step (frame_step_of); its picture the probe's film
+    (film_of). None where the probe is no probe, has no film or more than one, or gives no start, length or
+    frame rate: where the probe states no rate there is no plan,
+    and no reader measures one of its own, which the gate could not check."""
+    if not isinstance(probe, dict) or not isinstance(probe.get("streams"), list):
+        return None
+    fmt = probe.get("format") if isinstance(probe.get("format"), dict) else {}
+    picture = film_of(probe)
+    if picture is None:
+        return None
+    start = gate_seconds(picture.get("start_time"))
+    if start is None:
+        start = gate_seconds(fmt.get("start_time"))
+    length = gate_seconds(picture.get("duration"))
+    if length is None or length <= 0:
+        ms = gate_number(duration_ms)
+        length = ms / 1000 if ms is not None and ms > 0 else gate_seconds(fmt.get("duration"))
+    step = frame_step_of(picture)
+    if start is None or length is None or length <= 0 or step is None:
+        return None
+    return {"start": start, "end": start + length, "step": step}
+
+
+def film_of(probe):
+    """The film of a probe: its one video stream that is no cover by the closed lists' rule (attached_picture:
+    the attachment marks, an image, no length of its own), wherever a cover lies among its streams; None where
+    there is none, or where two streams could each be it."""
+    films = [x for x in (probe or {}).get("streams") or [] if isinstance(x, dict) and x.get("codec_type") == "video"
+             and not attached_picture(x)]
+    return films[0] if len(films) == 1 else None
+
+
+def caption_tolerance(plan):
+    """How far a read's span may lie from the plan's, at either end, and a window's first frame after its place:
+    the plan's endTolerance, a frame step and 0.5 s."""
+    t = CAPTION_PLAN["endTolerance"]
+    return t["frameSteps"] * plan["step"] + t["s"]
+
+
+def window_lands(start, place, gop, plan, keyed=False):
+    """Whether a window whose first frame is at start lies at its place (seconds) by the plan's slack
+    (placeSlack): within max(10 s, gop + 0.5 s) of it, before or after; or up to 30 s before it where the packets
+    from its seek show no keyframe between its first frame and its place (keyed, its keyframeBefore). Of a gop
+    of 0 - fewer than two keyframes listed - only at its own place, within the tolerance (caption_tolerance)."""
+    if not gop:
+        return abs(start - place) <= caption_tolerance(plan)
+    slack = CAPTION_PLAN["placeSlack"]
+    return abs(start - place) <= max(slack["s"], gop + slack["gopPlus"]) \
+        or keyed is True and place - slack["backS"] <= start <= place
+
+
+def plan_places(plan):
+    """Where the plan's windows lie on the plan's span (plan_of), in seconds, one for each of CAPTION_WINDOWS:
+    the start at the start itself, never capped by the tail; each other at start + at x (end - start), at most
+    CAPTION_TAIL_S short of the end and never before the start."""
+    start, end = plan["start"], plan["end"]
+    return [start if at == 0 else max(start, min(start + at * (end - start), end - CAPTION_TAIL_S))
+            for at in CAPTION_WINDOWS]
+
+
+def plan_short(plan, gop):
+    """Whether the plan's windows can't be read on frames of their own: two of its places (plan_places) lie
+    closer than a window reaches, its packets at the frame step from a keyframe up to gop before its place, and
+    0.5 s (the plan's shortReach). Such a picture is read whole."""
+    r = CAPTION_PLAN["shortReach"]
+    reach = r["packets"] * plan["step"] + (gop if r["gop"] else 0.0) + r["s"]
+    places = sorted(plan_places(plan))
+    return any(b - a < reach for a, b in zip(places, places[1:]))
+
+
+def whole_complete(w):
+    """Whether a read of the whole picture (a window as window_of keeps it) is complete by the plan (wholeComplete):
+    it decoded at least every packet but the stream's own leading pictures (leading: the packets before its first
+    keyframe in decode order and the first gop's packets timed before it, at most wholeLeadingMax) and no more than
+    its packets - a decoder that outputs the leading pictures too is complete as well. One that gives no leading is
+    not complete."""
+    leading = gate_count(w.get("leading"), CAPTION_PLAN["wholeLeadingMax"])
+    return leading is not None and w["frames"] > 0 and w["packets"] - leading <= w["frames"] <= w["packets"]
+
+
+def caption_read_of(picture):
+    """A record's picture's caption read, as windows_tell_none reads one: its windows (captionWindows), the span
+    the read measured (captionSpan) and the gop it found (captionGop)."""
+    picture = picture if isinstance(picture, dict) else {}
+    return {"windows": picture.get("captionWindows"), "span": picture.get("captionSpan"), "gop": picture.get("captionGop")}
+
+
+def windows_tell_none(read, plan):
+    """Whether a read (a record's picture's, caption_read_of, or a deletion's captionsRead: {windows, span, gop})
+    tells that its picture carries no closed captions, by the plan (CAPTION_PLAN) over the plan's span the gate
+    knows (plan_of): every entry of its windows is a window and none shows captions; the span it measured is the
+    plan's within the tolerance at either end (caption_tolerance); its gop a number from 0 (0 where it gives
+    none); and its windows are the plan's six - one at each of CAPTION_WINDOWS, each of at least
+    CAPTION_MIN_FRAMES frames (half its CAPTION_PACKETS packets, and 24 at least), its first frame at its place
+    (plan_places) by the plan's slack (window_lands), their spans, in the order of their places, disjoint
+    and rising, of a picture whose places are not too close (plan_short) -, or the one read of the whole picture
+    that is complete (whole_complete: every packet decoded but the stream's own leading pictures) over the plan's
+    span within the tolerance.
+    Anything else - no plan, a failed or malformed window, one too few (a read of five, without the start), one
+    of fewer frames than that, elsewhere than its place, two on the same frames, six of a picture too
+    short for them, a span that is not the plan's, a whole read that missed a packet or gives no leading - is not
+    known: of a gop of 0 none that overlap or don't start at their places."""
+    if plan is None or not isinstance(read, dict):
+        return False
+    windows = read.get("windows")
+    if not isinstance(windows, list) or not windows:
+        return False
+    checked = [window_of(w) for w in windows]
+    if not all(s for _, s in checked):
+        return False
+    ws = sorted((w for w, _ in checked), key=lambda w: w["at"])
+    if any(w["captions"] for w in ws):
+        return False
+    tol = caption_tolerance(plan)
+    span = read.get("span") if isinstance(read.get("span"), dict) else {}
+    first, last = gate_number(span.get("start")), gate_number(span.get("end"))
+    if first is None or last is None or abs(first - plan["start"]) > tol or abs(last - plan["end"]) > tol:
+        return False
+    gop = 0.0 if read.get("gop") is None else gate_number(read.get("gop"))
+    if gop is None or gop < 0:
+        return False
+    if any(w.get("whole") for w in ws):
+        w = ws[0]
+        return (len(ws) == 1 and whole_complete(w)
+                and abs(w["start"] - plan["start"]) <= tol and abs(w["end"] - plan["end"]) <= tol)
+    if plan_short(plan, gop) or len(ws) != len(CAPTION_WINDOWS):
+        return False
+    for w, at, place in zip(ws, CAPTION_WINDOWS, plan_places(plan)):
+        if abs(w["at"] - at) > 1e-3 or w["frames"] < CAPTION_MIN_FRAMES \
+                or not window_lands(w["start"], place, gop, plan, w.get("keyframeBefore")):
+            return False
+    return all(b["start"] >= a["end"] and b["start"] > a["start"] for a, b in zip(ws, ws[1:]))
+
+
+def windows_count_fields(windows):
+    """Whether windows (as given) put their picture in fields: a window counted interlaced frames, or says a
+    count it can't be read for (no whole number from 0 to its frames, or one of an entry that is no window);
+    one that is no list, of a read that has no windows, too."""
+    if not isinstance(windows, list):
+        return True
+    for w in windows:
+        if not isinstance(w, dict):
+            continue
+        frames = gate_count(w.get("frames"))
+        for key in ("interlacedFrames", "repeatFrames"):
+            if key in w and gate_count(w[key], frames) is None:
+                return True
+        if gate_count(w.get("interlacedFrames"), frames):
+            return True
+    return False
+
+
+def picture_of(streams):
+    """The picture of a record's streams: its first video stream that is no attached picture, or None."""
+    return next((x for x in streams or [] if isinstance(x, dict) and x.get("type") == "video"
+                 and not (x.get("dispositions") or {}).get("attachedPic")), None)
+
+
+def captions_known(streams, off, plan):
+    """Whether a source's essence knows its closed captions, of its record's streams, what of its file is off
+    the closed lists (off) and the plan's span of its stored probe (plan_of): a stream that is closed captions
+    of its own, or its picture's caption signature, says them; or its picture's caption windows show them; or
+    its picture's read tells none (windows_tell_none, by the plan), of a file on the lists (off empty), and of a
+    picture whose packets carry A53 its decoder does not export (SCANNED_CODECS) only where every packet of it
+    was read and none carries a caption signature."""
+    picture = picture_of(streams) or {}
+    if any(x.get("closedCaptions") is True for x in streams or [] if isinstance(x, dict)
+           and x.get("type") in ("subtitle", "data")) or picture.get("captionSignature") is True:
+        return True
+    if windows_show(picture.get("captionWindows")):
+        return True
+    return (windows_tell_none(caption_read_of(picture), plan) and not off
+            and (picture.get("codec") not in SCANNED_CODECS or picture.get("captionSignature") is False))
+
+
+def field_order_word(order):
+    """A field order as in_fields reads it: as written, and unknown where none is given."""
+    return order if isinstance(order, str) and order else "unknown"
+
+
+def read_through(verified):
+    """Whether a scan's read-through of the whole title (verified) bore out whole frames and read all of it: ok
+    and complete true, and its counts adding up - it read every packet of the stream but its leading pictures,
+    frames = packets - leading, no other slack. One without leading (a scan from before that rule), or without
+    packets, is never complete."""
+    if not isinstance(verified, dict) or verified.get("ok") is not True or verified.get("complete") is not True:
+        return False
+    frames, packets, leading = (gate_count(verified.get(k)) for k in ("frames", "packets", "leading"))
+    return None not in (frames, packets, leading) and frames == packets - leading
+
+
+def scan_holds(pkg):
+    """Why the scan of the package record pkg keeps its title's originals in fields, or None where it says
+    nothing (a package without a scan) or lets them go the ordinary way: one whose found is exactly progressive,
+    whose read-through of the whole title is ok and complete (read_through), and whose done is progressive or
+    none. A record that is no object, a scan that is no object, any other found (unknown, blank, not text, a
+    word not known here, progressive without its read-through) and any other done keep them."""
+    if not isinstance(pkg, dict):
+        return "a package record of the title can't be read"
+    scan = pkg.get("scan")
+    if scan is None:
+        return None
+    if not isinstance(scan, dict):
+        return "the scan of a package of the title is no object"
+    found, done, verified = scan.get("found"), scan.get("done"), scan.get("verified")
+    if found != WHOLE_FRAMES:
+        return f"the scan of a package of the title found {found!r}"
+    if not read_through(verified):
+        return "the scan of a package of the title found progressive without its whole title read through"
+    if done not in ("progressive", "none"):
+        return f"the scan of a package of the title says {done!r} was done"
+    return None
+
+
+def in_fields(sources, packages=(), probes=(), reads=()):
+    """Why the originals of a version are in fields as the deletion gate reads it, widely, or None where nothing
+    says so. sources are their source records, probes the probes kept of them (ffprobe.json), packages the
+    package records of every version of the title, of other sources too, and reads the reads their deletion
+    events carry (captionsRead). In fields: a record marked so (its essence's interlaced); a picture of a record
+    or of a probe whose field order is not exactly progressive (tt, bb, tb, bt, unknown, a word written
+    otherwise, none given, since ffprobe's JSON leaves an unknown one out); a caption window of a picture or of
+    a read that counted interlaced frames, or a count that can't be read (windows_count_fields); a read that is
+    no object or has no windows; or the scan of any package of the title that doesn't let it go (scan_holds).
+    A package without a scan says nothing. No word of what a scan says was done lets an original go."""
+    for s in sources:
+        if not isinstance(s, dict):
+            return "a source record of it can't be read"
+        if (s.get("essence") or {}).get("interlaced") is True:
+            return "its record is marked interlaced"
+        for x in s.get("streams") or []:
+            if isinstance(x, dict) and x.get("type") == "video" and not (x.get("dispositions") or {}).get("attachedPic"):
+                if field_order_word(x.get("fieldOrder")) != WHOLE_FRAMES:
+                    return f"its record's field order is {field_order_word(x.get('fieldOrder'))!r}"
+                if "captionWindows" in x and windows_count_fields(x.get("captionWindows")):
+                    return "a caption window of its picture counted interlaced frames, or a count it can't be read for"
+    for p in probes:
+        for x in (p.get("streams") if isinstance(p, dict) and isinstance(p.get("streams"), list) else []):
+            if isinstance(x, dict) and x.get("codec_type") == "video" \
+                    and not (x.get("disposition") or {}).get("attached_pic"):
+                if field_order_word(x.get("field_order")) != WHOLE_FRAMES:
+                    return f"its probe's field order is {field_order_word(x.get('field_order'))!r}"
+    for r in reads:
+        if not isinstance(r, dict) or windows_count_fields(r.get("windows")):
+            return "the read its deletion carries counted interlaced frames, or can't be read"
+    for pkg in packages:
+        why = scan_holds(pkg)
+        if why:
+            return why
+    return None
+
+
+def caption_stream(s):
+    """Whether the probe's stream s is closed captions of its own (CAPTION_CODECS, CAPTION_TAGS), whatever its
+    kind."""
+    return str(s.get("codec_name") or "").lower() in CAPTION_CODECS \
+        or str(s.get("codec_tag_string") or "").lower() in CAPTION_TAGS
+
+
+def attached_picture(st):
+    """Whether a video stream of a probe is a cover, a still picture the container holds as an attached file, as the
+    analyzer reads it - all of these: marked as one (the attached_pic disposition, or Matroska's filename and
+    mimetype tags); an image of a cover's codec (COVER_CODECS: JPEG, PNG, BMP), its mimetype, where it has one,
+    image/*, and without one the attached_pic disposition (an MP4 cover); and of no length of its own (no more
+    than one frame counted, no DURATION tag; the duration ffprobe gives a stream is the file's where the container
+    gives none, so it is no mark). A stream of any other codec - a webp image among them - is a video stream,
+    whatever its marks say."""
+    tags = {str(k).lower(): str(v) for k, v in (st.get("tags") or {}).items()}
+    pic = bool((st.get("disposition") or {}).get("attached_pic"))
+    marked = pic or ("filename" in tags and "mimetype" in tags)
+    mime = tags.get("mimetype", "").strip().lower()
+    image = st.get("codec_name") in COVER_CODECS and (mime.startswith("image/") if mime else pic)
+    counted = [float(v) for v in (st.get("nb_frames"), tags.get("number_of_frames"))
+               if isinstance(v, (int, float, str)) and re.fullmatch(r"[0-9]+(\.[0-9]+)?", str(v))]
+    length = max(counted, default=0) > 1 or any(k.startswith("duration") for k in tags)
+    return marked and image and not length
+
+
+def chapter_stream(st):
+    """codec_type data, codec_name bin_data, codec_tag_string text."""
+    return isinstance(st, dict) and st.get("codec_type") == "data" and st.get("codec_name") == CHAPTER_CODEC \
+        and str(st.get("codec_tag_string") or "").lower() == CHAPTER_TAG
+
+
+def chapter_track(st, probe):
+    """Whether a data stream of a probe is the file's chapter track, and on the list: only where all of these
+    hold in the stored probe: the container is the MP4 family (mov,mp4,m4a,3gp,3g2,mj2); the stream is
+    codec_type data, codec_name bin_data, codec_tag_string text; the file has chapters; the stream's sample
+    count (nb_frames) equals the number of chapters; and it is the file's only such stream. A probe that lacks
+    the tag or the count leaves it off the list."""
+    fmt = probe.get("format") if isinstance(probe.get("format"), dict) else {}
+    chapters = probe.get("chapters")
+    marks = len(chapters) if isinstance(chapters, list) else 0
+    count = st.get("nb_frames")
+    try:
+        counted = count is not None and not isinstance(count, bool) and int(count) == marks
+    except (TypeError, ValueError):
+        counted = False
+    return fmt.get("format_name") == CHAPTER_CONTAINER and chapter_stream(st) and marks > 0 and counted \
+        and sum(1 for x in probe.get("streams") or [] if chapter_stream(x)) == 1
+
+
+def probe_shape(probe):
+    """Why the probe kept of a source (ffprobe.json) can't be read as one, or None: it is no object, its format
+    is no object, or its streams no list of objects, or none."""
+    if not isinstance(probe, dict):
+        return "its probe can't be read"
+    if not isinstance(probe.get("format"), dict) or not isinstance(probe.get("streams"), list) \
+            or not probe["streams"] or not all(isinstance(x, dict) for x in probe["streams"]):
+        return "its probe is no probe: no format, or no list of streams"
+    return None
+
+
+def off_list(probe):
+    """What of the file a probe describes is off the closed lists of how captions and fields are carried, in the
+    analyzer's offList names and in the order the probe gives them: its container (container:<format_name>),
+    each stream (stream:<codec_type>:<codec, else its tag, else none>), the count of its films
+    (video-streams:<n>), each film's codec (codec:<codec_name>), its picture (picture:vbi-lines). Empty for a
+    file on them."""
+    fmt = probe.get("format") if isinstance((probe or {}).get("format"), dict) else {}
+    off, films = [], []
+    name = str(fmt.get("format_name") or "none")
+    if name not in CONTAINERS:
+        off.append(f"container:{name}")
+    for st in (probe or {}).get("streams") or []:
+        if not isinstance(st, dict):
+            continue
+        kind, codec = str(st.get("codec_type") or "none"), str(st.get("codec_name") or "none")
+        tag = str(st.get("codec_tag_string") or "").lower()
+        if codec == "unknown":
+            codec = "none"
+        what = codec if codec != "none" or not tag or tag.startswith("[") else tag
+        if codec in CAPTION_CODECS or tag in CAPTION_TAGS:
+            continue
+        if kind == "video":
+            if not attached_picture(st):
+                films.append(st)
+        elif kind in ("audio", "attachment") or (kind == "subtitle" and codec in SUBTITLE_CODECS) \
+                or (kind == "data" and (codec in DATA_CODECS or tag in DATA_TAGS or chapter_track(st, probe))):
+            continue
+        else:
+            off.append(f"stream:{kind}:{what}")
+    if len(films) > 1:
+        off.append(f"video-streams:{len(films)}")
+    for st in films:
+        codec = str(st.get("codec_name") or "none")
+        if codec not in VIDEO_CODECS and f"codec:{codec}" not in off:
+            off.append(f"codec:{codec}")
+    if any(st.get("height") in VBI_HEIGHTS for st in films):
+        off.append("picture:vbi-lines")
+    return off
+
+
+def record_off_list(record):
+    """What of the file a source record describes is off the closed lists: its offList, where it keeps one (a
+    list of words; one of another shape can't be read: off), else as its container and streams say it — a data
+    stream's tag, which a record does not keep, is no tag, and a video stream an attached picture by its
+    disposition alone —, of a record written before record logic 11."""
+    if "offList" in (record or {}):
+        off = record["offList"]
+        return list(off) if isinstance(off, list) and all(isinstance(x, str) and x for x in off) \
+            else ["offList:unreadable"]
+    name = (((record or {}).get("container") or {}).get("format")) or "none"
+    off = [] if name in CONTAINERS else [f"container:{name}"]
+    films = []
+    for x in (record or {}).get("streams") or []:
+        if not isinstance(x, dict):
+            off.append("stream:unreadable")
+            continue
+        kind, codec = x.get("type") or "none", x.get("codec") or "none"
+        if codec == "unknown":
+            codec = "none"
+        if codec in CAPTION_CODECS or (kind in ("subtitle", "data") and x.get("closedCaptions")):
+            continue
+        if kind == "video":
+            if not (x.get("dispositions") or {}).get("attachedPic"):
+                films.append(x)
+        elif kind in ("audio", "attachment") or (kind == "subtitle" and codec in SUBTITLE_CODECS) \
+                or (kind == "data" and codec in DATA_CODECS):
+            continue
+        else:
+            off.append(f"stream:{kind}:{codec}")
+    if len(films) > 1:
+        off.append(f"video-streams:{len(films)}")
+    for x in films:
+        if (x.get("codec") or "none") not in VIDEO_CODECS and f"codec:{x.get('codec') or 'none'}" not in off:
+            off.append(f"codec:{x.get('codec') or 'none'}")
+    if any(x.get("height") in VBI_HEIGHTS for x in films):
+        off.append("picture:vbi-lines")
+    return off
+
+
+def gate_holds(sources, packages=(), probes=(), reads=()):
+    """What the deletion gate keeps the originals of a version for that their essences may not say, read from
+    their records, {key: why}. sources are their source records, one for each, or None where it can't be read;
+    probes the probes kept of them, one for each, in their order, None where there is none or it can't be read
+    (the plan's span of a record's picture is its probe's: plan_of); packages and
+    reads as in_fields'. Both keys, closedCaptions and interlaced: no source; a record that can't be read, or
+    whose streams are no list; a probe that can't be read as one (probe_shape); a record or a probe off the
+    closed lists (record_off_list, off_list); a read that is no object or has no list of windows. interlaced: in
+    fields (in_fields). closedCaptions: a stream of a record or a probe that is closed captions of its own
+    (caption_stream), as of records written before they said so; a record's picture that says it carries them
+    (a caption signature found, or windows that show them), whatever its essence says; an essence that says it
+    knows its captions where its record's streams and its probe's plan don't bear that out (captions_known), as no record the
+    record logic writes does; a picture whose packets carry A53 its decoder does not export (SCANNED_CODECS)
+    and whose packets were not read whole with none carrying a caption signature (captionSignature not
+    false)."""
+    out = {}
+
+    def both(why):
+        out.setdefault("closedCaptions", why)
+        out.setdefault("interlaced", why)
+
+    if not sources:
+        both("no source of it is known")
+    for s in sources:
+        if not isinstance(s, dict):
+            both("a source record of it can't be read")
+    good = [s for s in sources if isinstance(s, dict)]
+    why = in_fields(good, packages, [p for p in probes if isinstance(p, dict)], reads)
+    if why:
+        out.setdefault("interlaced", why)
+    probes = list(probes)
+    probe_of = {id(s): probes[i] if i < len(probes) else None for i, s in enumerate(sources)}
+    for s in good:
+        streams = s.get("streams")
+        if not isinstance(streams, list):
+            both("its record's streams can't be read")
+            streams = []
+        if any(isinstance(x, dict) and x.get("type") in ("subtitle", "data")
+               and (x.get("closedCaptions") or str(x.get("codec") or "").lower() in CAPTION_CODECS)
+               for x in streams):
+            out.setdefault("closedCaptions", "a stream of its record is closed captions of its own")
+        picture = picture_of(streams) or {}
+        if picture.get("codec") in SCANNED_CODECS and picture.get("captionSignature") is not False:
+            out.setdefault("closedCaptions", f"its picture is {picture.get('codec')}, whose packets were not read "
+                                             f"whole for a caption signature")
+        if picture.get("captionSignature") is True or windows_show(picture.get("captionWindows")):
+            out.setdefault("closedCaptions", "its record's picture carries closed captions")
+        off = record_off_list(s)
+        if off:
+            both("off the closed lists: " + ", ".join(off))
+        essence = s.get("essence") if isinstance(s.get("essence"), dict) else {}
+        plan = plan_of(probe_of.get(id(s)), (s.get("container") if isinstance(s.get("container"), dict) else {})
+                       .get("durationMs"))
+        if essence.get("closedCaptionsKnown") is True and not captions_known(streams, off, plan):
+            out.setdefault("closedCaptions", "its essence says it knows its closed captions, which its record's "
+                                             "streams don't bear out")
+    for p in probes:
+        why = probe_shape(p)
+        if why:
+            both(why)
+            continue
+        if any(caption_stream(x) for x in p["streams"]):
+            out.setdefault("closedCaptions", "a stream of its probe is closed captions of its own")
+        off = off_list(p)
+        if off:
+            both("off the closed lists: " + ", ".join(off))
+    for r in reads:
+        if not isinstance(r, dict) or not isinstance(r.get("windows"), list):
+            both("the read its deletion carries can't be read")
+    return out
+
+
+def essence_as_read(essence, reads, plan):
+    """The essence of a source as the reads its deletion events carry (captionsRead: {windows, span, gop, at};
+    one, or a list of them) tell it over the plan's span of its stored probe (plan_of), the worst deciding:
+    where one of them shows captions, it carries them, known; where every one tells none (windows_tell_none, by
+    the plan), it knows its captions, carried where its record says so; where one counted interlaced frames, or
+    a count of it can't be read, its picture is in fields. Any other read tells nothing more: the essence as its
+    record says it. Whether the file is on the closed lists is its record's and its probe's to say
+    (gate_holds), not a read's."""
+    reads = [reads] if isinstance(reads, dict) else list(reads or [])
+    if not reads:
+        return essence
+    out = dict(essence)
+    windows = [r.get("windows") if isinstance(r, dict) else None for r in reads]
+    if any(windows_show(w) for w in windows):
+        out.update(closedCaptions=True, closedCaptionsKnown=True)
+    elif all(windows_tell_none(r, plan) for r in reads):
+        out.update(closedCaptions=essence.get("closedCaptions") is True, closedCaptionsKnown=True)
+    if any(windows_count_fields(w) for w in windows):
+        out["interlaced"] = True
+    return out
+
+
+def deletion_gate(sources, package, held):
+    """What deleting a version's originals costs: the essence of its sources minus that of its package, sorted.
+    Nothing records it, so every reader computes it the same way, and an original-deleted event accepts no more
+    than it - never closedCaptions or interlaced, which keep the original (ADR-0015).
+
+    sources are the essences of the version's sources (as their deletions' reads tell them: essence_as_read),
+    package its package's, and held what gate_holds says of their records, each of its keys lost: required,
+    as a reader that has only the essences reads neither the lists, the probes, the packages' scans nor the
+    reads. An original whose closed captions are carried, or not known (closedCaptions not false, or
+    closedCaptionsKnown not true), is kept - closedCaptions - whatever its package carries; an original in fields
+    (interlaced not false) is kept - interlaced - whatever was done to make its package progressive. No source
+    at all keeps both."""
     lost = set()
+    if not sources:
+        lost |= {"closedCaptions", "interlaced"}
     for key in LOSS_FLAGS:
         if any(s.get(key) for s in sources) and not package.get(key):
             lost.add(key)
+    if any(s.get("closedCaptions") is not False or s.get("closedCaptionsKnown") is not True for s in sources):
+        lost.add("closedCaptions")
+    if any(s.get("interlaced") is not False for s in sources):
+        lost.add("interlaced")
     for key in LOSS_COUNTS:
         had = [s[key] for s in sources if s.get(key) is not None]
         kept = package.get(key)
@@ -906,7 +2081,13 @@ def deletion_gate(sources, package):
     for key in LOSS_LANGUAGES:
         kept = set(package.get(key) or [])
         lost |= {f"{key}:{x}" for s in sources for x in s.get(key) or [] if x not in kept}
+    lost |= set(held)
     return sorted(lost)
+# ==== the deletion gate, shared: end ====
+
+
+# How long each read of a picture may take, in seconds: the plan's (CAPTION_BOUNDS, timeoutS).
+CAPTION_TIMEOUT = CAPTION_BOUNDS["timeoutS"]
 
 
 # ---------------------------------------------------------------- ffprobe
@@ -971,24 +2152,33 @@ def fidelity(streams, container):
     return {"class": "derivative" if evidence else "unknown", "fingerprint": fingerprint, "evidence": evidence}
 
 
-def probed(probe, heads=None):
+def probed(probe, heads=None, captions=None, signature=None):
     """What a probe found in a file, in the terms a source record and an extra share: its container,
-    every stream, whether it was already a re-encode, and its essence. The container's title tag is
+    every stream, whether it was already a re-encode, its essence, and what of it is off the closed lists
+    of how captions and fields are carried (offList, which a source record keeps). The container's title tag is
     not among them, in any case: it routinely names where the file came from. heads are the first bytes
-    of the attachments the probe gives no role by itself, by stream index (attachment_heads)."""
+    of the attachments the probe gives no role by itself, by stream index (attachment_heads),
+    captions a picture's caption read, by stream index (caption_windows), and signature whether its
+    packets carry a caption signature, by stream index (caption_signature)."""
     fmt = probe.get("format") or {}
     tags = {k: text(v) for k, v in (fmt.get("tags") or {}).items() if text(v) and str(k).lower() != "title"}
-    streams = [norm_stream(s, (heads or {}).get(s.get("index"))) for s in probe.get("streams") or []]
+    streams = [norm_stream(s, (heads or {}).get(s.get("index")), (captions or {}).get(s.get("index")),
+                           (signature or {}).get(s.get("index"))) for s in probe.get("streams") or []]
     infer_forced_by_size(streams)
-    duration = fmt.get("duration")
-    container = {"format": fmt.get("format_name") or "",
-                 "durationMs": int(float(duration) * 1000) if duration else None,
+    container = {"format": fmt.get("format_name") or "", "durationMs": record_duration_ms(probe),
                  "bitrate": num(fmt.get("bit_rate")), "title": None,
                  "muxingApp": tags.get("muxing_application") or tags.get("encoder"),
                  "writingApp": tags.get("writing_application"),
                  "creationTime": tags.get("creation_time"), "tags": tags}
+    off = off_list(probe)
+    essence = source_essence(streams, probe.get("chapters") or [], off, plan_of(probe, container["durationMs"]))
+    picture = picture_stream(probe)
+    read = (captions or {}).get(picture["index"]) if picture is not None else None
+    if picture is not None and picture["index"] in (captions or {}) \
+            and windows_count_fields(read.get("windows") if isinstance(read, dict) else read):
+        essence["interlaced"] = True
     return {"container": container, "streams": streams, "fidelity": fidelity(streams, container),
-            "essence": source_essence(streams, probe.get("chapters") or [])}
+            "essence": essence, "offList": off}
 
 
 def probe_chapters(probe):
@@ -1080,7 +2270,8 @@ def sidecar_entry(source_id, n, path, arrival_name, language=None, forced=False)
 
 
 def source_record(source_id, name, size_bytes, *, taken_at, taken_by, library_path, qh1=None, mtime=None,
-                  probe=None, probe_version=None, sidecars=(), note=None, covers=(), heads=None):
+                  probe=None, probe_version=None, sidecars=(), note=None, covers=(), heads=None,
+                  captions=None, signature=None):
     """sources/<sourceId>/source.json for one original, and the bytes of the ffprobe.json written
     beside it (None without a probe). Returns (record, probe bytes).
 
@@ -1100,7 +2291,16 @@ def source_record(source_id, name, size_bytes, *, taken_at, taken_by, library_pa
 
     heads are the first bytes of the attachments the probe gives no role by itself, by stream index, as
     attachment_heads() reads them from the original: an attachment that is a font by its signature alone
-    is one in the record, and its stream says so (signature)."""
+    is one in the record, and its stream says so (signature).
+
+    captions are the original's picture's caption read, by stream index, as caption_windows() reads it, by
+    the plan: the stream keeps its windows (captionWindows), span (captionSpan) and gop (captionGop), and the
+    essence knows its captions where they tell them (closedCaptionsKnown). Without them, as the probe alone
+    says them — only one that decoded a frame says the stream carries them — the record can't tell none from
+    not seen.
+    signature is whether the picture's packets carry a caption signature, by stream index, as
+    caption_signature() reads every one of them: where they do, the picture carries closed captions,
+    known."""
     if qh1 is None and not text(note):
         raise ValueError("a source record without the original's fixity needs a note that says why it has none")
     covers = [str(c) for c in covers or ()]
@@ -1120,9 +2320,10 @@ def source_record(source_id, name, size_bytes, *, taken_at, taken_by, library_pa
     rec["labels"] = labels(name, folder)
     raw = None
     if probe:
-        facts = probed(probe, heads)
+        facts = probed(probe, heads, captions, signature)
         raw = json_bytes(scrub_probe(probe, file["name"]))
-        rec.update(container=facts["container"], fidelity=facts["fidelity"], streams=facts["streams"],
+        rec.update(container=facts["container"], offList=facts["offList"], fidelity=facts["fidelity"],
+                   streams=facts["streams"],
                    sidecars=list(sidecars), covers=covers, essence=facts["essence"],
                    probe={"tool": "ffprobe", "version": probe_version, "at": taken_at,
                           "file": f"sources/{source_id}/ffprobe.json", "sha256": sha_bytes(raw), "note": text(note)})
@@ -1197,6 +2398,14 @@ def video_rendition(v):
             out[key] = text(v[key])
     if v.get("hdr10Metadata") is True:
         out["hdr10Metadata"] = True
+    if v.get("closedCaptions") is True:
+        out["closedCaptions"] = True
+    windows = caption_windows_of(v.get("captionWindows"))
+    if windows is not None:
+        out["captionWindows"] = windows
+    offset = v.get("timestampOffset")
+    if isinstance(offset, (int, float)) and not isinstance(offset, bool):
+        out["timestampOffset"] = round(float(offset), 3)
     return out
 
 
@@ -1386,12 +2595,16 @@ def package_record(package_id, manifest, listed, *, source=None, role="canonical
     audio rendition likewise (audio_purpose): a commentary (commentary), for the visually impaired
     (visualImpaired), then its title. A video rendition whose init segment carries the original's
     HDR10 static metadata (hdr10Metadata) says so, and the package's essence has it when the source's
-    has and every rendition in PQ, the top one among them, says so (package_essence). A subtitle that
+    has and every rendition in PQ, the top one among them, says so (package_essence). A video rendition
+    whose own stream carries closed captions (closedCaptions) says so, and the package's essence has
+    them when its top rendition says so (package_essence). A subtitle that
     keeps its styled original names it (styled_original), and the font files the manifest lists are the
     record's fonts (font_file), listed only when there are any — each only when it is one of the files
     listed, the package's own, or it is left out with a note; the package's essence has styled
     subtitles and fonts when it carries them for every stream of the source that has them
-    (package_essence). The playlist flags a reader could
+    (package_essence). What the manifest says the picture is as far as fields go (scan) is the record's
+    scan (scan_block), and the essence has what was done of it, left out where it says nothing the
+    record can read. The playlist flags a reader could
     not follow are normalised, each with a note: a second default audio rendition is not one, a
     package with none has its first, a forced subtitle is never the default, and of the rest only
     the first default is one."""
@@ -1440,7 +2653,8 @@ def package_record(package_id, manifest, listed, *, source=None, role="canonical
     if surround:
         renditions["audioSurround"] = surround
     streams = (source or {}).get("streams") or []
-    pkg_essence = package_essence({"renditions": renditions, "subtitles": subs, "fonts": fonts},
+    scan = scan_block(manifest.get("scan"))
+    pkg_essence = package_essence({"renditions": renditions, "subtitles": subs, "fonts": fonts, "scan": scan},
                                   (source or {}).get("essence"), streams)
     if streams:
         losses = losses_against(source.get("essence") or {}, pkg_essence, streams, renditions, subs)
@@ -1459,6 +2673,8 @@ def package_record(package_id, manifest, listed, *, source=None, role="canonical
     hls = hls_block(manifest.get("hls"))
     if hls:
         doc["hls"] = hls
+    if scan:
+        doc["scan"] = scan
     doc.update(trailers=[],
                sizeBytes=sum(size for rel, _, size in listed if rel.split("/", 1)[0] in PACKAGE_DIRS),
                peakBandwidthBps=peak_bandwidth_bps,
@@ -1470,14 +2686,16 @@ def package_record(package_id, manifest, listed, *, source=None, role="canonical
 # ---------------------------------------------------------------- extras/<extraId>/extra.json
 def extra_record(extra_id, *, created_at, created_by, kind, title, localized_titles=None, language=None,
                  season_number=None, origin=None, probe=None, probe_version=None, probed_at=None,
-                 original_files=(), originals=(), packaged_from=(), heads=None):
+                 original_files=(), originals=(), packaged_from=(), heads=None, captions=None, signature=None):
     """extras/<extraId>/extra.json: what the extra is, as the catalog took it in, and what a probe of
     its original found. An extra of the platform keeps no original — it is deleted once the package is
     recorded — so original_files and originals stay empty, and packaged_from describes the original the
     package was made from: [{name, sizeBytes, fixity: {qh1}}], each named here as the library names an
     original, library_original_name() of the name it arrived under — the nth of several original-<n> —
     whatever name it is given. Without a language, the language spoken in its first audio track is the
-    extra's. heads, as a source record's (source_record), are its attachments' first bytes."""
+    extra's. heads, captions and signature, as a source record's (source_record), are its attachments'
+    first bytes, its picture's caption windows and whether its picture's packets carry a caption
+    signature."""
     doc = {"schema": "zaentrum.library.extra/2", "extraId": extra_id, "createdAt": created_at,
            "createdBy": created_by, "kind": kind, "title": title, "localizedTitles": dict(localized_titles or {}),
            "language": language, "runtimeMs": None}
@@ -1491,10 +2709,10 @@ def extra_record(extra_id, *, created_at, created_by, kind, title, localized_tit
     if origin:
         doc["origin"] = origin
     if probe:
-        facts = probed(probe, heads)
+        facts = probed(probe, heads, captions, signature)
         spoken = [x["language"] for x in facts["streams"] if x["type"] == "audio" and x.get("language")]
         doc.update(language=language or (spoken[0] if spoken else None), runtimeMs=facts["container"]["durationMs"],
-                   **facts, probe={"tool": "ffprobe", "version": probe_version, "at": probed_at or created_at,
+                   **{k: v for k, v in facts.items() if k != "offList"}, probe={"tool": "ffprobe", "version": probe_version, "at": probed_at or created_at,
                                    "note": None})
     return doc
 

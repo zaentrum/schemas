@@ -30,6 +30,7 @@
     "creationTime": null,
     "tags": {}
   },
+  "offList": [],
   "fidelity": {
     "class": "original",
     "fingerprint": "h264/high/8bit/sdr/1920x800",
@@ -154,7 +155,7 @@
     "version": null,
     "at": "2026-09-18T09:05:00Z",
     "file": "sources/6b58492a-ea00-5e51-ae33-0b310919b757/ffprobe.json",
-    "sha256": "sha256:32677122f6a1ae7f9f25a725781901cc7fde8474722332603aef74912c4996ef",
+    "sha256": "sha256:c4515ac631b07e26c6c72062d36f68a885dc976bee88ff24b4d7542e08e862e0",
     "note": null
   }
 }
