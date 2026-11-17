@@ -31,6 +31,7 @@
       "ENCODER": "libmatroska"
     }
   },
+  "offList": [],
   "fidelity": {
     "class": "derivative",
     "fingerprint": "hevc/main 10/10bit/hdr10/3840x1608",

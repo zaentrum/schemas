@@ -108,6 +108,22 @@ rule and checks the tool notices:
                  rendition in PQ, the top one among them, says its init segment does; piped behind a
                  tool, the module
                  has none of its names redefined by it
+  closed captions and fields
+                 an original whose picture carries A53 captions says none from its probe alone, and
+                 does not know it; its frames decoded in five windows across its own span (its first
+                 picture to the end of its last, though its file counts its duration from 0) say them,
+                 of an MPEG-2 picture as of an H.264 one and of captions that start late, and its
+                 record knows them; ffprobe's silence, garbage or absence tells nothing, and one that
+                 stalls fails the read; each window is kept as {at, start, end, frames, captions}, at
+                 a fraction from 0 to 1, one that decoded nothing as failed, so its picture does not
+                 know its captions; the gate keeps an original that has them or does not know them,
+                 whatever its package carries, and the validator and the rebuild agree; a
+                 manifest's scan is the record's as the transcoder's contract says it, its essence
+                 what was done, and an original in fields is kept whatever was done: marked, of a
+                 picture whose field order is anything but progressive (none given among them, in
+                 its record or its probe), or found in fields by any package's scan; one unmarked,
+                 progressive and found so goes the ordinary way, and the validator and the rebuild
+                 agree
 """
 import ast, base64, collections, datetime, glob, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
 
@@ -394,13 +410,15 @@ def test_pieces(t):
          rec.naming("Show - S07E23-24.mkv"))
 
     gate = load_tool(REBUILD).deletion_gate
-    source = {"surround": True, "maxAudioChannels": 6, "subtitleLanguages": ["en", "de"], "chapters": True}
+    known = {"closedCaptions": False, "closedCaptionsKnown": True, "interlaced": False}
+    source = {"surround": True, "maxAudioChannels": 6, "subtitleLanguages": ["en", "de"], "chapters": True, **known}
     package = {"surround": False, "maxAudioChannels": 2, "subtitleLanguages": ["en"]}
-    t.eq("the deletion gate names what the package failed to carry", gate([source], package),
+    t.eq("the deletion gate names what the package failed to carry", gate([source], package, {}),
          ["maxAudioChannels", "subtitleLanguages:de", "surround"])
-    t.eq("a package that carries everything costs nothing", gate([package], package), [])
+    t.eq("a package that carries everything costs nothing",
+         gate([dict(package, **known)], package, {}), [])
     t.eq("chapter marks are never a loss: the version keeps them, not the file",
-         gate([{"chapters": True}], {}), [])
+         gate([{"chapters": True, **known}], {}, {}), [])
 
 
 # ---------------------------------------------------------------- the records the packager writes
@@ -573,17 +591,19 @@ def test_records(t):
              (package["essence"]["surround"], package["essence"]["maxAudioChannels"],
               package["essence"]["hdr10Metadata"], [x["kind"] for x in package["fidelity"]["losses"]]),
              (True, 6, True, ["attachments-dropped"]))
-        t.eq("the deletion gate is what the original carries and the package does not",
-             rec.deletion_gate([jload(os.path.join(item, "sources", sid, "source.json"))["essence"]], package["essence"]),
-             ["fonts"])
+        t.eq("the deletion gate is what the original carries and the package does not, and its closed captions: "
+             "its source never read them, so they are not known",
+             rec.deletion_gate([jload(os.path.join(item, "sources", sid, "source.json"))["essence"]], package["essence"], {}),
+             ["closedCaptions", "fonts"])
         source = jload(os.path.join(item, "sources", sid, "source.json"))["essence"]
         encoded = dict(package["renditions"], video=[dict(package["renditions"]["video"][0], encoder="hevc_nvenc")])
         stereo_only = dict(encoded, audioSurround=[])
-        t.eq("a re-encoded PQ stream is taken to have lost the metadata, and without the 5.1 companion so is surround",
+        t.eq("a re-encoded PQ stream is taken to have lost the metadata, and without the 5.1 companion so is surround; "
+             "and the closed captions a source that never read them may have had",
              (rec.package_essence({"renditions": encoded, "subtitles": package["subtitles"]}, source)["hdr10Metadata"],
               rec.deletion_gate([source], rec.package_essence({"renditions": stereo_only,
-                                                               "subtitles": package["subtitles"]}, source))),
-             (False, ["fonts", "hdr10Metadata", "maxAudioChannels", "surround"]))
+                                                               "subtitles": package["subtitles"]}, source), {})),
+             (False, ["closedCaptions", "fonts", "hdr10Metadata", "maxAudioChannels", "surround"]))
         t.eq("a rendition made from a sidecar names the copy the source folder keeps",
              [s.get("fromSidecar") for s in package["subtitles"]],
              [None, None, None, f"sources/{sid}/subtitle-1.de.srt"])
@@ -784,7 +804,7 @@ def test_records(t):
           [("dialogue", "assumed"), ("dialogue", "assumed"), ("dialogue", "assumed"), ("sdh", "title"),
            ("forced", "disposition")]))
     lost = lambda subs: [x for x in rec.deletion_gate([hearing["essence"]], rec.package_essence(
-        {"renditions": {"video": [{"height": 1080}], "audio": []}, "subtitles": subs}, hearing["essence"]))
+        {"renditions": {"video": [{"height": 1080}], "audio": []}, "subtitles": subs}, hearing["essence"]), {})
                          if x.startswith(("sdh", "forced"))]
     t.eq("so the package carries every language the source has for the hard of hearing, and deleting the "
          "original costs none of them; without the mark the gate names the two it would cost",
@@ -836,7 +856,7 @@ def test_records(t):
           [("dialogue", "assumed"), ("forced", "disposition")]))
     gate = lambda auds, subs: [x for x in rec.deletion_gate([flagged["essence"]], rec.package_essence(
         {"renditions": {"video": [{"height": 1080}], "audio": [rec.audio_rendition(a, i) for i, a in enumerate(auds)]},
-         "subtitles": [rec.subtitle_rendition(s, i) for i, s in enumerate(subs)]}, flagged["essence"]))
+         "subtitles": [rec.subtitle_rendition(s, i) for i, s in enumerate(subs)]}, flagged["essence"]), {})
         if x in ("commentaryTracks", "commentarySubtitles", "audioDescriptionTracks")]
     t.eq("so the package carries every commentary and audio description the source has, and deleting the "
          "original costs none of them; without the marks the gate names all three",
@@ -870,15 +890,19 @@ def test_records(t):
          ([("main", "assumed")] * len(nones), [("dialogue", "assumed")] * len(nones),
           [("commentary", "title")] * len(ones), [("commentary", "title")] * len(ones),
           [False, False, False, False]))
-    negated = rec.probed({"format": {"duration": "1.0"}, "streams": [
-        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 1080, "disposition": {}},
+    negated = rec.probed({"format": {"duration": "1.0", "format_name": "matroska,webm"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 1080, "disposition": {},
+         "start_time": "0.000000", "avg_frame_rate": "24/1", "field_order": "progressive"},
         {"index": 1, "codec_type": "audio", "codec_name": "aac", "channels": 2,
          "tags": {"language": "ger", "title": "Deutsch (kommentarlos)"}, "disposition": {"default": 1}},
         {"index": 2, "codec_type": "audio", "codec_name": "aac", "channels": 2,
          "tags": {"language": "ger", "title": "Kommentar"}, "disposition": {}},
         {"index": 3, "codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "eng",
                                                                                "title": "No commentary"},
-         "disposition": {}}]})
+         "disposition": {}}]}, captions={0: {"windows": [{"at": 0, "start": 0.0, "end": 1.0, "frames": 24, "captions": False,
+                                                        "whole": True, "packets": 24, "leading": 0}],
+                                           "span": {"start": 0.0, "end": 1.0}, "gop": 0.0}},
+        signature={0: False})
     renditions = {"video": [{"height": 1080}],
                   "audio": [rec.audio_rendition({"language": "ger", "title": x["title"], "channels": 2}, i)
                             for i, x in enumerate(s for s in negated["streams"] if s["type"] == "audio")]}
@@ -886,7 +910,7 @@ def test_records(t):
          ({k: negated["essence"][k] for k in ("commentaryTracks", "commentarySubtitles")},
           rec.deletion_gate([negated["essence"]], rec.package_essence(
               {"renditions": renditions, "subtitles": [rec.subtitle_rendition(
-                  {"language": "eng", "title": "No commentary"}, 0)]}, negated["essence"]))),
+                  {"language": "eng", "title": "No commentary"}, 0)]}, negated["essence"]), {})),
          ({"commentaryTracks": 1, "commentarySubtitles": 0}, []))
 
     # HDR10 static metadata: a top rendition that is the original's own stream in PQ carries it, as before;
@@ -945,7 +969,7 @@ def test_records(t):
         {"renditions": styled_renditions, "subtitles": [rec.subtitle_rendition(s, i) for i, s in enumerate(subs)],
          "fonts": fonts}, styled_source["essence"], streams)
     gate = lambda subs, fonts, streams=styled_source["streams"]: [
-        x for x in rec.deletion_gate([styled_source["essence"]], styled_essence(subs, fonts, streams))
+        x for x in rec.deletion_gate([styled_source["essence"]], styled_essence(subs, fonts, streams), {})
         if x in ("styledSubtitles", "fonts")]
     t.eq("an original whose subtitles are styled and that carries fonts has both in its essence, an image attachment "
          "no font",
@@ -1060,7 +1084,7 @@ def test_records(t):
          (carried_fonts([(2, "otf"), (3, "otf")]), carried_fonts([(3, "otf")]),
           [k for k in rec.deletion_gate([counted["essence"]], rec.package_essence(
               {"renditions": styled_renditions, "subtitles": [], "fonts": [font(0, 3, "otf")]},
-              counted["essence"], counted["streams"])) if k == "fonts"]),
+              counted["essence"], counted["streams"]), {}) if k == "fonts"]),
          (True, False, ["fonts"]))
     with tempfile.TemporaryDirectory() as tmp:
         bin_dir, empty = os.path.join(tmp, "bin"), os.path.join(tmp, "empty")
@@ -1152,6 +1176,1287 @@ def test_records(t):
 
 
 # ---------------------------------------------------------------- the arrivals are not the record
+# ---------------------------------------------------------------- closed captions and fields (record logic 11)
+# cc_data as a broadcast carries it with each picture: process_cc_data_flag and two field-1 byte pairs, a
+# caption's control codes in odd parity, in an ITU-T T.35 ATSC ("GA94") SEI, payload type 4.
+A53_CC = bytes([0xB5, 0x00, 0x31]) + b"GA94" + bytes([0x03, 0x40 | 2, 0xFF, 0xFC, 0x94, 0x2C, 0xFC, 0xC8, 0x49, 0xFF])
+
+
+def captioned_clips(tmp):
+    """Made with ffmpeg: H264 (H.264 whose every picture carries an A53 caption, its audio the first stream
+    and a cover beside it), MPEG2 (MPEG-2 encoded from it with -a53cc 1, the captions in its user data) and
+    PLAIN (H.264, none), 2 s each; LATE, 12 s of H.264 at 25 frames, a keyframe every 100, whose
+    captions start at its 100th picture, as an encoder that writes them only where there is text leaves
+    them; LATER, the same in a Matroska file whose first picture is at 10 s, which counts its
+    duration from 0; LONG, 120 s of H.264 at 25 frames, a keyframe a second, without captions, and LONG_CC,
+    the same with them in every picture, long enough for the plan's six windows; and SHORT60, 60 s with a
+    keyframe every two seconds, too short for them. None without ffmpeg and ffprobe, or where they make other
+    clips."""
+    if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+        return None
+    ff = lambda *a: subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", *a],
+                                   capture_output=True)
+    raw, made = os.path.join(tmp, "plain.h264"), bytearray()
+    picture = ["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=2"]
+    ff(*picture, "-c:v", "libx264", "-preset", "ultrafast", "-x264-params", "slices=1", "-f", "h264", raw)
+    if not os.path.isfile(raw):
+        return None
+    sei = b"\x00\x00\x00\x01" + bytes([0x06, 0x04, len(A53_CC)]) + A53_CC + b"\x80"
+
+    def caption(source, target, first=0):
+        """The H.264 stream at source again at target, an A53 cc_data SEI before the slice of each picture
+        from the first-th on."""
+        data, made, pos, picture = open(source, "rb").read(), bytearray(), 0, 0
+        for m in re.finditer(rb"\x00\x00\x01(.)", data, re.DOTALL):
+            start = m.start() - 1 if m.start() and data[m.start() - 1] == 0 else m.start()
+            if m.group(1)[0] & 0x1F in (1, 5):  # a slice: one per picture
+                if picture >= first:
+                    made += data[pos:start] + sei
+                    pos = start
+                picture += 1
+        with open(target, "wb") as f:
+            f.write(bytes(made + data[pos:]))
+
+    caption(raw, os.path.join(tmp, "captioned.h264"))
+    late = os.path.join(tmp, "late.h264")
+    ff("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=12", "-c:v", "libx264", "-preset", "ultrafast",
+       "-x264-params", "slices=1:keyint=100:min-keyint=100:scenecut=0", "-f", "h264", late)
+    if not os.path.isfile(late):
+        return None
+    caption(late, os.path.join(tmp, "late-captioned.h264"), first=100)
+    cover = os.path.join(tmp, "cover.png")
+    ff("-f", "lavfi", "-i", "color=c=red:s=64x64", "-frames:v", "1", cover)
+    clips = {name: os.path.join(tmp, f"{name}.{ext}")
+             for name, ext in (("H264", "mkv"), ("MPEG2", "ts"), ("PLAIN", "mkv"), ("LATE", "mkv"), ("LATER", "mkv"))}
+    ff("-f", "lavfi", "-i", "sine=duration=2", "-framerate", "25", "-i", os.path.join(tmp, "captioned.h264"),
+       "-map", "0:a", "-map", "1:v", "-c:a", "aac", "-c:v", "copy", "-attach", cover, "-metadata:s:t:0",
+       "mimetype=image/png", "-metadata:s:t:0", "filename=cover.png", clips["H264"])
+    ff("-i", clips["H264"], "-map", "0:1", "-c:v", "mpeg2video", "-q:v", "4", "-a53cc", "1", clips["MPEG2"])
+    ff(*picture, "-c:v", "libx264", "-preset", "ultrafast", clips["PLAIN"])
+    ff("-framerate", "25", "-i", os.path.join(tmp, "late-captioned.h264"), "-c", "copy", clips["LATE"])
+    ff("-i", clips["LATE"], "-c", "copy", "-output_ts_offset", "10", clips["LATER"])
+    for name, seconds, keys in (("LONG", 120, 25), ("SHORT60", 60, 50)):
+        clips[name] = os.path.join(tmp, f"{name}.mkv")
+        ff("-f", "lavfi", "-i", f"testsrc2=size=320x240:rate=25:duration={seconds}", "-c:v", "libx264", "-preset",
+           "ultrafast", "-x264-params", f"slices=1:keyint={keys}:min-keyint={keys}:scenecut=0", "-f", "h264",
+           os.path.join(tmp, f"{name}.h264"))
+        ff("-framerate", "25", "-i", os.path.join(tmp, f"{name}.h264"), "-c", "copy", clips[name])
+    caption(os.path.join(tmp, "LONG.h264"), os.path.join(tmp, "LONG_CC.h264"))
+    clips["LONG_CC"] = os.path.join(tmp, "LONG_CC.mkv")
+    ff("-framerate", "25", "-i", os.path.join(tmp, "LONG_CC.h264"), "-c", "copy", clips["LONG_CC"])
+    return clips if all(os.path.isfile(p) for p in clips.values()) else None
+
+
+def carried_clips(tmp, clips):
+    """Made with ffmpeg from captioned_clips' clips, as the closed list of how captions and fields are carried
+    reads them: PS, the MPEG-2 picture in an MPEG program stream (on the list); C608, H.264 without A53 in
+    a QuickTime file with the captions in a c608 track of their own; FIELDS, H.264 coded interlaced, top
+    field first; TMCD, PLAIN's picture in a QuickTime file with a timecode track, a data stream the lists
+    know; and, off the lists, FLV (PLAIN's picture in an FLV file) and MPEG4 (an MPEG-4 Part 2 picture in
+    Matroska). None where they could not be made."""
+    ff = lambda *a: subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", *a],
+                                   capture_output=True).returncode == 0
+    made = {name: os.path.join(tmp, f"{name}.{ext}") for name, ext in
+            (("PS", "mpg"), ("C608", "mov"), ("FIELDS", "mkv"), ("FLV", "flv"), ("MPEG4", "mkv"), ("TMCD", "mov"))}
+    picture = ["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=2"]
+    ok = [ff("-i", clips["MPEG2"], "-c", "copy", "-f", "vob", made["PS"]),
+          ff("-f", "lavfi", "-i", f"movie={clips['H264']}:si=1[out0+subcc]", "-map", "0:v", "-map", "0:s",
+             "-c:v", "libx264", "-preset", "ultrafast", "-a53cc", "0", "-c:s", "copy", made["C608"]),
+          ff(*picture, "-vf", "setfield=tff", "-c:v", "libx264", "-preset", "ultrafast", "-flags", "+ildct+ilme",
+             made["FIELDS"]),
+          ff("-i", clips["PLAIN"], "-c", "copy", made["FLV"]),
+          ff(*picture, "-c:v", "mpeg4", made["MPEG4"]),
+          ff("-i", clips["PLAIN"], "-c", "copy", "-timecode", "00:00:00:00", made["TMCD"])]
+    return made if all(ok) else None
+
+
+def test_captions_and_fields(t):
+    rec = load_tool(RECORDS)
+
+    def source(probe, captions=None, signature=None):
+        doc, _ = rec.source_record(str(uuid.uuid4()), "Example Film (2024).mkv", 1, taken_at=GOLDEN_AT,
+                                   taken_by="packager", library_path="Example Film (2024)/Example Film (2024).mkv",
+                                   qh1="sha256:" + "0" * 64, probe=probe, probe_version="ffprobe test",
+                                   **({} if captions is None else {"captions": captions}),
+                                   **({} if signature is None else {"signature": signature}))
+        return doc
+
+    def told(doc):
+        picture = next(x for x in doc["streams"] if x["type"] == "video" and not x["dispositions"].get("attachedPic"))
+        windows = picture.get("captionWindows")
+        return (picture["index"], picture["closedCaptions"],
+                None if windows is None else [(w["at"], w["frames"] > 0, w["captions"]) for w in windows],
+                doc["essence"]["closedCaptions"], doc["essence"].get("closedCaptionsKnown"))
+
+    shown = lambda *captions: [(at, True, c) for at, c in zip(rec.CAPTION_WINDOWS, captions)]
+    whole = lambda captions: [(0.0, True, captions)]
+    with tempfile.TemporaryDirectory() as tmp:
+        clips = captioned_clips(tmp)
+        if clips is None:
+            t.skip("an original's closed captions read from its frames", "no ffmpeg and ffprobe to make clips with")
+            if os.environ.get("LIBRARY_V2_CLIPS") == "required":
+                t.ok("the clips are made: CI installs ffmpeg for them (LIBRARY_V2_CLIPS=required)", False,
+                     "no ffmpeg and ffprobe")
+        else:
+            probes = {name: rec.ffprobe(p) for name, p in clips.items()}
+            t.eq("an original whose picture carries A53 captions, recorded from its probe alone as before, says it "
+                 "carries none, and does not know it: ffprobe says a stream's captions only of one it decoded a frame of",
+                 told(source(probes["H264"])), (1, False, None, False, None))
+            read = {name: rec.caption_windows(p, probes[name]) for name, p in clips.items()}
+            w0 = lambda n: next(iter(read[n].values()))["windows"]
+            t.eq("a picture long enough is read in the plan's six windows - its start, and 10 to 90 % of the span its "
+                 "probe gives, the last at most 30 s short of its end -, each from a keyframe of its own, each of all "
+                 "its 48 packets: they show captions of one that has them in every picture, and none of one without "
+                 "them; the read reports the span it measured, the probe's, and the gop of its first 1200 packets",
+                 {n: (list(read[n]), [(w["at"], w["frames"], w["captions"]) for w in w0(n)],
+                      [w["start"] for w in w0(n)], read[n][0]["span"], read[n][0]["gop"]) for n in ("LONG", "LONG_CC")},
+                 {"LONG": ([0], [(at, 48, False) for at in rec.CAPTION_WINDOWS], [0.0, 12.0, 36.0, 60.0, 84.0, 90.0],
+                           {"start": 0.0, "end": 120.0}, 1.0),
+                  "LONG_CC": ([0], [(at, 48, True) for at in rec.CAPTION_WINDOWS], [0.0, 12.0, 36.0, 60.0, 84.0, 90.0],
+                              {"start": 0.0, "end": 120.0}, 1.0)})
+            version = subprocess.run(["ffprobe", "-version"], capture_output=True, text=True).stdout.split()[2]
+            t.eq("a read records the release of the ffprobe it ran, and the record keeps it on its picture",
+                 (read["LONG"][0].get("ffprobe"), next(x for x in source(probes["LONG"], read["LONG"])["streams"]
+                                                       if x["type"] == "video").get("captionFfprobe")),
+                 (version, version))
+            t.eq("a picture whose places lie closer than a window reaches is read whole, every packet counted and "
+                 "decoded: the picture's, not the audio's or the cover's, of an MPEG-2 picture's user data as of an "
+                 "H.264 SEI, of captions that start at its 100th frame, and of one of 60 s whose places fall on one "
+                 "another",
+                 {n: (list(read[n]), [(w["at"], w["frames"] > 0, w["captions"]) for w in w0(n)],
+                      w0(n)[0].get("whole"), w0(n)[0]["frames"] == w0(n)[0].get("packets"))
+                  for n in ("H264", "MPEG2", "PLAIN", "LATE", "LATER", "SHORT60")},
+                 {"H264": ([1], whole(True), True, True), "MPEG2": ([0], whole(True), True, True),
+                  "PLAIN": ([0], whole(False), True, True), "LATE": ([0], whole(True), True, True),
+                  "LATER": ([0], whole(True), True, True), "SHORT60": ([0], whole(False), True, True)})
+            t.eq("the plan's span is what the probe gives, the picture's start_time and the file's length: of a "
+                 "Matroska picture that starts at 10 s, whose file counts its length from 0, 10 to 32 s; the read "
+                 "measures 10 to 22 s, which is no plan's span - it shows the captions it found, and of one without "
+                 "them it would tell nothing",
+                 (probes["LATER"]["format"]["duration"], rec.picture_span(clips["LATER"], probes["LATER"],
+                                                                          rec.picture_stream(probes["LATER"])),
+                  (w0("LATER")[0]["start"], w0("LATER")[0]["end"], w0("LATER")[0]["frames"]), read["LATER"][0]["span"],
+                  told(source(probes["LATER"], read["LATER"]))[1:],
+                  rec.windows_tell_none(dict(read["LATER"][0], windows=[dict(w0("LATER")[0], captions=False)]),
+                                        rec.plan_of(probes["LATER"], 22000))),
+                 ("22.000000", (10.0, 32.0), (10.0, 22.0, 300), {"start": 10.0, "end": 22.0},
+                  (True, whole(True), True, True), False))
+            t.eq("each window counts how many of its frames were interlaced and how many repeat a field: none of a "
+                 "progressive picture",
+                 {n: [(w["interlacedFrames"], w["repeatFrames"]) for w in w0(n)] for n in ("H264", "LONG")},
+                 {"H264": [(0, 0)], "LONG": [(0, 0)] * 6})
+            t.eq("so its record keeps them and says the captions, and knows them, the six of a long picture as the "
+                 "whole of a short one; one without them knows it has none",
+                 [told(source(probes[n], read[n])) for n in ("H264", "LATE", "PLAIN", "LONG", "LONG_CC", "SHORT60")],
+                 [(1, True, whole(True), True, True), (0, True, whole(True), True, True),
+                  (0, False, whole(False), False, True), (0, False, shown(False, False, False, False, False, False), False, True),
+                  (0, True, shown(True, True, True, True, True, True), True, True), (0, False, whole(False), False, True)])
+            windows, rec.CAPTION_WINDOWS = rec.CAPTION_WINDOWS, (0.0,)
+            try:
+                first = rec.caption_windows(clips["LATE"], probes["LATE"])
+            finally:
+                rec.CAPTION_WINDOWS = windows
+            t.eq("its first frames alone would have said a picture whose captions start late has none",
+                 [(w["captions"], "whole" in w) for w in first[0]["windows"]], [(False, False)])
+            short = source(probes["SHORT60"], {0: dict(read["SHORT60"][0], windows=[
+                w for w in rec.caption_windows(clips["LONG"], probes["LONG"])[0]["windows"]
+                if w["at"] in (0.0, 0.1, 0.3, 0.5)])})
+            t.eq("a read of four windows - a 60 s title read as a reader that merges the windows that fall on one "
+                 "another reads it - is not known: the plan asks for the six, or the whole picture",
+                 (len(short["streams"][0]["captionWindows"]), short["essence"].get("closedCaptionsKnown")), (4, None))
+            signed = {n: rec.caption_signature(clips[n], probes[n]) for n in ("H264", "MPEG2", "PLAIN", "LATE", "LATER")}
+            t.eq("every packet of a picture read for a caption signature finds it, A53 in an H.264 SEI or in an "
+                 "MPEG-2 picture's user data, of captions that start late too, and not of a picture without them",
+                 signed, {"H264": {1: True}, "MPEG2": {0: True}, "PLAIN": {0: False}, "LATE": {0: True},
+                          "LATER": {0: True}})
+            none = rec.caption_windows(clips["PLAIN"], probes["PLAIN"])
+            t.eq("a picture whose packets carry it carries closed captions, known, whatever its windows show; one "
+                 "whose packets carry none is told nothing more by it",
+                 [told(source(probes["PLAIN"], none, {0: True})), told(source(probes["PLAIN"], none, {0: False}))],
+                 [(0, True, whole(False), True, True), (0, False, whole(False), False, True)])
+            t.eq("and the picture keeps what it found", [
+                next(x for x in source(probes["PLAIN"], none, sig)["streams"] if x["type"] == "video").get(
+                    "captionSignature") for sig in ({0: True}, {0: False}, {})], [True, False, None])
+            more = carried_clips(tmp, clips)
+            if more is None:
+                t.skip("the closed list of how captions and fields are carried, read of made clips",
+                       "ffmpeg made no such clips")
+                if os.environ.get("LIBRARY_V2_CLIPS") == "required":
+                    t.ok("the clips of the closed lists are made (LIBRARY_V2_CLIPS=required)", False, "ffmpeg made none")
+            else:
+                probed = {n: rec.ffprobe(p) for n, p in more.items()}
+                records = {n: source(probed[n], rec.caption_windows(p, probed[n]), rec.caption_signature(p, probed[n]))
+                           for n, p in more.items()}
+                pictures = {n: next(x for x in r["streams"] if x["type"] == "video") for n, r in records.items()}
+                t.eq("a file is on the closed lists of how captions and fields are carried by its container, its "
+                     "film's codec and its streams, as the analyzer names them: an MPEG program stream, a c608 "
+                     "track, a timecode track; a record keeps what is off them in the analyzer's names: an FLV "
+                     "file, an MPEG-4 Part 2 picture",
+                     {n: (r["container"]["format"], r["offList"], rec.off_list(probed[n])) for n, r in records.items()},
+                     {"PS": ("mpeg", [], []), "C608": ("mov,mp4,m4a,3gp,3g2,mj2", [], []),
+                      "FIELDS": ("matroska,webm", [], []), "FLV": ("flv", ["container:flv"], ["container:flv"]),
+                      "MPEG4": ("matroska,webm", ["codec:mpeg4"], ["codec:mpeg4"]),
+                      "TMCD": ("mov,mp4,m4a,3gp,3g2,mj2", [], [])})
+                t.eq("an MPEG-2 picture in a program stream shows its captions read whole and by its signature; a "
+                     "file off the lists, read whole and showing none, does not know them, one with a timecode track "
+                     "does",
+                     {n: told(r)[1:] for n, r in records.items() if n in ("PS", "FLV", "MPEG4", "TMCD")},
+                     {"PS": (True, whole(True), True, True), "FLV": (False, whole(False), False, None),
+                      "MPEG4": (False, whole(False), False, None), "TMCD": (False, whole(False), False, True)})
+                captions = next(x for x in records["C608"]["streams"] if x["type"] == "subtitle")
+                t.eq("a c608 track is closed captions of its own: the file carries them, known, though its "
+                     "picture carries none",
+                     (captions["codec"], captions.get("closedCaptions"), told(records["C608"])[1:],
+                      records["C608"]["essence"]["subtitleTracks"]),
+                     ("eia_608", True, (False, whole(False), True, True), 1))
+                t.eq("a picture coded interlaced counts every frame it decoded interlaced, and is in fields by its "
+                     "windows as by its mark",
+                     ([(w["frames"], w["interlacedFrames"], w["repeatFrames"]) for w in pictures["FIELDS"]["captionWindows"]],
+                      pictures["FIELDS"]["fieldOrder"], records["FIELDS"]["essence"]["interlaced"]),
+                     ([(50, 50, 0)], "tb", True))
+                t.eq("the gate keeps a file off the list for its captions and its fields alike, one with a "
+                     "caption track of its own for its captions, and one whose picture carries them - the program "
+                     "stream of the captioned MPEG-2 picture - for its captions, whatever its essence says",
+                     {n: sorted(rec.gate_holds([r], (), [probed[n]])) for n, r in records.items()},
+                     {"PS": ["closedCaptions"], "C608": ["closedCaptions"], "FIELDS": ["interlaced"],
+                      "FLV": ["closedCaptions", "interlaced"], "MPEG4": ["closedCaptions", "interlaced"],
+                      "TMCD": []})
+        bin_dir = os.path.join(tmp, "bin")
+        os.makedirs(bin_dir)
+        fake = os.path.join(bin_dir, "ffprobe")
+        log = os.path.join(tmp, "intervals")
+        probe = {"format": {"duration": "200.0", "start_time": "0.5"},
+                 "streams": [{"index": 0, "codec_type": "video", "codec_name": "mjpeg", "disposition": {"attached_pic": 1}},
+                             {"index": 1, "codec_type": "audio"},
+                             {"index": 2, "codec_type": "video", "disposition": {}, "avg_frame_rate": "25/1"}]}
+
+        def frames(at, *types):
+            return json.dumps({"frames": [{"best_effort_timestamp_time": f"{float(at) + n * 0.04:.6f}",
+                                           "duration_time": "0.040000",
+                                           "side_data_list": [{"side_data_type": x} for x in types]} for n in range(3)]})
+
+        def answering(answers, body=None):
+            with open(fake, "w") as f:
+                f.write(f"#!{sys.executable}\nimport sys, json\n"
+                        "assert sys.argv[sys.argv.index('-select_streams') + 1] == '2', sys.argv\n"
+                        "at = sys.argv[sys.argv.index('-read_intervals') + 1]\n"
+                        f"open({log!r}, 'a').write(at + '\\n')\n"
+                        + (body or f"print({answers!r}.get(at) or json.dumps({{'frames': [{{'best_effort_timestamp_time':"
+                                    f" at.split('%')[0], 'duration_time': '0.04', 'side_data_list': []}}]}}))\n"))
+            os.chmod(fake, 0o755)
+            if os.path.exists(log):
+                os.unlink(log)
+
+        path, timeout = os.environ.get("PATH", ""), rec.CAPTION_TIMEOUT
+        got, asked, gops = [], [], []
+        everywhere = ["0.500%+#48", "20.500%+#48", "60.500%+#48", "100.500%+#48", "140.500%+#48", "170.500%+#48"]
+        try:
+            os.environ["PATH"] = bin_dir + os.pathsep + path
+            for answers in ({}, {"140.500%+#48": frames(140.5, rec.CAPTION_SIDE_DATA)},
+                            {"20.500%+#48": json.dumps({"frames": []}), "60.500%+#48": "not json"}):
+                answering(answers)
+                got_read = rec.caption_windows("/nowhere/o.mkv", probe)[2]
+                got.append([(w["at"], w["frames"], w["captions"]) for w in got_read["windows"]])
+                gops.append(got_read["gop"])
+                asked.append(open(log).read().split())
+            nothing = [rec.caption_windows("/nowhere/o.mkv", {"streams": [{"index": 0, "codec_type": "audio"}]}),
+                       rec.caption_windows("/nowhere/o.mkv", dict(probe, format={}))]
+            answering({}, "import time\ntime.sleep(60)\n")
+            rec.CAPTION_TIMEOUT = 1
+            started = time.monotonic()
+            try:
+                rec.caption_windows("/nowhere/o.mkv", probe)
+                stalled = None
+            except rec.CaptionsTimeout as e:
+                stalled = str(e)
+            os.environ["PATH"] = os.path.join(tmp, "empty")
+            nothing.append(rec.caption_windows("/nowhere/o.mkv", probe))
+        finally:
+            os.environ["PATH"] = path
+            rec.CAPTION_TIMEOUT = timeout
+        t.eq("a picture is read over the span its probe gives - from its start time to that plus its length -: its "
+             "first 1200 packets listed for its keyframes, its end read past the plan's, then the plan's six windows - "
+             "its start, then 10 to 90 % of the way to its end, the last at most 30 s short of it -, every one of "
+             "them; a window shows captions where a frame of it does, and one ffprobe decodes nothing of, or answers "
+             "garbage of, could not be read and says nothing; a listing of no keyframe gives a gop of 0",
+             (got, asked, gops),
+             ([[(0.0, 1, False), (0.1, 1, False), (0.3, 1, False), (0.5, 1, False), (0.7, 1, False), (0.9, 1, False)],
+               [(0.0, 1, False), (0.1, 1, False), (0.3, 1, False), (0.5, 1, False), (0.7, 3, True), (0.9, 1, False)],
+               [(0.0, 1, False), (0.1, 0, False), (0.3, 0, False), (0.5, 1, False), (0.7, 1, False), (0.9, 1, False)]],
+              [["%+#1200", "260.500%+#2000", *everywhere]] * 3, [0.0] * 3))
+        t.eq("a file without a picture, of no known duration, or without ffprobe tells nothing", nothing, [{}, {}, {}])
+        # a probe that states no rate: there is no plan, and nothing is read
+        norate = dict(probe, streams=[*probe["streams"][:2], {k: v for k, v in probe["streams"][2].items()
+                                                              if k != "avg_frame_rate"}])
+        try:
+            os.environ["PATH"] = bin_dir + os.pathsep + path
+            answering({"0.500%+#48": frames(0.5)})
+            unplanned = rec.caption_windows("/nowhere/o.mkv", norate)
+            unplanned_asked = open(log).read().split() if os.path.exists(log) else []
+        finally:
+            os.environ["PATH"] = path
+        t.eq("of a probe that states no rate there is no plan: nothing is read, no frame step is measured, and the "
+             "gate knows nothing",
+             (unplanned, unplanned_asked, rec.plan_of(norate, 200000)), ({}, [], None))
+        fake_ffmpeg = os.path.join(bin_dir, "ffmpeg")
+        said = []
+        for out, err, code in ((b"x" * 4096, "", 0), (b"x" * 4096, "[h264 @ 0x0] error while decoding", 0),
+                               (b"x" * 4096, "", 1), (b"", "", 0),
+                               (b"\xb5\x00\x31GA94\x03" + b"x" * 64, "[h264 @ 0x0] error while decoding", 1)):
+            with open(fake_ffmpeg, "w") as f:
+                f.write(f"#!{sys.executable}\nimport sys\nassert '-xerror' in sys.argv, sys.argv\n"
+                        f"sys.stdout.buffer.write({out!r}); sys.stdout.flush()\n"
+                        f"sys.stderr.write({err!r})\nsys.exit({code})\n")
+            os.chmod(fake_ffmpeg, 0o755)
+            os.environ["PATH"] = bin_dir + os.pathsep + path
+            try:
+                said.append(rec.caption_signature("/nowhere/o.mkv", probe))
+            finally:
+                os.environ["PATH"] = path
+        t.eq("a signature read says none only where ffmpeg, stopping at the first error, exited 0, said no error and "
+             "handed on some bytes; one that said an error, exited with one or handed on nothing tells nothing; a "
+             "signature found is found whatever came after",
+             said, [{2: False}, {}, {}, {}, {2: True}])
+        t.ok("an ffprobe that answers nothing in time is killed, and the read fails saying which stream of which "
+             "file: what it carries can't be told", stalled == "ffprobe gave nothing of the keyframes "
+             "of stream 2 of /nowhere/o.mkv within 1 s" and time.monotonic() - started < 30, stalled)
+        # read whole by a stand-in that writes down how it was run: a picture too short for six windows of their own
+        # (20 s: every place is its start), and one of 200 s a window of which decodes fewer than its packets; the
+        # plan's thread count and bounds, its keyframes listed, its end read, its packets counted and every frame read
+        calls = os.path.join(tmp, "whole-reads")
+        stream = {"index": 0, "codec_type": "video", "disposition": {}, "avg_frame_rate": "25/1"}
+        short = {"format": {"duration": "20.0", "start_time": "0.0"}, "streams": [stream]}
+        long_ = {"format": {"duration": "200.0", "start_time": "0.0"}, "streams": [stream]}
+
+        def reading_whole(decoded, code=0, end=20.0, count_code=0):
+            with open(fake, "w") as f:
+                f.write(f"#!{sys.executable}\nimport json, resource, sys\na = sys.argv[1:]\n"
+                        f"open({calls!r}, 'a').write(json.dumps({{'args': a, "
+                        "'cpu': resource.getrlimit(resource.RLIMIT_CPU), 'space': resource.getrlimit(resource.RLIMIT_AS)})"
+                        " + '\\n')\n"
+                        "frames = lambda n: json.dumps({'frames': [{'best_effort_timestamp_time': '%.6f' % (i * 0.04), "
+                        "'duration_time': '0.040000', 'interlaced_frame': 0, 'repeat_pict': 0, 'side_data_list': []} "
+                        "for i in range(n)]})\n"
+                        "if '%+#1200' in a:\n"
+                        "    t = lambda i: {0: 0.08, 1: 0.0, 2: 0.04}.get(i, i * 0.04)\n"
+                        "    print(json.dumps({'packets': [{'pts_time': '%.6f' % t(i), "
+                        "'flags': 'K__' if i in (0, 25, 75, 100) else '___'} for i in range(1200)]}))\n"
+                        "elif 'packet=pts_time,duration_time' in a:\n"
+                        f"    print(json.dumps({{'packets': [{{'pts_time': '%.6f' % ({end} - 0.04), 'duration_time': '0.040000'}}]}}))\n"
+                        "elif '-read_intervals' in a:\n    print(frames(3))\n"
+                        "elif '-count_packets' in a:\n"
+                        f"    print(json.dumps({{'streams': [{{'nb_read_packets': '{int(end * 25)}'}}]}}))\n"
+                        f"    sys.exit({count_code})\n"
+                        f"else:\n    print(frames({decoded}))\n    sys.exit({code})\n")
+            os.chmod(fake, 0o755)
+            if os.path.exists(calls):
+                os.unlink(calls)
+
+        wholes, runs = [], []
+        try:
+            os.environ["PATH"] = bin_dir + os.pathsep + path
+            for probe_, decoded, code, end, count_code in ((short, 500, 0, 20.0, 0), (short, 498, 0, 20.0, 0),
+                                                           (short, 497, 0, 20.0, 0), (short, 480, 0, 20.0, 0),
+                                                           (short, 500, 1, 20.0, 0), (short, 500, 0, 20.0, 1),
+                                                           (long_, 5000, 0, 200.0, 0)):
+                reading_whole(decoded, code, end, count_code)
+                got_read = rec.caption_windows("/nowhere/o.mkv", probe_)[0]
+                wholes.append(([(w["at"], w["frames"], w.get("whole"), w.get("packets"), w.get("leading"), w["captions"])
+                                for w in got_read["windows"]], got_read.get("span"), got_read["gop"],
+                               rec.windows_tell_none(got_read, rec.plan_of(probe_, int(end * 1000)))))
+                runs.append([json.loads(x) for x in open(calls, encoding="utf-8")])
+        finally:
+            os.environ["PATH"] = path
+        # the stand-in gives every window the same three frames from 0: only the start's lie at its place
+        six_of_three = [(0.0, 3, None, None, None, False)] + [(at, 0, None, None, None, False)
+                                                               for at in rec.CAPTION_WINDOWS[1:]]
+        t.eq("a picture whose places lie closer than a window reaches is read whole, its packets counted and every "
+             "frame decoded, its leading pictures listed (a keyframe first in decode order, two packets of its group "
+             "timed before it: 2): it tells none where it decoded every packet, or every one but those two, and "
+             "covers the span; one that decoded fewer is not known, and one whose read - its frames' or its count's - ended with an error (a bound hit), "
+             "every frame given or not, is no whole read: a failed window at its start, not known. A long picture a "
+             "window of which decoded fewer than half its packets is not read whole: its windows are kept as they "
+             "were read, and tell nothing. The gop is the longest run between keyframes of the first 1200 packets "
+             "(keyframes at 0, 25, 75 and 100: 50 packets, 2 s)",
+             wholes,
+             [([(0.0, 500, True, 500, 2, False)], {"start": 0.0, "end": 20.0}, 2.0, True),
+              ([(0.0, 498, True, 500, 2, False)], {"start": 0.0, "end": 20.0}, 2.0, True),
+              ([(0.0, 497, True, 500, 2, False)], {"start": 0.0, "end": 20.0}, 2.0, False),
+              ([(0.0, 480, True, 500, 2, False)], {"start": 0.0, "end": 20.0}, 2.0, False),
+              ([(0.0, 0, None, None, None, False)], None, 2.0, False),
+              ([(0.0, 0, None, None, None, False)], None, 2.0, False),
+              (six_of_three, {"start": 0.0, "end": 200.0}, 2.0, False)])
+        calls_made = [c for r in runs for c in r]
+        reads_made = [c for c in calls_made if c["args"] != ["-version"]]
+        space = [rec.CAPTION_BOUNDS["addressSpaceMiB"] << 20] * 2
+        t.ok("and every read, the whole one, the keyframes', the end's and each window's alike, runs under the plan's "
+             f"bounds and no larger: one thread, {rec.CAPTION_BOUNDS['cpuS']} s of CPU, "
+             f"{rec.CAPTION_BOUNDS['addressSpaceMiB']} MiB of address space where the platform takes it (Linux; "
+             "macOS takes none); the release asked of ffprobe (-version) under the same bounds",
+             len(reads_made) == 6 * 4 + 9
+             and all(c["args"][c["args"].index("-threads") + 1] == "1" for c in reads_made)
+             and all(c["cpu"] == [rec.CAPTION_BOUNDS["cpuS"]] * 2
+                     and (c["space"] == space or not sys.platform.startswith("linux")) for c in calls_made)
+             and [sum(1 for c in r if "-read_intervals" not in c["args"] and c["args"] != ["-version"]) for r in runs]
+             == [2, 2, 2, 2, 2, 2, 0]
+             and [sum(1 for c in r if c["args"] == ["-version"]) for r in runs] == [1] * 7,
+             runs)
+        # a long picture whose windows land 15 s before their places, past the slack of a gop of 2 s: they count
+        # where the packets listed from each show its keyframe as the last before its place
+        listing = os.path.join(tmp, "listing-mode")
+        with open(fake, "w") as f:
+            f.write(f"#!{sys.executable}\n" + """import json, sys
+a = sys.argv[1:]
+mode = open(%r).read().strip()
+at = a[a.index('-read_intervals') + 1] if '-read_intervals' in a else ''
+if at == '%%+#1200':
+    print(json.dumps({'packets': [{'pts_time': '%%.6f' %% (i * 0.04), 'flags': 'K__' if i in (0, 25, 75, 100) else '___'}
+                                  for i in range(1200)]}))
+elif 'packet=pts_time,duration_time' in a:
+    print(json.dumps({'packets': [{'pts_time': '199.960000', 'duration_time': '0.040000'}]}))
+elif 'packet=pts_time,flags' in a:
+    first, place = (float(x) for x in at.split('%%'))
+    n = int(round((place - first) / 0.04)) + 1
+    keys = {0} | ({125} if mode == 'between' else set())
+    print(json.dumps({'packets': [{'pts_time': '%%.6f' %% (first + i * 0.04), 'flags': 'K__' if i in keys else '___'}
+                                  for i in range(n)]}))
+else:
+    place = float(at.split('%%')[0])
+    first = max(0.0, place - 15.0)
+    print(json.dumps({'frames': [{'best_effort_timestamp_time': '%%.6f' %% (first + i * 0.04), 'duration_time': '0.04',
+                                  'side_data_list': []} for i in range(48)]}))
+""" % listing)
+        os.chmod(fake, 0o755)
+        keyed_reads = {}
+        try:
+            os.environ["PATH"] = bin_dir + os.pathsep + path
+            for mode in ("clean", "between"):
+                with open(listing, "w") as f:
+                    f.write(mode)
+                keyed_reads[mode] = rec.caption_windows("/nowhere/o.mkv", long_)[0]
+        finally:
+            os.environ["PATH"] = path
+        t.eq("a window whose first frame lies up to 30 s before its place counts where the packets listed from it "
+             "show no keyframe between it and its place (keyframeBefore), and tells; one with a keyframe between "
+             "landed elsewhere",
+             {m: ([(w["at"], w["start"], w["frames"], w.get("keyframeBefore")) for w in r["windows"]],
+                  rec.windows_tell_none(r, rec.plan_of(long_, 200000))) for m, r in keyed_reads.items()},
+             {"clean": ([(0.0, 0.0, 48, None), (0.1, 5.0, 48, True), (0.3, 45.0, 48, True), (0.5, 85.0, 48, True),
+                         (0.7, 125.0, 48, True), (0.9, 155.0, 48, True)], True),
+              "between": ([(0.0, 0.0, 48, None)] + [(at, p, 0, None) for at, p in
+                                                    zip(rec.CAPTION_WINDOWS[1:], (20.0, 60.0, 100.0, 140.0, 170.0))],
+                          False)})
+        failed = lambda at, start=0.0:{"at": at, "start": start, "end": start, "frames": 0, "captions": False}
+        t.eq("a window is kept as a record keeps it, one that could not be read showing no captions (a reader's "
+             "null of it too), one at the picture's start (0) as a reader writes it too; and an entry that is no "
+             "window - at no fraction from 0 to 1, without its times or its count, captions null of frames it "
+             "decoded or true of none, a count it can't be read for, no object at all - is kept as a failed one, "
+             "never left out",
+             rec.caption_windows_of([{"at": 0.5, "start": 4.0, "end": 5.92, "frames": 48, "captions": True},
+                                     {"at": 0.3, "start": 0.0, "end": 0.0, "frames": 0, "captions": False},
+                                     {"at": 0.7, "start": 0.0, "end": 0.0, "frames": 0, "captions": None},
+                                     {"at": 0, "start": 0.0, "end": 1.92, "frames": 48, "captions": True},
+                                     {"at": 1.2, "start": 0.0, "end": 1.0, "frames": 1, "captions": False},
+                                     {"at": 0.1, "start": 2.0, "end": 1.0, "frames": 1, "captions": False},
+                                     {"at": 0.7, "start": 0.0, "end": 1.0, "frames": 0, "captions": True},
+                                     {"at": 0.9, "start": 0.0, "end": 1.0, "frames": 3, "captions": None},
+                                     {"at": 0.9, "start": 0.0, "frames": 3, "captions": True}, "x",
+                                     {"at": 0.2, "start": 0.0, "end": 1.0, "frames": 3, "captions": False,
+                                      "interlacedFrames": 3, "repeatFrames": 1},
+                                     {"at": 0.4, "start": 0.0, "end": 1.0, "frames": 3, "captions": False,
+                                      "interlacedFrames": 4},
+                                     {"at": 0.6, "start": 0.0, "end": 1.0, "frames": 3, "captions": False,
+                                      "repeatFrames": True},
+                                     {"at": 0.5, "start": "60.0", "end": 62.0, "frames": 48, "captions": True}]),
+             [{"at": 0.5, "start": 4.0, "end": 5.92, "frames": 48, "captions": True}, failed(0.3), failed(0.7),
+              {"at": 0.0, "start": 0.0, "end": 1.92, "frames": 48, "captions": True}, failed(0.0), failed(0.1, 2.0),
+              failed(0.7), failed(0.9), failed(0.9), failed(0.0),
+              {"at": 0.2, "start": 0.0, "end": 1.0, "frames": 3, "captions": False, "interlacedFrames": 3,
+               "repeatFrames": 1}, failed(0.4), failed(0.6), failed(0.5)])
+        # a picture of 1000 s from 0 at 25 frames a second: the plan's places 0, 100, 300, 500, 700 and 900 s
+        plan = {"start": 0.0, "end": 1000.0, "step": 0.04}
+        places = rec.plan_places(plan)
+        six = lambda start=None, **more: [dict({"at": a, "start": p if start is None else start,
+                                                "end": (p if start is None else start) + 1.92, "frames": 48,
+                                                "captions": False}, **more) for a, p in zip(rec.CAPTION_WINDOWS, places)]
+        read = lambda windows, span=(0.0, 1000.0), gop=1.0: {"windows": windows, "gop": gop,
+                                                             **({"span": {"start": span[0], "end": span[1]}} if span else {})}
+        whole_read = lambda frames, packets, **more: [dict({"at": 0, "start": 0.0, "end": 1000.0, "frames": frames,
+                                                            "captions": False, "whole": True, "packets": packets,
+                                                            "leading": 0}, **more)]
+        moved = lambda by, keyed=False: [dict(w, start=round(w["start"] + by, 3), end=round(w["end"] + by, 3),
+                                              **({"keyframeBefore": True} if keyed else {})) if w["at"] else w
+                                         for w in six()]
+        tells = [read(six()), read(six()[1:]), read(six(start=0.0)), read(six()[:1]), read([dict(w, frames=23) for w in six()]),
+                 read([dict(w, at=round(w["at"] + 0.06, 3)) for w in six()]), read(six()[:-1] + [dict(six()[-1], at=0.7)]),
+                 read(six() + [six()[0]]), read([*six()[:2], "x", *six()[3:]]),
+                 read([*six()[:3], dict(six()[3], captions=True), *six()[4:]]),
+                 read(whole_read(25000, 25000)), read(whole_read(24999, 25000)), read(whole_read(25000, 25000) + six()[1:]),
+                 read([dict(whole_read(25000, 25000)[0], at=0.1)]), read([dict(whole_read(25000, 25000)[0], packets=None)]),
+                 read([]), None, read(six() + [dict(six()[-1], at=0.95, start=950.0, end=951.92)]),
+                 read([dict(w, frames=24) for w in six()]), read([dict(w, keyframeBefore="yes") for w in six()])]
+        t.eq("windows tell none only by the plan: the six at their places, on frames of their own and each of at "
+             "least half its 48 packets and 24 frames, or the one read of the whole picture that decoded every "
+             "packet; five without the start, six on the same frames, one, one of 23 frames, off their places, two "
+             "at one place, one too many on the same frames, an entry that is no window, one that shows captions, a "
+             "whole read that missed a packet or keeps other windows beside it, or not at 0, or without its "
+             "packets, no windows, a seventh window past the six, and a keyframeBefore that is no boolean, are not "
+             "known; windows of 24 frames each tell",
+             [rec.windows_tell_none(w, plan) for w in tells],
+             [True, False, False, False, False, False, False, False, False, False, True, False, False, False, False,
+              False, False, False, True, False])
+        spans = [read(six(), (0.0, 1000.53)), read(six(), (-0.53, 1000.0)), read(six(), (0.0, 1000.56)),
+                 read(six(), (0.6, 1000.0)), read(six(), None), read(six(), (0.0, 990.0)),
+                 read(whole_read(24750, 24750, end=990.0)), read(whole_read(25000, 25000, start=0.6))]
+        t.eq("and over the plan's span the probe gives: a read whose span is the plan's within a frame step and "
+             "0.5 s at either end tells, one further off, or without its span, is not known; so is a whole read that "
+             "does not cover the span, and a read without a plan (no start, length or frame rate)",
+             ([rec.windows_tell_none(r, plan) for r in spans], rec.windows_tell_none(read(six()), None),
+              round(rec.caption_tolerance(plan), 6)),
+             ([True, True, False, False, False, False, False, False], False, 0.54))
+        without = {k: v for k, v in whole_read(25000, 25000)[0].items() if k != "leading"}
+        t.eq("a whole read is complete where it decoded every packet but the stream's own leading pictures, at most 16 "
+             "of them, or those too: frames = packets - leading tells, one fewer does not, frames = packets tells, and "
+             "one that gives no leading, or more than 16, does not",
+             [rec.windows_tell_none(read(w), plan) for w in (
+                 whole_read(24998, 25000, leading=2), whole_read(24997, 25000, leading=2),
+                 whole_read(25000, 25000, leading=2), [without], whole_read(24984, 25000, leading=16),
+                 whole_read(24983, 25000, leading=17), whole_read(25000, 25000, leading=-1),
+                 whole_read(25000, 25000, leading=2.0))]
+             + [rec.whole_complete(dict(without, leading=3, frames=24997)), rec.whole_complete(without)],
+             [True, False, True, False, True, False, False, False, True, False])
+        t.eq("a window counts where its first frame lies within max(10 s, gop + 0.5 s) of its place, before or after, "
+             "or up to 30 s before it where its keyframe is the last before its place (keyframeBefore); of a gop of 0 "
+             "- fewer than two keyframes listed - only at its own place, within a frame step and 0.5 s, keyframe or "
+             "not, and never of windows that overlap",
+             [rec.windows_tell_none(read(moved(by, keyed), gop=g), plan) for by, g, keyed in
+              ((-9.9, 1.0, False), (-10.1, 1.0, False), (-10.1, 1.0, True), (-29.9, 1.0, True), (-30.1, 1.0, True),
+               (9.9, 1.0, False), (10.1, 1.0, False), (10.1, 1.0, True), (-12.4, 12.0, False), (-12.6, 12.0, False),
+               (-0.5, 0.0, False), (0.5, 0.0, False), (-0.6, 0.0, False), (-5.0, 0.0, True))]
+             + [rec.windows_tell_none(read([*six()[:2], dict(six()[2], end=six()[3]["start"] + 1), *six()[3:]], gop=0.0), plan),
+                rec.windows_tell_none(read(six(), gop=-1.0), plan), rec.windows_tell_none(read(six(), gop="1"), plan)],
+             [True, False, True, True, False, True, False, False, True, False, True, True, False, False,
+              False, False, False])
+        # of 120 s at 25 frames a second the places are 0, 12, 36, 60, 84 and 90 s: 6 s apart at the closest
+        plan120 = {"start": 0.0, "end": 120.0, "step": 0.04}
+        six120 = [{"at": a, "start": p, "end": p + 1.92, "frames": 48, "captions": False}
+                  for a, p in zip(rec.CAPTION_WINDOWS, rec.plan_places(plan120))]
+        whole120 = [{"at": 0, "start": 0.0, "end": 120.0, "frames": 3000, "captions": False, "whole": True,
+                     "packets": 3000, "leading": 0}]
+        t.eq("where two places lie closer than a window reaches - its 48 packets at the frame step, the gop and 0.5 s - "
+             "the six tell nothing and the whole read alone tells: of 120 s, a gop of 3.6 s and more",
+             [(rec.plan_short(plan120, g), rec.windows_tell_none(read(six120, (0.0, 120.0), g), plan120),
+               rec.windows_tell_none(read(whole120, (0.0, 120.0), g), plan120)) for g in (3.5, 3.6)],
+             [(False, True, True), (True, False, True)])
+        t.eq("a window puts its picture in fields where it counted interlaced frames, or says a count it can't be "
+             "read for - more than it decoded, not a whole number, below 0 -; repeated fields alone do not",
+             [rec.windows_count_fields(w) for w in (six(), six(interlacedFrames=1), six(repeatFrames=20),
+                                                     six(interlacedFrames=49), six(interlacedFrames=1.0),
+                                                     six(interlacedFrames="12"), six(repeatFrames=-1), None)],
+             [False, True, False, True, True, True, True, True])
+        t.eq("a window whose ffprobe exits with an error, or whose first frame is not at its place by the plan's "
+             "slack (of a gop of 2 s, 10 s either way), failed: it landed elsewhere",
+             [rec.caption_window(0.5, [{"pts_time": "600.0", "duration_time": "0.04"}], 600.0, code)["frames"]
+              for code in (0, 1)]
+             + [rec.caption_window(0.5, [{"pts_time": t0, "duration_time": "0.04"}], 600.0, 0,
+                                   lambda first: rec.window_lands(first, 600.0, 2.0, plan))["frames"]
+                for t0 in ("590.0", "589.9", "610.0", "610.1", "0.0")],
+             [1, 0, 1, 0, 1, 0, 0])
+        t.eq("a window counts the frames ffprobe says are interlaced and those that repeat a field, where it gives "
+             "them for every frame",
+             [rec.caption_window(0.2, [{"pts_time": str(n * 0.04), "duration_time": "0.04", "interlaced_frame": n % 2,
+                                        "repeat_pict": 1 if n == 2 else 0} for n in range(4)], 8.0),
+              rec.caption_window(0.2, [{"pts_time": "0.0", "duration_time": "0.04"}], 8.0),
+              rec.caption_window(0.2, [], 8.0)],
+             [{"at": 0.2, "start": 0.0, "end": 0.16, "frames": 4, "captions": False, "interlacedFrames": 2,
+               "repeatFrames": 1},
+              {"at": 0.2, "start": 0.0, "end": 0.04, "frames": 1, "captions": False},
+              {"at": 0.2, "start": 8.0, "end": 8.0, "frames": 0, "captions": False}])
+
+    # the gate keeps an original that has closed captions, or whose captions are not known, whatever its
+    # package carries: it does not use the package's captions
+    def win(at, start, captions=True, frames=48):
+        return {"at": at, "start": start, "end": start + 1.92, "frames": frames, "captions": captions and frames > 0}
+
+    # a picture of 1000 s from 0 at 25 frames a second: the plan's places are 0, 100, 300, 500, 700 and 900 s
+    picture = {"format": {"duration": "1000.0", "format_name": "matroska,webm", "start_time": "0.000000"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "h264", "height": 1080, "field_order": "progressive",
+         "disposition": {}, "start_time": "0.000000", "avg_frame_rate": "25/1"}]}
+    plan = rec.plan_of(picture, 1000000)
+    planned = lambda *more: {"windows": [win(a, p, False) for a, p in zip(rec.CAPTION_WINDOWS, rec.plan_places(plan))],
+                             "span": {"start": 0.0, "end": 1000.0}, "gop": 1.0, **dict(more)}
+    essence = lambda read=None: rec.probed(picture, captions={0: read} if read is not None else None)["essence"]
+    has = essence([win(0.1, 100.0, False), win(0.5, 500.0)])
+    none = essence(planned())
+    failed = essence([win(0.1, 100.0, False), win(0.3, 300.0, frames=0), win(0.5, 500.0, False)])
+    unread = essence()
+    t.eq("an original's essence knows its captions where its read tells them — a window shows them, or the read "
+         "is the plan's over the span its probe gives — and not where one could not be read and none shows them, "
+         "or none was read",
+         [(e["closedCaptions"], e.get("closedCaptionsKnown")) for e in (has, none, failed, unread)],
+         [(True, True), (False, True), (False, None), (False, None)])
+    hevc = dict(picture, streams=[dict(picture["streams"][0], codec_name="hevc")])
+    nothing = planned()
+    t.eq("an HEVC picture's windows that show none make it know it has none only where its packets, read whole, "
+         "carry no caption signature: its decoder does not export A53 from a suffix SEI",
+         [rec.probed(hevc, captions={0: nothing}, signature=sig)["essence"].get("closedCaptionsKnown")
+          for sig in (None, {0: False}, {0: True})],
+         [None, True, True])
+    off = lambda fmt, codec="h264", *more: rec.probed(
+        {"format": {"duration": "1000.0", "format_name": fmt}, "streams": [
+            {"index": 0, "codec_type": "video", "codec_name": codec, "height": 1080, "disposition": {},
+             "start_time": "0.000000", "avg_frame_rate": "25/1"}, *more]},
+        captions={0: planned()})
+    data = {"index": 1, "codec_type": "data", "codec_name": "bin_data", "codec_tag_string": "[0][0][0][0]"}
+    cover = {"index": 1, "codec_type": "video", "codec_name": "mjpeg", "disposition": {"attached_pic": 1}}
+    offs = [off("asf"), off("matroska,webm", "vc1"), off("mpegts", "h264", data),
+            off("matroska,webm", "h264", cover), off("mov,mp4,m4a,3gp,3g2,mj2", "h264",
+                                                     {"index": 1, "codec_type": "data", "codec_tag_string": "tmcd"}),
+            off("matroska,webm", "h264", {"index": 1, "codec_type": "subtitle", "codec_name": "none"}),
+            off("matroska,webm", "h264", dict(cover, codec_name="h264", disposition={})),
+            off("matroska,webm", "h264", dict(cover, nb_frames="2400")),
+            rec.probed({"format": {"duration": "1000.0", "format_name": "mpegts"}, "streams": [
+                dict(picture["streams"][0], height=486)]}, captions={0: nothing})]
+    t.eq("off the closed lists of how captions are carried — a container, a film's codec or a stream not on them, "
+         "one axis at a time, in the analyzer's names —, windows that decoded frames and show none do not make a "
+         "file know it has none; a cover is no film, a timecode track is on them, a Matroska caption track ffmpeg "
+         "names no codec of, a second film, a cover with a length of its own and a picture of an analog capture's "
+         "height are off them; windows that show captions tell them all the same",
+         ([(e["essence"].get("closedCaptionsKnown"), e["offList"]) for e in offs],
+          rec.probed({"format": {"duration": "1000.0", "format_name": "asf"}, "streams": picture["streams"]},
+                     captions={0: [win(0.2, 200.0)]})["essence"].get("closedCaptionsKnown")),
+         ([(None, ["container:asf"]), (None, ["codec:vc1"]), (None, ["stream:data:bin_data"]), (True, []),
+           (True, []), (None, ["stream:subtitle:none"]), (None, ["video-streams:2"]), (None, ["video-streams:2", "codec:mjpeg"]),
+           (None, ["picture:vbi-lines"])], True))
+    t.eq("and a record written before, which keeps no offList, says it by its container and streams",
+         [rec.record_off_list({k: v for k, v in e.items() if k != "offList"}) for e in offs[:4]]
+         + [rec.record_off_list({"container": {"format": "matroska,webm"}, "streams": []}),
+            rec.record_off_list({"container": {"format": ""}, "streams": []})],
+         [["container:asf"], ["codec:vc1"], ["stream:data:bin_data"], [], [], ["container:none"]])
+    own = lambda *more: rec.probed({"format": {"duration": "100.0", "format_name": "mov,mp4,m4a,3gp,3g2,mj2"},
+                                    "streams": [picture["streams"][0], *more]})
+    tracks = [own({"index": 1, "codec_type": "subtitle", "codec_name": "eia_608", "codec_tag_string": "c608"}),
+              own({"index": 1, "codec_type": "data", "codec_tag_string": "c708"}),
+              own({"index": 1, "codec_type": "subtitle", "codec_name": "mov_text", "codec_tag_string": "tx3g"})]
+    t.eq("a stream that is closed captions of its own — eia_608, or a c608 or c708 track — says so, and its file "
+         "carries closed captions, known, though its picture was never read; another subtitle says nothing of them",
+         [([x.get("closedCaptions") for x in e["streams"][1:]], e["essence"]["closedCaptions"],
+           e["essence"].get("closedCaptionsKnown")) for e in tracks],
+         [([True], True, True), ([True], True, True), ([None], False, None)])
+    old_record = {"container": {"format": "mov,mp4,m4a,3gp,3g2,mj2"}, "essence": {"closedCaptions": False},
+                  "streams": [dict(tracks[2]["streams"][0]), {"index": 1, "type": "subtitle", "codec": "eia_608",
+                                                              "dispositions": {}}]}
+    t.eq("and the gate keeps an original whose record, written before it said so, or whose probe has such a stream",
+         [rec.gate_holds([old_record]), rec.gate_holds([dict(old_record, streams=old_record["streams"][:1])],
+                                                      probes=[{"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2"},
+                                                               "streams": [{"index": 0, "codec_type": "video",
+                                                                            "codec_name": "h264", "disposition": {},
+                                                                            "field_order": "progressive"},
+                                                                           {"codec_type": "data",
+                                                                            "codec_tag_string": "c708"}]}])],
+         [{"closedCaptions": "a stream of its record is closed captions of its own"},
+          {"closedCaptions": "a stream of its probe is closed captions of its own"}])
+    counted = rec.probed(picture, captions={0: planned(("windows", [dict(planned()["windows"][0], interlacedFrames=3),
+                                                                     *planned()["windows"][1:]]))})
+    t.eq("a picture whose field order says progressive but a window of which counted interlaced frames is in "
+         "fields",
+         (counted["streams"][0]["fieldOrder"], counted["essence"]["interlaced"],
+          rec.in_fields([dict(counted, essence=dict(counted["essence"], interlaced=False))])),
+         ("progressive", True, "a caption window of its picture counted interlaced frames, or a count it can't be read for"))
+    read = lambda *windows: dict(planned(), windows=list(windows), at=GOLDEN_AT)
+    reads = [dict(planned(), at=GOLDEN_AT), read(win(0.5, 500.0)),
+             read(win(0.1, 100.0, False), win(0.3, 300.0, frames=0)),
+             read(dict(win(0.1, 100.0, False), interlacedFrames=48)), {}, None,
+             dict(planned(), windows=planned()["windows"][1:], at=GOLDEN_AT),
+             read({"at": 0, "start": 0.0, "end": 1000.0, "frames": 25000, "captions": False, "whole": True,
+                   "packets": 25000, "leading": 0})]
+    t.eq("an original's essence as the read its deletion carries tells it: it knows none where the read is the "
+         "plan's six windows, or the whole picture read to its last packet, and none shows captions; carries them "
+         "where one does; says nothing more of a read that failed, of one of five windows without the start (made "
+         "before the plan) or of one window; and is in fields where a window counted interlaced frames, or of a "
+         "read that has no windows",
+         [(e.get("closedCaptions"), e.get("closedCaptionsKnown"), e.get("interlaced"))
+          for e in (rec.essence_as_read(unread, r, plan) for r in reads)],
+         [(False, True, False), (True, True, False), (False, None, False), (False, None, True), (False, None, True),
+          (False, None, False), (False, None, False), (False, True, False)])
+    hevc_record = rec.probed(hevc)
+    plan_read = reads[0]
+    t.eq("the gate keeps an HEVC original whose packets were not read whole for a caption signature, though a "
+         "deletion's read of the plan tells none - a whole read of it too -, and lets one go whose packets carry none",
+         [sorted(k for k in rec.deletion_gate([rec.essence_as_read(e["essence"], r, plan)], {},
+                                              rec.gate_holds([e], probes=[hevc], reads=[r]))
+                 if k in ("closedCaptions", "interlaced"))
+          for e, r in ((hevc_record, plan_read), (hevc_record, reads[7]),
+                       (rec.probed(hevc, signature={0: False}), plan_read))],
+         [["closedCaptions"], ["closedCaptions"], []])
+    t.eq("and the worst of several reads decides: one that shows captions, or one that failed, beside a clean one",
+         [(e.get("closedCaptions"), e.get("closedCaptionsKnown"))
+          for e in (rec.essence_as_read(unread, rs, plan) for rs in ([reads[0], reads[1]], [reads[0], reads[2]],
+                                                               [reads[0], reads[7]]))],
+         [(True, True), (False, None), (False, True)])
+    t.eq("so the gate lets go of captions an original's read tells are none, and keeps them where it shows them "
+         "or failed",
+         [[k for k in rec.deletion_gate([rec.essence_as_read(unread, r, plan)], {"closedCaptions": False}, {})
+           if k == "closedCaptions"] for r in reads[:3]],
+         [[], ["closedCaptions"], ["closedCaptions"]])
+    carrying = {"closedCaptions": True}
+    gate = lambda s, p: [k for k in rec.deletion_gate([s], p, {}) if k == "closedCaptions"]
+    cases = [(has, carrying), (has, {"closedCaptions": False}), (none, carrying), (none, {"closedCaptions": False}),
+             (failed, carrying), (unread, carrying), (unread, {"closedCaptions": False})]
+    t.eq("so the gate keeps an original that has captions or does not know them, whatever its package carries, "
+         "and lets one go that knows it has none",
+         [gate(*c) for c in cases],
+         [["closedCaptions"], ["closedCaptions"], [], [], ["closedCaptions"], ["closedCaptions"], ["closedCaptions"]])
+    validator, rebuild = load_tool(VALIDATOR) if have_jsonschema() else None, load_tool(REBUILD)
+    t.eq("the validator and the rebuild compute it the same way",
+         [[sorted(g([s], p, {})) for s, p in cases] for g in
+          ([validator.deletion_gate] if validator else []) + [rebuild.deletion_gate]],
+         [[rec.deletion_gate([s], p, {}) for s, p in cases]] * (2 if validator else 1))
+    t.eq("the gate has no permissive default: what it holds beyond the essences is given (held), an essence whose "
+         "captions or fields are not exactly false and known keeps the original, and no source at all keeps both",
+         [[k for k in rec.deletion_gate([dict(none, **c)], {}, {}) if k in ("closedCaptions", "interlaced")]
+          for c in ({"closedCaptionsKnown": "true"}, {"closedCaptionsKnown": 1}, {"closedCaptions": "false"},
+                    {"closedCaptions": None}, {"interlaced": None}, {"interlaced": "false"})],
+         [["closedCaptions"], ["closedCaptions"], ["closedCaptions"], ["closedCaptions"], ["interlaced"],
+          ["interlaced"]])
+    held_needed = None
+    try:
+        rec.deletion_gate([none], {})
+    except TypeError as e:
+        held_needed = str(e)
+    t.ok("deletion_gate without what the records hold is refused", bool(held_needed), held_needed)
+    t.eq("and of no source it keeps both", [k for k in rec.deletion_gate([], {}, {}) if k in ("closedCaptions", "interlaced")],
+         ["closedCaptions", "interlaced"])
+    t.eq("a reader's failed window, captions null, is one that could not be read; null of frames it decoded is "
+         "a failed one too",
+         rec.caption_windows_of([{"at": 0.3, "start": 30.0, "end": 30.0, "frames": 0, "captions": None},
+                                 {"at": 0.5, "start": 50.0, "end": 51.92, "frames": 48, "captions": None}]),
+         [{"at": 0.3, "start": 30.0, "end": 30.0, "frames": 0, "captions": False},
+          {"at": 0.5, "start": 50.0, "end": 50.0, "frames": 0, "captions": False}])
+
+    # what the picture is as far as fields go: the contract's scan as the transcoder writes it
+    idet = {"frames": 1000, "tff": 980, "bff": 0, "progressive": 0, "undetermined": 20, "repeatedTop": 0,
+            "repeatedBottom": 0, "matchedCombed": 560, "matchedDetermined": 1000, "matchedRun": 14,
+            "cadenceBlocks": 0, "otherBlocks": 200, "blindBlocks": 0,
+            "windows": {"film": 0, "video": 5, "whole": 0, "unsure": 0, "detail": 0}}
+    contract = {"found": "fields", "judgedBy": "pictures", "fieldOrder": "tb", "done": "deinterlaced-frame",
+                "order": "tff", "orderBy": "mark", "orderSeen": True, "frameRate": "25/1",
+                "filter": "bwdif=mode=send_frame:parity=tff:deint=all", "idet": idet, "verified": None}
+    shapes = [dict(contract, done="deinterlaced-field", frameRate="50/1"), contract,
+              dict(contract, found="telecine", done="inverse-telecine", frameRate="24000/1001"),
+              dict(contract, found="progressive", done="progressive", filter=None),
+              dict(contract, found="field-pictures", judgedBy="bitstream", done="fields-kept", filter=None, idet=None),
+              dict(contract, found="mixed", done="field-matched"),
+              dict(contract, found="unknown", done="unexamined", filter=None, idet=None),
+              dict(contract, found="progressive", judgedBy="mark", fieldOrder="progressive", done="none",
+                   order="tff", orderBy="default", orderSeen=False, frameRate="24/1", filter=None, idet=None),
+              dict(contract, found="mixed", done="fields-left", filter=None),
+              dict(contract, found="unexamined", judgedBy="failed", done="unexamined", idet=None),
+              dict(contract, done="deinterlaced"), dict(contract, found="maybe"), {"done": "none"},
+              {"found": "fields"}, {"kind": "deinterlaced-field", "frameRate": "50/1"}, "deinterlaced", None]
+    blocks = [rec.scan_block(x) for x in shapes]
+    t.eq("a manifest's scan is the record's as the transcoder's contract says it: what was done and found, every "
+         "word it has, fields-left and a found unexamined among them, and one the record does not know kept as it "
+         "is; one that says what was done alone was found unknown, one that says what was found alone did "
+         "nothing it names; one that says neither, or none, is none",
+         [(b["done"], b["found"], b["frameRate"]) if b else None for b in blocks],
+         [("deinterlaced-field", "fields", "50/1"), ("deinterlaced-frame", "fields", "25/1"),
+          ("inverse-telecine", "telecine", "24000/1001"), ("progressive", "progressive", "25/1"),
+          ("fields-kept", "field-pictures", "25/1"), ("field-matched", "mixed", "25/1"),
+          ("unexamined", "unknown", "25/1"), ("none", "progressive", "24/1"), ("fields-left", "mixed", "25/1"),
+          ("unexamined", "unexamined", "25/1"), ("deinterlaced", "fields", "25/1"), ("deinterlaced-frame", "maybe", "25/1"),
+          ("none", "unknown", None), (None, "fields", None), None, None, None])
+    verified = {"ok": False, "why": "fields in the read-through", "sampleDone": "progressive",
+                "sampleFound": "progressive", "frames": 5000, "chunksInFields": 3, "otherOrder": 0, "offCadence": 0,
+                "repeats": 0, "matchedUnsure": 0, "combedOut": 12, "combedOutRun": 4, "droppedDistinct": 0,
+                "uncertainCycles": 0, "seen": 4990, "blindRun": 10, "complete": True}
+    no_verified = {k: v for k, v in contract.items() if k != "verified"}
+    t.eq("and keeps every word of how it was judged and done, the examination's counts and its windows as the "
+         "transcoder writes them, and the read-through of the whole title, each count that is one; a key it does "
+         "not know is left out, and so are counts and a read-through it does not give",
+         (blocks[1], rec.scan_block(dict(contract, idet=dict(idet, tff="980", cadence=0.5)))["idet"],
+          rec.scan_block(dict(contract, extra="kept?", judgedBy=3, orderSeen="yes")),
+          rec.scan_block(dict(contract, verified=dict(verified, frames=-1, extra=1)))["verified"],
+          "idet" in blocks[4], rec.scan_block(dict(contract, idet={"windows": {}}))),
+         (no_verified, {k: v for k, v in idet.items() if k != "tff"}, dict(no_verified, judgedBy="3", orderSeen=None),
+          {k: v for k, v in verified.items() if k != "frames"}, False,
+          {k: v for k, v in no_verified.items() if k != "idet"}))
+    fields = rec.probed({"format": {"duration": "1.0", "format_name": "mpegts"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "mpeg2video", "height": 576, "field_order": "tb",
+         "disposition": {}}]}, captions={0: [{"at": f, "start": 0.0, "end": 0.5, "frames": 12, "captions": False} for f in (0.1, 0.3, 0.5, 0.7, 0.9)]})
+    manifest = lambda scan: {"packagedAt": GOLDEN_AT, "packager": "packager-test", "durationMs": 1000,
+                             "renditions": {"video": [{"id": "v0", "dir": "hls/v0", "codec": "hvc1.1.6.L93.90",
+                                                       "width": 1024, "height": 576, "encoder": "hevc_nvenc"}],
+                                            "audio": []},
+                             "subtitles": [], **({"scan": scan} if scan is not None else {})}
+    records = [rec.package_record("c0ffee00-0000-4000-8000-0000000000ab", manifest(x), [], source=fields)[0]
+               for x in (*shapes[:8], None)]
+    other = [rec.package_record("c0ffee00-0000-4000-8000-0000000000ab", manifest(x), [], source=fields)[0]
+             for x in shapes[8:14]]
+    t.eq("a package's record keeps a scan in words the record does not know, and its essence what was done where "
+         "it says it",
+         [(r["scan"]["found"], r["scan"]["done"], r["essence"].get("scan")) for r in other],
+         [("mixed", "fields-left", "fields-left"), ("unexamined", "unexamined", "unexamined"),
+          ("fields", "deinterlaced", "deinterlaced"), ("maybe", "deinterlaced-frame", "deinterlaced-frame"),
+          ("unknown", "none", "none"), ("fields", None, None)])
+    t.eq("the package's record keeps it, and its essence what was done; a manifest without one gives the record "
+         "it gave",
+         ([r.get("scan") for r in records] == [*blocks[:8], None], [r["essence"].get("scan") for r in records]),
+         (True, ["deinterlaced-field", "deinterlaced-frame", "inverse-telecine", "progressive", "fields-kept",
+                 "field-matched", "unexamined", "none", None]))
+    held = lambda gate, *a: [k for k in gate(*a) if k == "interlaced"]
+    t.eq("an original marked as fields is kept whatever was done to make its package progressive: no word of "
+         "done lets it go, a film's own frames, whole frames as found and every field a frame among them, nor "
+         "does no scan; an original not in fields is no loss of the kind",
+         ([held(rec.deletion_gate, [fields["essence"]], r["essence"], {}) for r in records],
+          [held(rec.deletion_gate, [fields["essence"]], r["essence"], rec.gate_holds([fields], [r])) for r in records],
+          fields["essence"]["interlaced"],
+          held(rec.deletion_gate, [dict(fields["essence"], interlaced=False)], records[-1]["essence"], {})),
+         ([["interlaced"]] * 9, [["interlaced"]] * 9, True, []))
+    whole = rec.probed({"format": {"duration": "1.0", "format_name": "matroska,webm"}, "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 576, "field_order": "progressive",
+         "disposition": {}},
+        {"index": 1, "codec_type": "video", "codec_name": "mjpeg", "height": 300, "disposition": {"attached_pic": 1}}]},
+        captions={0: [{"at": f, "start": 0.0, "end": 0.5, "frames": 12, "captions": False}
+                      for f in (0.1, 0.3, 0.5, 0.7, 0.9)]})
+    order = lambda o: dict(whole, streams=[dict(whole["streams"][0], fieldOrder=o), *whole["streams"][1:]])
+    probe_of = lambda o: {"streams": [{"index": 0, "codec_type": "video", "disposition": {},
+                                       **({} if o is None else {"field_order": o})},
+                                      {"index": 1, "codec_type": "video", "codec_name": "png",
+                                       "disposition": {"attached_pic": 1}}]}
+    readings = [
+        ([fields], [], []), ([order("bb")], [], []), ([order("unknown")], [], []), ([order(None)], [], []),
+        ([order("Progressive ")], [], []), ([whole], [], [probe_of("tt")]), ([whole], [], [probe_of(None)]),
+        ([whole], [], [probe_of("progressive")]),
+        *[([whole], [r], []) for r in records],
+        ([whole], [records[3], records[0]], []), ([whole], [dict(records[3], scan=dict(blocks[3], found="maybe"))], []),
+        ([whole, fields], [], []), ([], [], [])]
+    progressive_only = "the scan of a package of the title found progressive without its whole title read through"
+    t.eq("an original is in fields read widely: its record's mark, a picture of its record or its probe whose field "
+         "order is not exactly progressive (written otherwise, unknown, and none given, which is how ffprobe's JSON "
+         "says unknown), or any package of the title, of other sources too, whose scan doesn't let it go - any "
+         "found but progressive, and progressive without the whole title read through -, whatever it did; an "
+         "attached picture and a package without a scan say nothing",
+         [rec.in_fields(*x) for x in readings],
+         ["its record is marked interlaced", "its record's field order is 'bb'", "its record's field order is 'unknown'",
+          "its record's field order is 'unknown'", "its record's field order is 'Progressive '",
+          "its probe's field order is 'tt'", "its probe's field order is 'unknown'", None,
+          "the scan of a package of the title found 'fields'", "the scan of a package of the title found 'fields'",
+          "the scan of a package of the title found 'telecine'", progressive_only,
+          "the scan of a package of the title found 'field-pictures'", "the scan of a package of the title found 'mixed'",
+          "the scan of a package of the title found 'unknown'", progressive_only, None, progressive_only,
+          "the scan of a package of the title found 'maybe'", "its record is marked interlaced", None])
+    t.eq("the essence's mark stays the record's field order of tt, bb, tb or bt alone",
+         [rec.probed({"format": {"duration": "1.0"}, "streams": [
+             {"index": 0, "codec_type": "video", "codec_name": "hevc", "height": 576, "disposition": {},
+              **({} if o is None else {"field_order": o})}]})["essence"]["interlaced"]
+          for o in ("tt", "bb", "tb", "bt", "progressive", "unknown", None)],
+         [True, True, True, True, False, False, False])
+    t.eq("an unmarked original of progressive pictures goes the ordinary way where no package has a scan, and is "
+         "kept where one found fields in it, whatever that package did, and where one found progressive without "
+         "the whole title read through",
+         [held(rec.deletion_gate, [whole["essence"]], r["essence"], rec.gate_holds([whole], [r])) for r in records],
+         [["interlaced"], ["interlaced"], ["interlaced"], ["interlaced"], ["interlaced"], ["interlaced"], ["interlaced"],
+          ["interlaced"], []])
+    readers = ([validator] if validator else []) + [rebuild]
+    probes_now = [{"format": {"format_name": f}, "streams": [dict(picture["streams"][0], codec_name=c), *more]}
+                  for f, c, more in (("asf", "h264", ()), ("matroska,webm", "vc1", ()), ("mpegts", "h264", (data,)),
+                                     ("matroska,webm", "h264", (cover,)), ("mov,mp4,m4a,3gp,3g2,mj2", "h264",
+                                                                         ({"codec_type": "data", "codec_tag_string": "tmcd"},)))]
+    lists = [*offs, whole, fields, old_record, counted]
+    t.eq("the validator and the rebuild read fields, the closed list, caption streams and a deletion's read the "
+         "same way, and hold an original the same way",
+         ([[g.in_fields(*x) for x in readings] for g in readers],
+          [[g.gate_holds([x]) for x in lists] for g in readers],
+          [[g.off_list(p) for p in probes_now] for g in readers],
+          [[g.record_off_list(x) for x in lists] for g in readers],
+          [[g.essence_as_read(unread, r, plan) for r in reads] for g in readers],
+          [[held(g.deletion_gate, [fields["essence"]], r["essence"], {}) for r in records] for g in readers],
+          [[sorted(g.deletion_gate([s["essence"] for s in x[0]], records[-1]["essence"], g.gate_holds(*x)))
+            for x in readings] for g in readers]),
+         ([[rec.in_fields(*x) for x in readings]] * len(readers),
+          [[rec.gate_holds([x]) for x in lists]] * len(readers),
+          [[rec.off_list(p) for p in probes_now]] * len(readers),
+          [[rec.record_off_list(x) for x in lists]] * len(readers),
+          [[rec.essence_as_read(unread, r, plan) for r in reads]] * len(readers),
+          [[["interlaced"]] * 9] * len(readers),
+          [[sorted(rec.deletion_gate([s["essence"] for s in x[0]], records[-1]["essence"], rec.gate_holds(*x)))
+            for x in readings]] * len(readers)))
+
+# The plan every reader of closed captions reads its windows by, pinned: a copy that differs fails the build.
+PLAN = os.path.join(TOOLS, "..", "library", "v2", "caption-windows.json")
+PLAN_SHA256 = "02087f1b50f7c6854f8e42ce2526063606657c58aef9942d151005279aa03b87"
+GATE_BLOCK = ("# ==== the deletion gate, shared ====", "# ==== the deletion gate, shared: end ====")
+
+
+def test_plan_and_gate(t):
+    """The plan of caption windows is the file's bytes, pinned; the shared gate block is the same text in the record
+    logic, the validator and the rebuild, their lists the same; the chapter track of an MP4 is on the lists only
+    where all five of its conditions hold; and a read-through of a scan is complete only where it counts up."""
+    rec = load_tool(RECORDS)
+    plan = open(PLAN, "rb").read()
+    t.eq("the plan of caption windows is the file library/v2/caption-windows.json, byte for byte, at its pinned "
+         "sha256, and the record logic reads nothing else for it",
+         (rec.CAPTION_PLAN_JSON.encode("utf-8") == plan, hashlib.sha256(plan).hexdigest()), (True, PLAN_SHA256))
+    t.eq("and its constants are the plan's: the start and 10 to 90 %, 30 s of tail that never caps the start and "
+         "never half the span, a rate of 1 frame a second at least, 48 packets of which a window decodes half and "
+         "24 frames at least, the gop of the first 1200 packets, a frame step and 0.5 s of tolerance on every side, a window's slack of max(10 s, gop "
+         "+ 0.5 s) and 30 s before its place where no keyframe lies between, the reach of 48 frame steps, the gop "
+         "and 0.5 s, the bounds - one thread, 1280 MiB, 600 s of CPU and 180 s of wall time a read, the reader's "
+         "timeout among them -, a whole read of a short picture",
+         (rec.CAPTION_WINDOWS, rec.CAPTION_TAIL_S, rec.CAPTION_PLAN["minRate"], rec.CAPTION_PACKETS,
+          rec.CAPTION_PLAN["minFrames"], rec.CAPTION_PLAN["packetsShare"], rec.CAPTION_MIN_FRAMES,
+          rec.CAPTION_GOP_PACKETS, {k: v for k, v in rec.CAPTION_PLAN["endTolerance"].items() if k != "words"},
+          {k: v for k, v in rec.CAPTION_PLAN["placeSlack"].items() if k != "words"},
+          {k: v for k, v in rec.CAPTION_PLAN["shortReach"].items() if k != "words"}, rec.CAPTION_TIMEOUT,
+          rec.CAPTION_BOUNDS, sorted(rec.CAPTION_PLAN["words"]),
+          [k for k in ("short", "span", "startCapped") if k in rec.CAPTION_PLAN]),
+         ((0.0, 0.1, 0.3, 0.5, 0.7, 0.9), 30.0, 1, 48, 24, 0.5, 24, 1200, {"frameSteps": 1, "s": 0.5},
+          {"s": 10, "gopPlus": 0.5, "backS": 30}, {"packets": 48, "gop": True, "s": 0.5}, 180,
+          {"threads": 1, "addressSpaceMiB": 1280, "cpuS": 600, "timeoutS": 180},
+          ["end", "frameStep", "picture", "wholeComplete"], []))
+    stream = {"codec_type": "video", "disposition": {}, "start_time": "2.5", "duration": "100.0",
+              "avg_frame_rate": "25/1", "r_frame_rate": "50/1"}
+    drop = lambda *keys: {k: v for k, v in stream.items() if k not in keys}
+    of = lambda st, fmt=None, ms=None: rec.plan_of({"format": fmt or {}, "streams": [st]}, ms)
+    t.eq("the plan's span is what the gate knows without reading: the stored probe's picture start_time + duration, "
+         "the format's start_time where the picture gives none; where it gives no duration, the record's "
+         "container.durationMs before the format's duration, which counts only where the record gives none; its "
+         "frame step one over avg_frame_rate, or r_frame_rate where that is exactly 0/0 and nowhere else; none "
+         "without a start, a length or a frame rate - no plan where the probe states no rate, or no avg_frame_rate "
+         "-, of no picture or of no probe",
+         [of(stream), of(drop("start_time"), {"start_time": "1.0"}), of(drop("duration"), None, 60000),
+          of(drop("duration"), {"duration": "999.0"}, 60000), of(drop("duration"), {"duration": "50.0"}),
+          of(drop("avg_frame_rate")),
+          of(drop("start_time")), of(drop("duration")), of(drop("avg_frame_rate", "r_frame_rate")),
+          of(dict(stream, avg_frame_rate="0/0")), of(dict(stream, codec_name="png", disposition={"attached_pic": 1})),
+          rec.plan_of(None), rec.plan_of({"streams": "x"})],
+         [{"start": 2.5, "end": 102.5, "step": 0.04}, {"start": 1.0, "end": 101.0, "step": 0.04},
+          {"start": 2.5, "end": 62.5, "step": 0.04}, {"start": 2.5, "end": 62.5, "step": 0.04},
+          {"start": 2.5, "end": 52.5, "step": 0.04}, None, None, None, None,
+          {"start": 2.5, "end": 102.5, "step": 0.02}, None, None, None])
+    film = {"index": 1, "codec_type": "video", "codec_name": "h264", "disposition": {}, "start_time": "0.000000",
+            "duration": "100.0", "avg_frame_rate": "25/1"}
+    tagged = {"index": 0, "codec_type": "video", "codec_name": "mjpeg", "disposition": {}, "nb_frames": "1",
+              "avg_frame_rate": "90000/1", "start_time": "0.000000",
+              "tags": {"filename": "cover.jpg", "mimetype": "image/jpeg"}}
+    pictures = [{"streams": [tagged, film]},
+                {"streams": [dict(tagged, codec_name="png", tags={}, disposition={"attached_pic": 1}), film]},
+                {"streams": [dict(film, index=0), film]},
+                {"streams": [dict(tagged, codec_name="webp", tags={"filename": "cover.webp", "mimetype": "image/webp"}),
+                             film]},
+                {"streams": [dict(tagged, tags={"filename": "cover.jpg"}), film]},
+                {"streams": [dict(tagged, tags={"mimetype": "image/jpeg"}), film]},
+                {"streams": [dict(tagged, nb_frames="2400"), film]},
+                {"streams": [dict(tagged, tags=dict(tagged["tags"], DURATION="00:00:05.000000000")), film]},
+                {"streams": [tagged]}]
+    t.eq("the plan's picture is the probe's film by the closed lists' cover rule - marked (attached_pic, or both a "
+         "filename and a mimetype tag), a cover's codec (mjpeg, png, bmp), at most one frame and no length of its "
+         "own -, wherever a cover lies: an mjpeg cover marked by its tags alone before the film, and a png marked "
+         "attached_pic, leave the film's plan; two streams that could each be the picture - two films, a webp "
+         "with a filename and an image/* mimetype, an mjpeg with only a filename or only a mimetype, a tagged "
+         "image of 2400 frames or with a DURATION tag, each beside the film - and a file of a cover alone have none; "
+         "the reader reads that film too",
+         ([rec.plan_of(p) for p in pictures], [(rec.picture_stream(p) or {}).get("index") for p in pictures]),
+         ([{"start": 0.0, "end": 100.0, "step": 0.04}, {"start": 0.0, "end": 100.0, "step": 0.04}]
+          + [None] * 7, [1, 1] + [None] * 7))
+    t.eq("the start window lies at the start itself, never capped by the tail; the others at their share of the "
+         "span, at most 30 s short of its end and never before its start",
+         [rec.plan_places({"start": s0, "end": e0, "step": 0.04}) for s0, e0 in ((0.0, 120.0), (5.0, 25.0),
+                                                                               (10.0, 1010.0), (0.0, 40.0))],
+         [[0.0, 12.0, 36.0, 60.0, 84.0, 90.0], [5.0] * 6, [10.0, 110.0, 310.0, 510.0, 710.0, 910.0],
+          [0.0, 4.0, 10.0, 10.0, 10.0, 10.0]])
+    t.eq("a picture is too short for six windows where two places lie closer than 48 frame steps, the gop and "
+         "0.5 s: of 300 s at 24 frames a second its places lie 30 s apart, which a gop of 27.6 s reaches and one "
+         "of 27.4 s does not; of 40 s, two places fall on one another whatever the gop",
+         [rec.plan_short({"start": 0.0, "end": 300.0, "step": 1 / 24}, g) for g in (27.4, 27.6, 0.0)]
+         + [rec.plan_short({"start": 0.0, "end": 40.0, "step": 1 / 24}, 0.0)],
+         [False, True, False, True])
+    blocks = {}
+    for name, path in (("record logic", RECORDS), ("validator", VALIDATOR), ("rebuild", REBUILD)):
+        text = open(path, encoding="utf-8").read()
+        blocks[name] = text[text.index(GATE_BLOCK[0]):text.index(GATE_BLOCK[1])] if GATE_BLOCK[0] in text else None
+    t.ok("the shared gate block is the same text in the record logic, the validator and the rebuild",
+         blocks["record logic"] is not None and blocks["record logic"] == blocks["validator"] == blocks["rebuild"],
+         [k for k, v in blocks.items() if v != blocks["record logic"]])
+    lists = ("CONTAINERS", "VIDEO_CODECS", "SCANNED_CODECS", "COVER_CODECS", "CAPTION_CODECS", "CAPTION_TAGS",
+             "SUBTITLE_CODECS", "DATA_CODECS", "DATA_TAGS", "CHAPTER_CONTAINER", "CHAPTER_CODEC", "CHAPTER_TAG",
+             "VBI_HEIGHTS", "CAPTION_PLAN", "LOSS_FLAGS", "LOSS_COUNTS", "LOSS_LANGUAGES", "WHOLE_FRAMES")
+    readers = [rec, load_tool(REBUILD)] + ([load_tool(VALIDATOR)] if have_jsonschema() else [])
+    t.eq("and so are the lists and the plan each of them reads",
+         [[getattr(m, k, None) for k in lists] for m in readers], [[getattr(rec, k) for k in lists]] * len(readers))
+
+    chapters = [{"id": i, "start_time": str(i * 60.0), "end_time": str(i * 60.0 + 60), "tags": {"title": f"C{i}"}}
+                for i in range(3)]
+    track = {"index": 2, "codec_type": "data", "codec_name": "bin_data", "codec_tag_string": "text", "nb_frames": "3",
+             "disposition": {}}
+    film = {"index": 0, "codec_type": "video", "codec_name": "h264", "height": 1080, "field_order": "progressive",
+            "disposition": {}}
+    sound = {"index": 1, "codec_type": "audio", "codec_name": "aac", "channels": 2, "disposition": {}}
+    mp4 = lambda *more, fmt="mov,mp4,m4a,3gp,3g2,mj2", marks=chapters: {
+        "format": {"format_name": fmt, "duration": "180.0"}, "streams": [film, sound, *more], "chapters": marks}
+    cases = [("an MP4's chapter track, every condition met", mp4(track)),
+             ("in Matroska", mp4(track, fmt="matroska,webm")),
+             ("a codec other than bin_data", mp4(dict(track, codec_name="none"))),
+             ("a tag other than text", mp4(dict(track, codec_tag_string="mp4s"))),
+             ("no tag", mp4({k: v for k, v in track.items() if k != "codec_tag_string"})),
+             ("no chapters", mp4(track, marks=[])), ("no chapters, and a count of none", mp4(dict(track, nb_frames="0"), marks=[])),
+             ("a count other than the chapters'", mp4(dict(track, nb_frames="2"))),
+             ("no count", mp4({k: v for k, v in track.items() if k != "nb_frames"})),
+             ("a second such stream", mp4(track, dict(track, index=3))),
+             ("a count ' 3'", mp4(dict(track, nb_frames=" 3"))), ("a count '+3'", mp4(dict(track, nb_frames="+3"))),
+             ("a count '1_0'", mp4(dict(track, nb_frames="1_0"), marks=[dict(chapters[0], id=i) for i in range(10)])),
+             ("the tag TEXT", mp4(dict(track, codec_tag_string="TEXT")))]
+    t.eq("a data stream is the file's chapter track, and on the lists, only where all of these hold in the probe: "
+         "the MP4 family, codec bin_data, tag text, the file has chapters, its sample count is their number, and "
+         "it is the file's only such stream; a probe without the tag or the count leaves it off",
+         [(label, rec.off_list(p)) for label, p in cases],
+         [("an MP4's chapter track, every condition met", []),
+          ("in Matroska", ["stream:data:bin_data"]), ("a codec other than bin_data", ["stream:data:text"]), ("a tag other than text", ["stream:data:bin_data"]),
+          ("no tag", ["stream:data:bin_data"]), ("no chapters", ["stream:data:bin_data"]),
+          ("no chapters, and a count of none", ["stream:data:bin_data"]),
+          ("a count other than the chapters'", ["stream:data:bin_data"]), ("no count", ["stream:data:bin_data"]),
+          ("a second such stream", ["stream:data:bin_data", "stream:data:bin_data"]),
+          ("a count ' 3'", ["stream:data:bin_data"]), ("a count '+3'", ["stream:data:bin_data"]),
+          ("a count '1_0'", ["stream:data:bin_data"]), ("the tag TEXT", ["stream:data:bin_data"])])
+    written = rec.probed(mp4(track))
+    t.eq("the record of a file with its chapter track keeps no offList entry for it; one written before, which "
+         "keeps no offList, can't tell the track and is kept",
+         (written["offList"], rec.record_off_list({k: v for k, v in written.items() if k != "offList"})),
+         ([], ["stream:data:bin_data"]))
+
+    full = {"ok": True, "complete": True, "why": None, "sampleDone": "progressive", "sampleFound": "progressive",
+            "frames": 1000, "packets": 1002, "leading": 2}
+    through = [full, dict(full, frames=999), {k: v for k, v in full.items() if k != "leading"},
+               {k: v for k, v in full.items() if k != "packets"}, dict(full, leading=-1), dict(full, leading=2.0),
+               dict(full, complete=False), dict(full, ok=False), dict(full, leading=0), None,
+               {k: v for k, v in dict(full, frames=1002).items() if k != "leading"}]
+    t.eq("a scan's read-through of the whole title is complete only where it read every packet but the stream's "
+         "leading pictures - frames = packets - leading, no other slack - and says ok and complete: one frame short, "
+         "no leading (a scan from before the rule) - though its frames are every packet -, no packets, a leading "
+         "below 0 or no whole number, or not ok or complete, is not",
+         [rec.read_through(v) for v in through], [True, False, False, False, False, False, False, False, False, False,
+                                                  False])
+    scan = {"found": "progressive", "done": "progressive", "verified": full}
+    t.eq("so a scan lets its title's originals go the ordinary way only where it found exactly progressive, did "
+         "progressive or none, and read the whole title through to its last packet",
+         [rec.scan_holds({"scan": x}) is None for x in (scan, dict(scan, done="none"), dict(scan, done="fields-kept"),
+                                                        dict(scan, verified=through[1]), dict(scan, verified=through[2]),
+                                                        dict(scan, found="Progressive"), {"found": "progressive"})],
+         [True, True, False, False, False, False, False])
+    t.eq("a manifest's read-through keeps its leading pictures and its packets",
+         {k: rec.scan_block(dict(scan, judgedBy="pictures"))["verified"].get(k) for k in ("leading", "packets")},
+         {"leading": 2, "packets": 1002})
+    # a record's essence is no proof of itself: where it says it knows it has no captions, its picture must bear it out
+    # a picture of 1000 s from 0 at 25 frames a second, as its kept probe gives it
+    probe = {"format": {"format_name": "matroska,webm", "duration": "1000.0", "start_time": "0.000000"},
+             "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264", "field_order": "progressive",
+                          "disposition": {}, "start_time": "0.000000", "avg_frame_rate": "25/1"}]}
+    six = [{"at": a, "start": p, "end": p + 1.92, "frames": 48, "captions": False}
+           for a, p in zip(rec.CAPTION_WINDOWS, rec.plan_places(rec.plan_of(probe, 1000000)))]
+    claims = lambda streams: {"streams": streams, "offList": [], "container": {"durationMs": 1000000},
+                              "essence": {"closedCaptions": False, "closedCaptionsKnown": True, "interlaced": False}}
+    picture = lambda **more: dict({"index": 0, "type": "video", "codec": "h264", "fieldOrder": "progressive",
+                                   "dispositions": {}, "captionWindows": six, "captionSpan": {"start": 0.0, "end": 1000.0},
+                                   "captionGop": 1.0}, **more)
+    readers = [rec, load_tool(REBUILD)] + ([load_tool(VALIDATOR)] if have_jsonschema() else [])
+    held = [[m.gate_holds([r], (), [p]).get("closedCaptions") for r, p in (
+        (claims([picture()]), probe), (claims([picture(captionWindows=six[:1])]), probe),
+        (claims([picture(captionWindows=[dict(w, captions=w["at"] == 0.5) for w in six])]), probe),
+        (claims([picture(captionSignature=True)]), probe), (claims([picture(codec="hevc", captionSignature=False)]), probe),
+        (dict(claims([picture()]), streams={"0": picture()}), probe),
+        (claims([picture(captionSpan={"start": 0.0, "end": 990.0})]), probe), (claims([picture()]), None),
+        (claims([picture()]), dict(probe, streams=[{k: v for k, v in probe["streams"][0].items() if k != "avg_frame_rate"}])))]
+            for m in readers]
+    bare = "its essence says it knows its closed captions, which its record's streams don't bear out"
+    t.eq("the gate holds the captions of a record whose essence says it knows it has none where its picture doesn't "
+         "bear that out by the plan over the span its probe gives - one window at its start, a span that is not the "
+         "probe's, no probe, a probe without a frame rate -, or carries them - a window that shows them, a signature "
+         "found -, and of one whose streams are no list; never of one whose six windows, or an HEVC picture's packets "
+         "read whole, bear it out; the same in all three copies",
+         held, [[None, bare, "its record's picture carries closed captions", "its record's picture carries closed captions",
+                 None, "its record's streams can't be read", bare, bare, bare]] * len(readers))
+
+
+def test_gate_film_and_counts(t):
+    """The record's picture and the probe's film, numbers that aren't finite, a gop past its listing, a whole read
+    too short for its span, frames without a time, the cover rule's counts and marks, a rate below one frame a
+    second, a scan whose counts say fields, a non-boolean captions."""
+    rec = load_tool(RECORDS)
+    readers = [rec, load_tool(REBUILD)] + ([load_tool(VALIDATOR)] if have_jsonschema() else [])
+    film = {"index": 0, "codec_type": "video", "codec_name": "h264", "field_order": "progressive", "disposition": {},
+            "start_time": "0.000000", "avg_frame_rate": "25/1"}
+    probe = lambda *streams: {"format": {"format_name": "matroska,webm", "duration": "1000.0", "start_time": "0.000000"},
+                              "streams": list(streams or [film])}
+    plan = rec.plan_of(probe(), 1000000)
+    six = [{"at": a, "start": p, "end": p + 1.92, "frames": 48, "captions": False}
+           for a, p in zip(rec.CAPTION_WINDOWS, rec.plan_places(plan))]
+    record = lambda *streams: {"streams": list(streams), "offList": [], "container": {"durationMs": 1000000},
+                               "essence": {"closedCaptions": False, "closedCaptionsKnown": True, "interlaced": False}}
+    picture = lambda **more: dict({"index": 0, "type": "video", "codec": "h264", "fieldOrder": "progressive",
+                                   "dispositions": {}, "captionWindows": six, "captionSpan": {"start": 0.0, "end": 1000.0},
+                                   "captionGop": 1.0}, **more)
+    cases = [(record(picture()), probe()),
+             (record(picture()), probe(dict(film, codec_name="hevc"))),
+             (record(), probe()),
+             (record(picture(dispositions={"attachedPic": True})), probe()),
+             (record(picture(dispositions={"attachedPic": True}, fieldOrder="tt")),
+              probe(dict(film, field_order="tt", disposition={"attached_pic": 1}))),
+             (record(picture(index=1)), probe(dict(film, codec_name="mjpeg", tags={"filename": "c.jpg", "mimetype": "image/jpeg"},
+                                                   nb_frames="1"), dict(film, index=1))),
+             (record(picture()), probe(dict(film, field_order="tt", disposition={"attached_pic": 1}))),
+             (record(picture()), probe(dict(film, codec_name="png", disposition={"attached_pic": 1}))),
+             (record(picture(codec="hevc")), probe())]
+    t.eq("the gate reads the probe's film beside the record's picture: of a film that is HEVC under an H.264 picture "
+         "it keeps the captions; of a record that keeps no picture, or marks its picture an attachment, both; of an "
+         "H.264 stream the probe and the record both mark attached_pic, field order tt, both; and lets go where the "
+         "record's picture is the film, a cover before it or not; of an H.264 film the probe alone marks attached_pic, "
+         "field order tt, its fields; of a probe whose one video stream is a cover, both; and of a record whose "
+         "picture says HEVC over an H.264 film, the captions all the same; the same in all three copies",
+         [[sorted(m.gate_holds([r], (), [p])) for r, p in cases] for m in readers],
+         [[[], ["closedCaptions"], ["closedCaptions", "interlaced"], ["closedCaptions", "interlaced"],
+           ["closedCaptions", "interlaced"], [], ["interlaced"], ["closedCaptions", "interlaced"],
+           ["closedCaptions"]]] * len(readers))
+    # the record's picture is its first video stream not marked attachedPic, so the writer marks what the closed
+    # lists' rule calls a cover - one its filename and mimetype tags alone mark among them - and nothing else: not
+    # an H.264 stream or a webp the probe's attached_pic marks, which are no covers and stay pictures
+    tag_cover = {"index": 0, "codec_type": "video", "codec_name": "mjpeg", "disposition": {},
+                 "tags": {"filename": "cover.jpg", "mimetype": "image/jpeg"}}
+    tagged_first = probe(tag_cover, dict(film, index=1))
+    written = [rec.norm_stream(x) for x in tagged_first["streams"]]
+    marked_film = probe(dict(film, disposition={"attached_pic": 1}))
+    t.eq("the record logic marks attachedPic on what the cover rule calls a cover - one its tags alone mark, as one "
+         "attached_pic marks - and nothing else: not on an H.264 stream or a webp still attached_pic marks, nor on a "
+         "webp so tagged, nor on the film: so the record's picture, its first video stream not so marked, is its "
+         "probe's film, one attached_pic marks among them",
+         ([rec.norm_stream(x)["dispositions"].get("attachedPic", False)
+           for x in (tag_cover, dict(tag_cover, codec_name="png", disposition={"attached_pic": 1}, tags={}),
+                     dict(film, disposition={"attached_pic": 1}),
+                     dict(tag_cover, codec_name="webp", disposition={"attached_pic": 1}, tags={}),
+                     dict(tag_cover, codec_name="webp", tags={"filename": "c.webp", "mimetype": "image/webp"}), film)],
+          next(x["index"] for x in written if x["type"] == "video" and not x["dispositions"].get("attachedPic")),
+          rec.film_of(tagged_first)["index"],
+          next(x["index"] for x in map(rec.norm_stream, marked_film["streams"])
+               if x["type"] == "video" and not x["dispositions"].get("attachedPic")), rec.film_of(marked_film)["index"]),
+         ([True, True, False, False, False, False], 1, 1, 0, 0))
+    # tags that differ only by case and disagree are there, and make the stream no image, so no cover
+    clashing = [dict(tag_cover, tags={"filename": "c.jpg", "mimetype": "image/jpeg", "MIMETYPE": "text/plain"}),
+                dict(tag_cover, tags={"filename": "c.jpg", "MIMETYPE": "text/plain", "mimetype": "image/jpeg"}),
+                dict(tag_cover, tags={"filename": "c.jpg", "mimetype": "image/jpeg", "MimeType": "image/jpeg"}),
+                dict(tag_cover, tags={"filename": "c.jpg", "FILENAME": "d.jpg", "mimetype": "image/jpeg"})]
+    t.eq("cover tags are read without case: two keys that differ only by it and disagree make no cover, whichever "
+         "comes first; two that agree are one; the same in all three copies",
+         [[m.attached_picture(c) for c in clashing] for m in readers], [[False, False, True, False]] * len(readers))
+    # the record's own word of HEVC holds the captions where nothing else does: its essence knows nothing, and a
+    # read tells none
+    hevc_record = dict(record(picture(codec="hevc")), essence={"closedCaptions": False, "interlaced": False})
+    clean = {"windows": six, "span": {"start": 0.0, "end": 1000.0}, "gop": 1.0}
+    t.eq("a record whose picture says HEVC, over an H.264 film, its essence not knowing its captions and a read "
+         "telling none, keeps its captions by its own word; the same in all three copies",
+         [sorted(m.deletion_gate([m.essence_as_read(hevc_record["essence"], [clean], plan)], {},
+                                 m.gate_holds([hevc_record], (), [probe()], [clean]))) for m in readers],
+         [["closedCaptions"]] * len(readers))
+    nan, inf = float("nan"), float("inf")
+    read = lambda **more: dict({"windows": six, "span": {"start": 0.0, "end": 1000.0}, "gop": 1.0}, **more)
+    short = rec.plan_of({"streams": [dict(film, duration="60.0")]})
+    # a 60 s picture's places are 0, 6, 18 and three times 30 s; windows within 10 s of them, on frames of their own
+    six60 = [{"at": a, "start": p, "end": p + 1.92, "frames": 48, "captions": False}
+             for a, p in zip(rec.CAPTION_WINDOWS, (0.0, 6.0, 18.0, 30.0, 34.0, 38.0))]
+    t.eq("a number that is not finite is no number: a span of NaN, or of infinity, tells nothing, and a gop of NaN "
+         "makes no 60 s picture read in six windows tell none",
+         ([m.gate_number(x) for m in readers for x in (nan, inf, -inf, 1.5)][:4],
+          [rec.windows_tell_none(read(span={"start": nan, "end": nan}), plan),
+           rec.windows_tell_none(read(span={"start": 0.0, "end": inf}), plan),
+           rec.windows_tell_none({"windows": six60, "span": {"start": 0.0, "end": 60.0}, "gop": nan}, short),
+           rec.windows_tell_none(read(), plan)]),
+         ([None, None, None, 1.5], [False, False, False, True]))
+    huge, digits = 10 ** 400, "9" * 5000
+    t.eq("a whole number too large for a float is not stated - a gop or a record's container.durationMs of 10^400 -, "
+         "and neither are digits past what a number holds, in a count or a rate; the same in all three copies",
+         [[m.gate_number(huge), m.gate_seconds(huge), m.gate_digits(digits),
+           m.frame_step_of(dict(film, avg_frame_rate="1/" + str(huge))), m.frame_step_of(dict(film, avg_frame_rate=digits + "/1")),
+           m.windows_tell_none(read(gop=huge), plan), m.plan_of(probe(), huge) == m.plan_of(probe(), None)]
+          for m in readers], [[None, None, None, None, None, False, True]] * len(readers))
+    long_plan = rec.plan_of({"streams": [dict(film, duration="6000.0")]})
+    far = [dict(w, start=round(w["start"] - (400 if w["at"] else 0), 3), end=round(w["end"] - (400 if w["at"] else 0), 3))
+           for w in [{"at": a, "start": p, "end": p + 1.92, "frames": 48, "captions": False}
+                     for a, p in zip(rec.CAPTION_WINDOWS, rec.plan_places(long_plan))]]
+    t.eq("a gop above the run the first 1200 packets take at the frame step (48 s at 25 a second) tells nothing: "
+         "windows 400 s before their places of a 6000 s picture do not tell none by a gop of 590 s; the gop "
+         "of 48 s does not let them either",
+         [rec.windows_tell_none({"windows": far, "span": {"start": 0.0, "end": 6000.0}, "gop": g}, long_plan)
+          for g in (590.0, 48.0)], [False, False])
+    whole = lambda frames, packets, end=1000.0: {"windows": [{"at": 0, "start": 0.0, "end": end, "frames": frames,
+                                                              "captions": False, "whole": True, "packets": packets,
+                                                              "leading": 0}],
+                                                 "span": {"start": 0.0, "end": 1000.0}, "gop": 1.0}
+    t.eq("a whole read needs packets enough at the frame step to cover the span within the tolerance - packets x "
+         "frame step >= span - (frame step + 0.5 s) -: one frame of one packet over 1000 s tells nothing, 24986 "
+         "packets of 0.04 s (999.44 s) don't, 24987 (999.48 s, past 999.46 s) and 25000 tell",
+         [rec.windows_tell_none(whole(1, 1), plan), rec.windows_tell_none(whole(24986, 24986), plan),
+          rec.windows_tell_none(whole(24987, 24987), plan), rec.windows_tell_none(whole(25000, 25000), plan)],
+         [False, False, True, True])
+    t.eq("a window one of whose frames has no time to place it by could not be read: the whole read's too",
+         [rec.caption_window(0.2, [{"pts_time": "0.0", "duration_time": "0.04"}, {"duration_time": "0.04"}], 8.0)["frames"],
+          rec.caption_window(0.2, [{"pts_time": "0.0", "duration_time": "0.04"},
+                                   {"pts_time": "N/A", "best_effort_timestamp_time": "N/A", "duration_time": "0.04"}],
+                             8.0)["frames"],
+          rec.caption_window(0.2, [{"pts_time": "0.0", "duration_time": "0.04"}, {"pts_time": "0.04"}], 8.0)["frames"]],
+         [0, 0, 2])
+    cover = {"index": 0, "codec_type": "video", "codec_name": "png", "disposition": {"attached_pic": 1}}
+    tagged = {"index": 0, "codec_type": "video", "codec_name": "mjpeg", "disposition": {},
+              "tags": {"filename": "cover.jpg", "mimetype": "image/jpeg"}}
+    covers = [cover, dict(cover, nb_frames="1"), dict(cover, nb_frames=1), dict(tagged, nb_frames="0"),
+              *[dict(cover, nb_frames=v) for v in ("1e3", " 900", "+900", "0x384", ["900"], "1.0", 1.0, "2")],
+              dict(tagged, tags=dict(tagged["tags"], **{"NUMBER_OF_FRAMES-eng": "900"})),
+              dict(tagged, tags=dict(tagged["tags"], **{"NUMBER_OF_FRAMES-eng": "1"})),
+              dict(cover, disposition={"attached_pic": "0"}), dict(cover, disposition={"attached_pic": "1"}),
+              dict(cover, disposition={"attached_pic": True}), dict(cover, disposition={"attached_pic": 2}),
+              dict(cover, disposition={"attached_pic": 1.0}),
+              *[dict(cover, nb_frames=v) for v in (" 5", True, None, "-1", -1, "inf")]]
+    t.eq("a cover's frame count is a whole number in digits alone of at most one, every one it is given, a tag that "
+         "starts NUMBER_OF_FRAMES among them - one that is there but can't be read (1e3, ' 900', +900, 0x384, a "
+         "list, 1.0, ' 5', a boolean, null, -1, inf) is no cover's -, and its mark the number 1 or true, so "
+         "attached_pic '0', '1', 2 or 1.0 is none; the same in all three copies",
+         [[m.attached_picture(c) for c in covers] for m in readers],
+         [[True, True, True, True] + [False] * 8 + [False, True, False, False, True, False, False]
+          + [False] * 6] * len(readers))
+    t.eq("a stated rate below one frame a second gives no plan: 1/100 none, 1/1 one; and r_frame_rate does not "
+         "stand in for an avg_frame_rate that states a slow rate (1/2), a rate of none (0/1) or one that can't be "
+         "read (N/A): only for 0/0",
+         [rec.plan_of({"streams": [dict(film, duration="100.0", avg_frame_rate=r, r_frame_rate="25/1")]})
+          for r in ("1/100", "1/1", "1/2", "0/1", "N/A", "0/0")],
+         [None, {"start": 0.0, "end": 100.0, "step": 1.0}, None, None, None, {"start": 0.0, "end": 100.0, "step": 0.04}])
+    rates = [({"r_frame_rate": "25/1"}, None), ({"avg_frame_rate": None, "r_frame_rate": "25/1"}, None),
+             ({"avg_frame_rate": 25, "r_frame_rate": "25/1"}, None), ({"avg_frame_rate": "25"}, None),
+             ({"avg_frame_rate": " 25/1"}, None), ({"avg_frame_rate": "+25/1"}, None),
+             ({"avg_frame_rate": "25.0/1"}, None), ({"avg_frame_rate": "25/0"}, None),
+             ({"avg_frame_rate": "\u0662\u0665/\u0661"}, None),
+             ({"avg_frame_rate": "0/0 ", "r_frame_rate": "25/1"}, None), ({"avg_frame_rate": "0/0", "r_frame_rate": " 25/1"}, None),
+             ({"avg_frame_rate": "0/0", "r_frame_rate": "1/2"}, None), ({"avg_frame_rate": "0/0"}, None),
+             ({"avg_frame_rate": "0/0", "r_frame_rate": "50/1"}, 0.02), ({"avg_frame_rate": "30000/1001"}, 1001 / 30000)]
+    t.eq("the rate is avg_frame_rate, or r_frame_rate only where avg_frame_rate is exactly 0/0, each a ratio of digits "
+         "alone: an avg_frame_rate missing, null, a number, no ratio (25, ' 25/1', +25/1, 25.0/1, 25/0, digits of "
+         "another script) or 0/0 with a space gives no plan, with no fallback; so does an r_frame_rate standing in "
+         "that is no such ratio or below one frame a second, or none at all; the same in all three copies",
+         [[m.frame_step_of(r) for r, _ in rates] for m in readers], [[want for _, want in rates]] * len(readers))
+    full = {"ok": True, "complete": True, "frames": 1000, "packets": 1002, "leading": 2}
+    scan = {"found": "progressive", "done": "progressive", "verified": full}
+    idet = {"frames": 1000, "tff": 0, "bff": 0, "progressive": 1000}
+    t.eq("a scan whose own counts say fields is no progressive one: chunks in fields in its read-through, or more "
+         "top- and bottom-field pictures than whole frames in its examination, or counts it can't be read for; a "
+         "few of them among many whole frames say nothing; the same in all three copies",
+         [[m.scan_holds({"scan": x}) is None for x in (
+             scan, dict(scan, verified=dict(full, chunksInFields=40)), dict(scan, verified=dict(full, chunksInFields=0)),
+             dict(scan, idet=dict(idet, tff=980, progressive=0)), dict(scan, idet=dict(idet, tff=5, bff=5, progressive=990)),
+             dict(scan, idet=dict(idet, tff="980")), dict(scan, idet="x"), dict(scan, verified=dict(full, chunksInFields="0")))]
+          for m in readers],
+         [[True, False, True, False, True, False, False, False]] * len(readers))
+    t.eq("an essence that says closed captions in no boolean, read as none by a clean read, still carries them",
+         [m.essence_as_read({"closedCaptions": x}, read(), plan)["closedCaptions"] for m in readers for x in ("yes", False)],
+         [True, False] * len(readers))
+
+
 def test_arrivals(t):
     """An original waits at the arrivals until its package is recorded, and is deleted then: --compare
     does not hold the tree to the export's rows of files there, nor ever to a retired original's row."""
@@ -1197,6 +2502,7 @@ def test_round_trip(t):
         superseded = {e.get("packageId") for e in events if e["kind"] == "package-superseded"}
         removed = {e.get("versionId") for e in events if e["kind"] == "version-removed"}
         deleted = {e.get("versionId") for e in events if e["kind"] == "original-deleted"}
+        gone_sources = {e.get("sourceId") for e in events if e["kind"] == "original-deleted"}
         packaged = originals = subs = 0
         for vp in sorted(glob.glob(os.path.join(p, "versions", "*"))):
             if os.path.basename(vp) in removed or not os.path.isfile(os.path.join(vp, "version.json")):
@@ -1208,7 +2514,10 @@ def test_round_trip(t):
                 package = jload(os.path.join(vp, "package.json"))
                 if package["packageId"] not in superseded:
                     packaged += 1
-                    subs += len(package.get("subtitles") or [])
+                    # a subtitle made from a sidecar has a row of its own once the original is gone; while
+                    # it waits beside the sidecar, the catalog's row of the sidecar stands for it
+                    subs += sum(1 for x in package.get("subtitles") or []
+                                if not x.get("fromSidecar") or x["fromSidecar"].split("/")[1] in gone_sources)
         stated[item["itemId"]] = {"type": item["type"], "title": meta["titles"]["primary"],
                                   "packaged": packaged, "primary": originals, "subtitles": subs,
                                   "images": len(meta["images"])}
@@ -1464,15 +2773,162 @@ def test_events(t):
         loss = [v for s in rows_of(base)[1]["storage"] for v in s["versions"] if v["permanentLoss"]]
         t.ok("the version it names is canonical and its losses are permanent",
              bool(loss) and loss[0]["canonical"] and "surround" in loss[0]["permanentLoss"])
+        event_path = os.path.join(deletion, "event.json")
+        kept_event = open(event_path, "rb").read()
+        named = jload(event_path)["versionId"]
+        lost_now = lambda: next(v for s in rows_of(base)[1]["storage"] for v in s["versions"]
+                                if v["versionId"] == named)["permanentLoss"]
+        losses = [lost_now()]
+        for change in (lambda d: d.pop("captionsRead"),
+                       lambda d: d["captionsRead"]["windows"][1].update(frames=0, end=d["captionsRead"]["windows"][1]["start"]),
+                       lambda d: d["captionsRead"]["windows"][1].update(interlacedFrames=3),
+                       lambda d: d.pop("sourceId"),
+                       lambda d: (d.pop("sourceId"), d["captionsRead"]["windows"][1].update(interlacedFrames=3))):
+            doc = jload(event_path)
+            change(doc)
+            with open(event_path, "w") as f:
+                json.dump(doc, f)
+            losses.append(lost_now())
+            with open(event_path, "wb") as f:
+                f.write(kept_event)
+        t.eq("a deletion whose read tells the original's captions are none costs none of them, though its record "
+             "keeps no read; without the read, or with a window of it that failed, its captions are lost for good, "
+             "and a read that counted interlaced frames loses its fields; a deletion of the whole version, naming no "
+             "source, carries the read of its one source alike",
+             [("closedCaptions" in x, "interlaced" in x) for x in losses],
+             [(False, False), (True, False), (True, False), (False, True), (False, False), (False, True)])
+        movie_dir = os.path.dirname(os.path.dirname(deletion))
+        source_dir = os.path.join(movie_dir, "sources", jload(event_path)["sourceId"])
+        probe_path = os.path.join(source_dir, "ffprobe.json")
+        kept_probe = open(probe_path, "rb").read()
+        trials = []
+        # every read of the source is kept, and the worst decides: a second deletion's clean read, after a first
+        # whose read shows captions or counted fields
+        for change in (lambda w: w[2].update(captions=True), lambda w: w[2].update(interlacedFrames=30),
+                       lambda w: w[2].update(captions="true"), lambda w: w[2].update(frames="0")):
+            first = jload(event_path)
+            change(first["captionsRead"]["windows"])
+            with open(event_path, "w") as f:
+                json.dump(first, f)
+            second = os.path.join(os.path.dirname(deletion), "20261119T081500Z-aaaaaaaa-original-deleted")
+            os.makedirs(second)
+            with open(os.path.join(second, "event.json"), "w") as f:
+                json.dump(dict(json.loads(kept_event),
+                               eventId="aaaaaaaa-5152-4b39-aa31-808de93dc3a1", at="2026-11-19T08:15:00Z"), f)
+            trials.append(lost_now())
+            shutil.rmtree(second)
+            with open(event_path, "wb") as f:
+                f.write(kept_event)
+        # a probe that can't be read, or is no probe, holds both
+        for text in ("{ not json", "{}", "[]"):
+            with open(probe_path, "w") as f:
+                f.write(text)
+            trials.append(lost_now())
+        with open(probe_path, "wb") as f:
+            f.write(kept_probe)
+        # the deleted original's record gone, or not JSON: both, and its original counts as deleted
+        aside_source = os.path.join(tmp, "aside-source")
+        shutil.move(source_dir, aside_source)
+        gone_row = next(v for s in rows_of(base)[1]["storage"] for v in s["versions"] if v["versionId"] == named)
+        trials.append(gone_row["permanentLoss"])
+        shutil.move(aside_source, source_dir)
+        kept_record = open(os.path.join(source_dir, "source.json"), "rb").read()
+        with open(os.path.join(source_dir, "source.json"), "w") as f:
+            f.write("{ not json")
+        trials.append(lost_now())
+        # a record whose essence says it knows it has no captions, though its picture keeps one window at its start,
+        # or windows that show them, or found a signature: the read its deletion carries is clean, the record is not
+        for picture in ({"captionWindows": [{"at": 0, "start": 0.0, "end": 2.0, "frames": 48, "captions": False}]},
+                        {"captionWindows": [{"at": a, "start": a * 6000, "end": a * 6000 + 2, "frames": 48,
+                                             "captions": a == 0.5} for a in (0.0, 0.1, 0.3, 0.5, 0.7, 0.9)]},
+                        {"captionSignature": True}):
+            doc = json.loads(kept_record)
+            next(x for x in doc["streams"] if x["type"] == "video").update(picture)
+            doc["essence"].update(closedCaptions=False, closedCaptionsKnown=True)
+            with open(os.path.join(source_dir, "source.json"), "w") as f:
+                json.dump(doc, f)
+            trials.append(lost_now())
+        # a key given twice, which a reader keeps one of: in the deletion's read (captions true, then false), and
+        # in the deleted source's record (closedCaptions true, then false)
+        for path, kept_bytes, key in ((event_path, kept_event, b'"captions": false'),
+                                      (os.path.join(source_dir, "source.json"), kept_record, b'"closedCaptions": false')):
+            assert key in kept_bytes, key
+            with open(path, "wb") as f:
+                f.write(kept_bytes.replace(key, key.replace(b"false", b"true") + b", " + key, 1))
+            trials.append(lost_now())
+            with open(path, "wb") as f:
+                f.write(kept_bytes)
+        # NaN in the deletion's read, which a reader takes as a number that is none, and 1e999, which is Infinity:
+        # the read can't be told
+        assert b'"frames": 48' in kept_event
+        for bad in (b"NaN", b"1e999"):
+            with open(event_path, "wb") as f:
+                f.write(kept_event.replace(b'"frames": 48', b'"frames": ' + bad, 1))
+            trials.append(lost_now())
+        with open(event_path, "wb") as f:
+            f.write(kept_event)
+        with open(os.path.join(source_dir, "source.json"), "wb") as f:
+            f.write(kept_record)
+        t.eq("every read a source's deletions carry decides, the worst of them - one that shows captions, counted "
+             "fields, says captions or frames in no form a window has -; a kept probe that can't be read or is no "
+             "probe holds both; a deleted source whose record is gone or can't be read loses both; and one whose "
+             "essence says it knows it has no captions loses them where its picture doesn't bear that out - one "
+             "window at its start - or carries them - windows that show them, a signature found -, whatever the "
+             "read says; a read or a record that gives a key twice can't be read: both; nor can a read that gives NaN, "
+             "or 1e999",
+             [("closedCaptions" in x, "interlaced" in x) for x in trials],
+             [(True, False), (False, True), (True, False), (True, False), (True, True), (True, True), (True, True),
+              (True, True), (True, True), (True, False), (True, False), (True, False), (True, True), (True, True),
+              (True, True), (True, True)])
+        t.eq("and its version's original counts as deleted with it",
+             (gone_row["canonical"], gone_row["originalsKept"]), (True, []))
 
         # ---- an original in the folder of the version before a package made again is the title's file
-        kept = glob.glob(os.path.join(base, "series", "*", "*", "episodes", "*", "events", "*-original-deleted"))[0]
-        episode = os.path.basename(os.path.dirname(os.path.dirname(kept)))
-        shutil.move(kept, aside)
+        superseding = glob.glob(os.path.join(base, "series", "*", "*", "episodes", "*", "events",
+                                             "*-package-superseded"))[0]
+        episode = os.path.basename(os.path.dirname(os.path.dirname(superseding)))
         originals = [a for a in rows_of(base)[0][episode]["playbackAssets"] if a["kind"] == "primary"]
         t.ok("an original kept beside a package that was made again, in the folder of the version before, is the "
              "title's file", len(originals) == 1 and originals[0]["isPrimary"] is True, originals)
-        shutil.move(aside, kept)
+        # that folder removed by hand, the original in it, and no event saying the original was deleted
+        superseded_event = jload(os.path.join(superseding, "event.json"))
+        before_v, now_v = superseded_event["versionId"], superseded_event["supersededBy"]["versionId"]
+        episode_dir = os.path.dirname(os.path.dirname(superseding))
+        aside_version = os.path.join(tmp, "aside-version")
+        shutil.move(os.path.join(episode_dir, "versions", before_v), aside_version)
+        removal_event = write_event(episode_dir, {"schema": "zaentrum.library.event/2",
+                                                  "eventId": "5e000000-0000-4000-8000-0000000000e2",
+                                                  "at": "2026-09-21T00:00:00Z", "by": "test", "kind": "version-removed",
+                                                  "versionId": before_v})
+        _, by_hand = rows_of(base)
+        row = next(v for s in by_hand["storage"] for v in s["versions"] if v["versionId"] == now_v)
+        t.ok("and where that folder is removed by hand, the original in it and no event saying it was deleted, the "
+             "original counts as deleted, with a note, and the version that plays loses what the gate says: the "
+             "closed captions its picture carries",
+             "closedCaptions" in row["permanentLoss"]
+             and any("is listed by no version folder" in n for n in by_hand["notes"]), (row, by_hand["notes"]))
+        shutil.rmtree(removal_event)
+        shutil.move(aside_version, os.path.join(episode_dir, "versions", before_v))
+        # a deletion of that original whose read counted interlaced frames, on the event of the version before - which
+        # an event removes a day later: the read is its source's, and reaches the version that plays
+        source_id = jload(os.path.join(episode_dir, "versions", before_v, "version.json"))["sourceIds"][0]
+        shutil.move(os.path.join(episode_dir, "versions", before_v), aside_version)
+        deleted_event = write_event(episode_dir, {
+            "schema": "zaentrum.library.event/2", "eventId": "5e000000-0000-4000-8000-0000000000e3",
+            "at": "2026-09-20T23:00:00Z", "by": "test", "kind": "original-deleted", "versionId": before_v,
+            "sourceId": source_id, "reason": "test", "accepted": [],
+            "captionsRead": {"windows": [{"at": 0.1, "start": 270.0, "end": 271.92, "frames": 48, "captions": False,
+                                          "interlacedFrames": 30}], "at": "2026-09-20T22:00:00Z"}})
+        removal_event = write_event(episode_dir, {"schema": "zaentrum.library.event/2",
+                                                  "eventId": "5e000000-0000-4000-8000-0000000000e4",
+                                                  "at": "2026-09-21T00:00:00Z", "by": "test", "kind": "version-removed",
+                                                  "versionId": before_v})
+        row = next(v for s_ in rows_of(base)[1]["storage"] for v in s_["versions"] if v["versionId"] == now_v)
+        t.ok("a read on the event of a version since removed is its source's: it reaches the version that plays, "
+             "which loses the fields it counted", "interlaced" in row["permanentLoss"], row)
+        shutil.rmtree(removal_event)
+        shutil.rmtree(deleted_event)
+        shutil.move(aside_version, os.path.join(episode_dir, "versions", before_v))
 
         # ---- extra-removed: the extra has no row, even while its folder is still there
         featurette = extra_of(base, "featurette")
@@ -2678,7 +4134,7 @@ def adopt(root, run, export, fresh):
             if src["arrivalPath"] is None and src["recordDir"]:
                 write_event(u["itemDir"], {"schema": "zaentrum.library.event/2",
                                            "eventId": str(uuid.uuid5(uuid.NAMESPACE_URL, src["sourceId"])),
-                                           "at": "2026-10-07T10:00:00Z", "by": "katalog-manager (migration)",
+                                           "at": "2026-11-20T10:00:00Z", "by": "katalog-manager (migration)",
                                            "kind": "original-deleted", "versionId": db["versions"][0]["versionId"],
                                            "sourceId": src["sourceId"],
                                            "reason": "gone before the library was recorded", "accepted": []})
@@ -5445,6 +6901,7 @@ def test_sweep_removed_versions(t):
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "library")
         shutil.copytree(EXAMPLES, root)
+        retire_superseded_original(root)  # a folder that holds an original is never swept
         covered = next(os.path.dirname(p) for p in sorted(glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*",
                                                                                   "metadata.json")))
                        if jload(p)["library"].get("coveredBy"))
@@ -5480,6 +6937,24 @@ def subtitled(root):
         if plays and os.path.isfile(os.path.join(vp, "package.json")) and jload(os.path.join(vp, "package.json")).get("subtitles"):
             return vp
     raise AssertionError("no episode plays a package with subtitles")
+
+
+def retire_superseded_original(root):
+    """The example episode whose first package was superseded keeps its original, which shows closed
+    captions: the deletion gate keeps it. A tree where it was deleted all the same, before the rule of
+    2026-11-16, as the platform deleted an original once its package was recorded: the file gone from
+    the first folder, and an event that names the version and the source. Returns that folder."""
+    ev = glob.glob(os.path.join(root, "series", "*", "*", "episodes", "*", "events", "*-package-superseded", "event.json"))
+    assert len(ev) == 1, ev
+    edir = os.path.dirname(os.path.dirname(os.path.dirname(ev[0])))
+    vdir = os.path.join(edir, "versions", jload(ev[0])["versionId"])
+    v = jload(os.path.join(vdir, "version.json"))
+    os.remove(os.path.join(vdir, v["originalFiles"][0]))
+    write_event(edir, {"schema": "zaentrum.library.event/2", "eventId": "5e000000-0000-4000-8000-0000000000d1",
+                       "at": "2026-09-19T13:20:00Z", "by": "test", "kind": "original-deleted",
+                       "versionId": os.path.basename(vdir), "sourceId": v["sourceIds"][0],
+                       "reason": "deleted before the rule of 2026-11-16", "accepted": []})
+    return vdir
 
 
 def chain_bytes(root):
@@ -5632,6 +7107,7 @@ def test_attached_rows(t):
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "library")
         shutil.copytree(EXAMPLES, root)
+        retire_superseded_original(root)  # a subtitle made from a sidecar is a row once its original is gone
         vp = subtitled(root)
         iid, vid = os.path.basename(os.path.dirname(os.path.dirname(vp))), os.path.basename(vp)
         hans = attach_subtitle(vp, "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n你好\n", "zh-hans", forced=True)
@@ -5739,6 +7215,7 @@ def test_styled_rows(t):
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "library")
         shutil.copytree(EXAMPLES, root)
+        retire_superseded_original(root)  # a subtitle made from a sidecar is a row once its original is gone
         vp = subtitled(root)
         iid, vid = os.path.basename(os.path.dirname(os.path.dirname(vp))), os.path.basename(vp)
         pkg = jload(os.path.join(vp, "package.json"))
@@ -6554,6 +8031,9 @@ def main():
     t = Tally()
     wanted = sys.argv[1:]
     for section, fn in (("the pieces", test_pieces), ("the records the packager writes", test_records),
+                        ("closed captions and fields", test_captions_and_fields),
+                        ("the caption plan and the shared gate", test_plan_and_gate),
+                        ("the gate's film, numbers and counts", test_gate_film_and_counts),
                         ("the example tree", test_round_trip),
                         ("a record proves itself", test_proves_itself), ("the work tree beside the record", test_work_tree),
                         ("applying events", test_events), ("an orphan, a loss, a missing record", test_compare),

@@ -263,13 +263,14 @@ import argparse, base64, datetime, hashlib, json, os, re, shutil, sys
 
 try:  # the record logic the packager writes the same records with: beside this tool, or piped in front of it
     from libv2_records import (
-        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, AttachmentTimeout, attachment_heads, chapter_marks, checksums,
-        complete,
+        EXTRA_DIRS, LANGUAGE_RE, PACKAGE_DIRS, UUID_RE, AttachmentTimeout, attachment_heads,
+        chapter_marks, checksums, complete,
         deletion_gate, did,
-        external_ids, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
+        external_ids, gate_holds, extra_record, ffprobe, ffprobe_version, have_ffprobe, is_moment, json_bytes,
         library_original_name, listdir, naming, num, package_files, package_listing, package_record, peak_bandwidth,
         primary_language,
-        probe_chapters, qh1, record_entry, segments, sha_file, sidecar_entry, source_record, text, ts, ts_of_mtime,
+        probe_chapters, qh1, record_entry, segments, sha_file, sidecar_entry, source_record, text, ts,
+        ts_of_mtime,
         version_record)
 except ImportError:
     if "LIBV2_RECORDS" not in globals():
@@ -1717,7 +1718,8 @@ class Platform(Build):
                 self.note(iid, n)
             if rec["streams"]:
                 self.measured += 1
-                for key in deletion_gate([rec["essence"]], package["essence"]):
+                for key in deletion_gate([rec["essence"]], package["essence"],
+                                         gate_holds([rec], [package], [probe] if probe else [])):
                     self.gate[key] = self.gate.get(key, 0) + 1
             else:
                 self.unmeasured += 1

@@ -13,5 +13,69 @@
     "maxAudioChannels",
     "subtitleLanguages:en",
     "subtitleTracks"
-  ]
+  ],
+  "captionsRead": {
+    "windows": [
+      {
+        "at": 0.0,
+        "start": 0.0,
+        "end": 2.0,
+        "frames": 48,
+        "captions": false,
+        "interlacedFrames": 0,
+        "repeatFrames": 0
+      },
+      {
+        "at": 0.1,
+        "start": 73.4,
+        "end": 75.4,
+        "frames": 48,
+        "captions": false,
+        "interlacedFrames": 0,
+        "repeatFrames": 0
+      },
+      {
+        "at": 0.3,
+        "start": 220.2,
+        "end": 222.2,
+        "frames": 48,
+        "captions": false,
+        "interlacedFrames": 0,
+        "repeatFrames": 0
+      },
+      {
+        "at": 0.5,
+        "start": 367.0,
+        "end": 369.0,
+        "frames": 48,
+        "captions": false,
+        "interlacedFrames": 0,
+        "repeatFrames": 0
+      },
+      {
+        "at": 0.7,
+        "start": 513.8,
+        "end": 515.8,
+        "frames": 48,
+        "captions": false,
+        "interlacedFrames": 0,
+        "repeatFrames": 0
+      },
+      {
+        "at": 0.9,
+        "start": 660.6,
+        "end": 662.6,
+        "frames": 48,
+        "captions": false,
+        "interlacedFrames": 0,
+        "repeatFrames": 0
+      }
+    ],
+    "span": {
+      "start": 0.0,
+      "end": 734.0
+    },
+    "gop": 2.0,
+    "at": "2026-09-20T08:00:00Z"
+  }
 }

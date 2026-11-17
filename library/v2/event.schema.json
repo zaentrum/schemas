@@ -12,6 +12,10 @@
       "then": { "required": ["versionId", "accepted"] }
     },
     {
+      "if": { "not": { "properties": { "kind": { "const": "original-deleted" } }, "required": ["kind"] } },
+      "then": { "not": { "required": ["captionsRead"] } }
+    },
+    {
       "if": { "properties": { "kind": { "const": "package-superseded" } }, "required": ["kind"] },
       "then": { "required": ["versionId", "packageId", "supersededBy"] }
     },
@@ -74,7 +78,21 @@
       "items": {
         "type": "string",
         "pattern": "^[a-zA-Z][a-zA-Z0-9]*(:[A-Za-z0-9-]+)?$",
-        "description": "An essence property, or a property and one of its languages after a colon."
+        "not": { "pattern": "^(closedCaptions|interlaced)(:.*)?$" },
+        "description": "An essence property, or a property and one of its languages after a colon. Never closedCaptions or interlaced: an original that has closed captions or whose captions are not known, and one in fields, are kept (ADR-0015), and no person's answer lets one go."
+      }
+    },
+    "captionsRead": {
+      "type": "object",
+      "description": "Only on original-deleted: the read of the original's closed captions that allowed its deletion, where its record does not keep one — the catalog's, window by window. Every window decoded frames, none shows captions and none counted interlaced frames: a read that does not tell the captions, or shows them, allows no deletion (ADR-0015). A rebuild reads the original's essence as it tells it (libv2_records.essence_as_read), so a deletion it allowed costs no closed captions. Of the source the event names, or of the version's one source.",
+      "required": ["windows", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "windows": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/captionWindow" }, "minItems": 1, "anyOf": [{ "minItems": 6 }, { "maxItems": 1, "items": { "required": ["whole"] } }], "description": "The windows the original was read in, on its own timeline, by the plan of library/v2/caption-windows.json: the six, or the one read of the whole picture. A read of five without the start, made before the plan, tells nothing: the validator notes it, and the gate holds the deletion to what the records tell." },
+        "span": { "$ref": "defs.schema.json#/$defs/captionSpan" },
+        "gop": { "$ref": "defs.schema.json#/$defs/captionGop" },
+        "ffprobe": { "type": "string", "minLength": 1, "description": "The release of the ffprobe the original was read with." },
+        "at": { "$ref": "defs.schema.json#/$defs/timestamp", "description": "When it was read." }
       }
     }
   }
