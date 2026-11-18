@@ -50,8 +50,10 @@ tools/
   library-v2-upgrade.py            upgrade a v2 tree in place to the layout in which every record proves itself
   library-v2-sweep.py              find provable garbage in a v2 tree and, through a quarantine, remove it
   library-v2-fill-checksums.py     close the chains of the packages a migration adopted with their checksums pending
+  library-v2-mend.py               mend the packages whose picture plays early: their video edit list, as package.json says
   libv2_records.py                 the record logic the packager vendors: source, version, package, extra records
   test-library-v2-tools.py         prove the v2 tools do what they say
+  test-library-v2-mend.py          prove the mend changes what it says, and comes undone byte for byte
   testdata/libv2_records/          probes and manifests, and the records libv2_records.py writes from them
 ```
 
@@ -412,6 +414,30 @@ what it cannot do is prove a byte, so it is not verified, and its original is no
 `package.json` again with the file's hash in place of `pending` and nothing else of it changed, and
 `.complete` again over that. Only a migration writes a pending record; a packager closes the chain
 as it completes a package, and an extra's checksums are never pending.
+
+A second exception is a **mend**: a change to a package after it completed that no sample of its
+media takes part in — only boxes of a rendition's init segment, and only of a kind
+`package.schema.json` lists in `mend.kind` (today one, `avsync-editlist`: a video rendition's edit
+list whose `media_time` presented the picture early against its sound, set to 0). Like a fill it
+closes the chain again: the file is changed in place, same size; its line in `checksums.sha256` is
+written again with its new digest, `package.json` again with the checksums file's new hash and an
+entry in `mends` — `{kind, file, box, old, new, sha256Before, sha256After, at, by}`, nothing else of
+it changes — and `.complete` with it, so `sha256sum -c checksums.sha256` holds after a mend as
+before. The entries are the file's history: the first one's `sha256Before` is the hash it had as
+the package was written, each next one's `sha256Before` the one before's `sha256After`, with no
+gap, and the last one's `sha256After` is the digest the checksums list now — which tells a mended
+package from one made right, and a file changed with no entry still fails its line. Each entry
+changed the one field it names and nothing else: its `old` written back into the bytes it left
+gives the bytes of its `sha256Before`, newest first. A mend writes `checksums.sha256` first, then
+the file, then `package.json` and `.complete`, so no reader takes a mend stopped mid-way for a
+whole package: until `.complete` is written the chain does not hold. Mends of a library are run
+from one host: `library-v2-mend.py` holds the library's lock (`.work/migration/mends.lock`, `flock`)
+and refuses a file system that gives none, and it claims each version before it writes it
+(`.work/migration/claims/<versionId>.claim`, made only where there is none), so that two runs never
+write one version even where the lock does not hold across hosts. Undone, an
+entry goes — `mends` with it when it was the last — and the file, its line, `package.json` and
+`.complete` are again the bytes they were. `library-v2-mend.py` makes and undoes mends; a new kind
+is a change of the format.
 
 The checksums file therefore never lists `.complete`, `package.json` or itself — each holds the hash
 of the link below it — and it never lists the originals, which their source records' fixity covers
@@ -918,6 +944,26 @@ package that never finished, a version's or an extra's, and an extra its writer 
 
 v2 is a draft until a platform service adopts it. v1 stays published and unchanged; nothing
 migrates automatically. Every change is listed here; regenerate the examples after one.
+
+- **2026-11-16** — a mend. A package whose picture plays early against its sound because its
+  packager reset its video's first composition offset — taking the edit list the track had for a
+  missing one — can be put right without packaging it again: `package.json` gains `mends`, one entry
+  per change, `{kind, file, box, old, new, sha256Before, sha256After, at, by}`, all of them
+  required and no other, `kind` a closed list of one (`avsync-editlist`: the first media edit's
+  `media_time` of a video rendition's init segment, set to 0). The field is new and optional:
+  every record written before validates as it is, and the `$id`s are the published ones. A mend
+  closes the chain as a fill does — the file's line in `checksums.sha256`, `package.json`'s hash
+  of it and its `mends`, `.complete` — so the checksums hold after it. The validator holds each
+  entry to the checksums and the file: the entries of a file run with no gap, and the last one
+  ends at the digest `checksums.sha256` lists and at the file — a mended init segment is hashed
+  whatever is asked — and an `avsync-editlist` names a video rendition's init segment, a video
+  track's, whose edit list holds the `media_time` it wrote and whose `old` written back gives the
+  bytes of its `sha256Before`; a file changed with no entry fails its line as before.
+  `library-v2-mend.py` is new: it decides from a version's boxes and its source's stored probe
+  whether its picture is early by what its video edit list cuts, and mends it (`--apply`) or puts
+  it back byte for byte (`--undo`), journaled under `.work/migration/<run>/mends.jsonl` for the
+  catalog to note and verify each version it changed. `libv2_records.py` is unchanged: its
+  `chain_problems()`, `full` included, holds a mended version as it stands.
 
 - **2026-11-02** — styled subtitles as they are, with their fonts. A package carried every ASS/SSA
   subtitle as a WebVTT copy alone and none of the fonts the original carried, so its essence had no

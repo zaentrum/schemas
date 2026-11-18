@@ -90,6 +90,14 @@ with the bytes beside them, never about a document being up to date.
                original is finished by its checksums file, and one that never finished is a note;
                only a series' extra names a season, and only one the series' metadata lists;
                library.extras names extras that are there
+  mends        a package mended after it completed (package.json mends) names, entry by entry, an init
+               segment of one of its renditions that its checksums list, of a kind the schema lists; the
+               entries of a file run with no gap — each one made to the bytes the one before left — and
+               the last one ends at the digest the checksums list for the file now and at the file (an
+               init segment is small: it is hashed whatever is asked); an avsync-editlist names a video
+               rendition's, whose edit list holds the media_time it wrote. A mend writes the file's line
+               in the checksums again, so a mended file matches its line as any other, and one changed
+               with no entry fails it (--check-checksums)
   checksums    the checksums file matches its recorded hash and file count; a package adopted with
                its checksums pending has no checksums file yet and is a note, counted (pending) —
                and a problem with --no-pending, once a migration says every one is filled
@@ -227,6 +235,92 @@ def sha_file(p):
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return "sha256:" + h.hexdigest()
+
+
+def mp4_boxes(buf, off=0, end=None):
+    """(kind, payload start, end) of each ISO BMFF box in buf[off:end]. Raises ValueError at a box that
+    runs past its parent, or bytes after the last box that are none."""
+    end = len(buf) if end is None else end
+    out = []
+    while off + 8 <= end:
+        size, kind = int.from_bytes(buf[off:off + 4], "big"), buf[off + 4:off + 8]
+        hdr = 8
+        if size == 1:
+            if off + 16 > end:
+                raise ValueError(f"has a box {kind!r} at {off} that runs past its parent")
+            size, hdr = int.from_bytes(buf[off + 8:off + 16], "big"), 16
+        elif size == 0:
+            size = end - off
+        if size < hdr or off + size > end:
+            raise ValueError(f"has a box {kind!r} at {off} that runs past its parent")
+        out.append((kind, off + hdr, off + size))
+        off += size
+    if off != end:
+        raise ValueError(f"has {end - off} bytes at {off} that are no box")
+    return out
+
+
+def at_time(value):
+    """A record's date-time as a moment, or None when it is none: entries made in other time zones or
+    at other precisions are told apart by when they were made."""
+    try:
+        t = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
+
+
+INIT_MAX = 1 << 22  # an init segment is read whole, up to this
+MENDING = ".mending"  # what library-v2-mend.py names the file it writes beside one before it puts it in place
+
+
+def init_edit(buf):
+    """(handler, offset of the first media edit's media_time, its width, media_time) of an init segment
+    of one track as a packager writes it -- an ftyp and a moov at its top, every edit inside its box --
+    the offset None when the track has no media edit; or a str that says why buf is none."""
+    if len(buf) > INIT_MAX:
+        return f"is larger than an init segment ({INIT_MAX} bytes)"
+    try:
+        return init_boxes(buf)
+    except ValueError as e:
+        return str(e)
+
+
+def init_boxes(buf):
+    top = [k for k, s, e in mp4_boxes(buf)]
+    if top[:1] != [b"ftyp"] or top.count(b"moov") != 1 or not set(top) <= {b"ftyp", b"moov", b"free", b"skip"}:
+        return "is no init segment: an ftyp and a moov at its top"
+    moov = [(s, e) for k, s, e in mp4_boxes(buf) if k == b"moov"][0]
+    traks = [(s, e) for k, s, e in mp4_boxes(buf, *moov) if k == b"trak"]
+    if len(traks) != 1:
+        return f"has {len(traks)} tracks, one expected"
+    handler = None
+    for k, s, e in mp4_boxes(buf, *traks[0]):
+        if k == b"mdia":
+            for k2, s2, e2 in mp4_boxes(buf, s, e):
+                if k2 == b"hdlr" and s2 + 12 <= e2:
+                    handler = buf[s2 + 8:s2 + 12].decode("latin-1")
+    field = None
+    for k, s, e in mp4_boxes(buf, *traks[0]):
+        if k != b"edts":
+            continue
+        for k2, s2, e2 in mp4_boxes(buf, s, e):
+            if k2 != b"elst" or field:
+                continue
+            if s2 + 8 > e2:
+                return "has an edit list too short to hold its count"
+            version, count = buf[s2], int.from_bytes(buf[s2 + 4:s2 + 8], "big")
+            width = 8 if version == 1 else 4
+            if s2 + 8 + count * (2 * width + 4) > e2:
+                return "has an edit list whose entries run past its box"
+            p = s2 + 8
+            for _ in range(count):
+                media_time = int.from_bytes(buf[p + width:p + 2 * width], "big", signed=True)
+                if media_time != -1:
+                    field = (p + width, width, media_time)
+                    break
+                p += 2 * width + 4
+    return (handler,) + (field or (None, None, 0))
 
 
 def qh1(p):
@@ -1038,6 +1132,93 @@ class Checker:
             self.err(where, f"checksums file {cs['file']} does not match its recorded sha256")
         elif len(read_checksums(f)) != cs["files"]:
             self.err(where, f"checksums file lists {len(read_checksums(f))} files, the record says {cs['files']}")
+        self.mends(vp, pkg)
+
+    def mends(self, vp, pkg):
+        """What the package in vp was mended in after it completed, held to its checksums and its files.
+        A mend changes boxes of a rendition's init segment alone and writes the file's line in the
+        checksums again; its entries are the file's history, from the hash it had as the package was
+        written (the first one's sha256Before) to the one it has now, which the checksums list."""
+        entries = pkg.get("mends") or []
+        if not entries:
+            return
+        where = os.path.join(vp, "package.json")
+        cs = pkg["checksums"]
+        sums = os.path.join(vp, cs["file"])
+        if cs.get("pending") or not os.path.isfile(sums):
+            self.err(where, "a package whose checksums are pending is mended: a mend writes the mended file's line "
+                            "in the checksums again, so they are filled first (library-v2-fill-checksums.py)")
+            return
+        listed = read_checksums(sums)
+        ren = pkg["renditions"]
+        video = {r["dir"].rstrip("/") for r in ren["video"]}
+        every = video | {r["dir"].rstrip("/") for r in ren["audio"] + (ren.get("audioSurround") or [])}
+        by_file = {}
+        last = None
+        for i, m in enumerate(entries):
+            at = at_time(m["at"])
+            if at is None:
+                self.err(where, f"mends[{i}] says no moment it was made (its at, {m['at']!r}, is no date-time with its offset)")
+            elif last is not None and at < last:
+                self.err(where, f"mends[{i}] is dated before the one before it: mends are in the order they were done")
+            last = at or last
+            folder = m["file"].rsplit("/", 1)[0]
+            if m["kind"] == "avsync-editlist" and folder not in video:
+                self.err(where, f"mends[{i}] changes the edit list of {m['file']}, the init segment of no video "
+                                f"rendition of this package")
+            elif folder not in every:
+                self.err(where, f"mends[{i}] changes {m['file']}, the init segment of no rendition of this package")
+            by_file.setdefault(m["file"], []).append(m)
+        for rel, ms in sorted(by_file.items()):
+            if rel not in listed:
+                self.err(where, f"mends {rel}, which {cs['file']} does not list")
+                continue
+            for a, b in zip(ms, ms[1:]):
+                if b["sha256Before"] != a["sha256After"]:
+                    self.err(where, f"a mend of {rel} was made to bytes whose hash is {b['sha256Before']}, and the "
+                                    f"mend before it left {a['sha256After']}: a gap in its mends")
+            if ms[-1]["sha256After"] != "sha256:" + listed[rel]:
+                self.err(where, f"the last mend of {rel} left {ms[-1]['sha256After']}, and {cs['file']} lists "
+                                f"sha256:{listed[rel]}: the checksums were not written again after it, or the mend "
+                                f"is not the file's")
+            p = os.path.join(vp, rel)
+            if not os.path.isfile(p):
+                continue  # a listed file that is missing is said where the files are counted
+            now = sha_file(p)
+            if now != ms[-1]["sha256After"]:
+                self.err(p, f"hashes to {now}, and its last mend left {ms[-1]['sha256After']}: changed since, with no "
+                            f"entry in mends that says so")
+                continue
+            self.mends_lead_back(p, ms)
+
+    def mends_lead_back(self, p, ms):
+        """Each mend of the file p, newest first, changed the one field it names and nothing else: its old
+        value written back into the bytes it left gives the bytes it was made to, its sha256Before."""
+        with open(p, "rb") as f:
+            buf = f.read(INIT_MAX + 1)
+        for m in reversed(ms):
+            if "sha256:" + hashlib.sha256(buf).hexdigest() != m["sha256After"]:
+                return  # a gap, said above
+            edit = init_edit(buf)
+            if isinstance(edit, str):
+                self.err(p, f"{edit}, and its mends change its edit list")
+                return
+            handler, off, width, media_time = edit
+            if m["kind"] == "avsync-editlist" and handler != "vide":
+                self.err(p, f"its track's handler is {handler!r}, not a video track's ('vide'), and its mend changes "
+                            f"its edit list as a video rendition's")
+                return
+            if off is None or media_time != m["new"]:
+                self.err(p, f"its edit list's media_time is {media_time}, and its mend wrote {m['new']}")
+                return
+            try:
+                buf = buf[:off] + m["old"].to_bytes(width, "big", signed=True) + buf[off + width:]
+            except OverflowError:
+                buf = b""
+            if "sha256:" + hashlib.sha256(buf).hexdigest() != m["sha256Before"]:
+                self.err(p, f"its edit list's media_time put back to {m['old']}, it hashes to other bytes than its "
+                            f"mend's sha256Before: the mend changed more of the file than the field it names")
+                return
 
     def from_sidecars(self, vp, v, pkg, sources):
         """A subtitle made from a sidecar names the copy of it a source of this version keeps: one its
@@ -1084,6 +1265,10 @@ class Checker:
         records are checked always; the package files, which can be many and large, with
         --check-media and --check-checksums."""
         self.head(vp)
+        for name in sorted(os.listdir(vp)) + package_files(vp):
+            if name.endswith(MENDING):
+                self.err(os.path.join(vp, name), "a mend's file not yet put in place: a mend of the package stopped "
+                                                 "mid-way, or is under way (library-v2-mend.py finishes it)")
         sums = os.path.join(vp, SUMS)
         if not os.path.isfile(sums):
             return  # package() says so
