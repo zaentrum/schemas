@@ -19,8 +19,8 @@ every record the format has and the shapes a reader most needs to see:
            platform's: established with its original beside its first package, re-packaged into a
            new folder that keeps none — the original stays where it was — as the packager writes a
            package now, with a 5.1 companion, its HLS layout and a subtitle made from the copy its
-           source keeps of a subtitle file that came with the original; once the new package was
-           recorded the original was deleted from the first folder, and an event says so. Its file
+           source keeps of a subtitle file that came with the original; its picture carries closed
+           captions, so the deletion gate keeps the original in the first folder. Its file
            holds the third episode too, a double episode never split: the source covers both, the
            second first, and the third has no file of its own — its folder is its record and its
            projection, with its own title, overview and still, which names the second as the holder
@@ -75,7 +75,6 @@ EXTRA_PACKAGED = "2026-09-19T08:40:00Z"  # and the featurette's package complete
 TRAILER_FETCHED = "2026-09-19T07:30:00Z"  # the trailer link was downloaded
 TRAILER_PACKAGED = "2026-09-19T10:00:00Z"  # and the trailer taken in with a package of its own
 TRAILER_RETIRED = "2026-09-19T10:05:00Z"   # the extra that had kept it as its original alone, retired
-ORIGINAL_RETIRED = "2026-09-19T13:20:00Z"  # an original deleted from its version folder once its package was recorded
 TAKEN_IN = "2026-09-20T07:00:00Z"          # an original taken into its version folder before anything packaged it
 SCENE_TAKEN = "2026-09-19T09:00:00Z"       # a deleted scene taken in by the platform: only its package is kept
 
@@ -172,6 +171,26 @@ def essence(**kw):
     return base
 
 
+def caption_read(duration_s, captions=True, counted=False):
+    """The caption read of a picture by the plan (library/v2/caption-windows.json), over the span its probe gives
+    (0 to duration_s): its start, then 10, 30, 50, 70 and 90 % of it, each but the start at most 30 s short of its
+    end, 48 frames at 24 a second from each place, a keyframe every 2 s (its gop); the span it measured, the
+    probe's; counted, with the interlaced and repeating frames of each window, none."""
+    plan = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "library", "v2",
+                                       "caption-windows.json")))
+    places = [0.0] + [min(f * duration_s, duration_s - plan["tailS"]) for f in plan["at"]]
+    return {"windows": [{"at": f, "start": round(p, 3), "end": round(p + 2.0, 3), "frames": 48, "captions": captions,
+                         **({"interlacedFrames": 0, "repeatFrames": 0} if counted else {})}
+                        for f, p in zip([0.0, *plan["at"]], places)],
+            "span": {"start": 0.0, "end": duration_s}, "gop": 2.0}
+
+
+def picture_read(duration_s, captions=True, counted=False):
+    """A record's picture's keys of its caption read (caption_read): captionWindows, captionSpan, captionGop."""
+    read = caption_read(duration_s, captions, counted)
+    return {"captionWindows": read["windows"], "captionSpan": read["span"], "captionGop": read["gop"]}
+
+
 def video(index, codec, w, h, depth=8, hdr="sdr"):
     return {"index": index, "type": "video", "codec": codec, "language": None, "languageRaw": None, "title": None,
             "dispositions": {"default": True}, "profile": "Main" if depth == 8 else "Main 10", "level": None,
@@ -214,7 +233,10 @@ def probe_stream(st):
     if st["type"] == "audio":
         out["channels"] = st["channels"]
     if st["type"] == "video":
-        out.update(width=st.get("width"), height=st.get("height"))
+        out.update(width=st.get("width"), height=st.get("height"), start_time="0.000000",
+                   avg_frame_rate=st.get("frameRate") or "24/1", r_frame_rate=st.get("frameRate") or "24/1")
+        if st.get("fieldOrder") is not None:
+            out["field_order"] = st["fieldOrder"]
     return out
 
 
@@ -227,7 +249,8 @@ def source(item_dir, sid, name, streams, chapters, src_essence, duration_ms, qua
     or whether they still exist — that is the version's record and the events — nor where they came
     from: name is the one the library gives the file, and what the name it arrived under and its
     folder claimed is in labels, an edition among them."""
-    probe = {"format": {"filename": name, "duration": str(duration_ms / 1000)},
+    probe = {"format": {"filename": name, "format_name": "matroska,webm", "start_time": "0.000000",
+                        "duration": str(duration_ms / 1000)},
              "streams": [probe_stream(x) for x in streams],
              "chapters": [{"start_time": str(c["startMs"] / 1000), "end_time": str(c["endMs"] / 1000),
                            "tags": {"title": c["title"]}} for c in chapters]}
@@ -241,6 +264,7 @@ def source(item_dir, sid, name, streams, chapters, src_essence, duration_ms, qua
                    "folderEdition": folder_edition},
         "container": {"format": "matroska,webm", "durationMs": duration_ms, "bitrate": None, "title": None,
                       "muxingApp": None, "writingApp": None, "creationTime": None, "tags": {}},
+        "offList": [],
         "fidelity": {"class": "original", "fingerprint": fingerprint, "evidence": []},
         "streams": streams, "sidecars": [], "covers": [], "essence": src_essence,
         "probe": {"tool": "ffprobe", "version": None, "at": TAKEN, "file": f"sources/{sid}/ffprobe.json",
@@ -452,9 +476,12 @@ def movie():
                    recipe={"video": "hevc re-encode, 800p and 533p", "audio": "aac-lc 2ch 192k", "subtitles": None})
     # The original is gone. What the package failed to carry stays computable from the records
     # beside it; what a person agreed to lose is only ever here.
+    # Its record keeps no read of its closed captions; the catalog's read that allowed the deletion, window
+    # by window, is the event's: every window decoded frames, and none shows captions.
     event(mdir, DELETED, "original-deleted", sourceId=s1, versionId=v1, packageId=p1,
           reason="space on the archive volume",
-          accepted=["surround", "maxAudioChannels", "subtitleLanguages:en", "subtitleTracks"])
+          accepted=["surround", "maxAudioChannels", "subtitleLanguages:en", "subtitleTracks"],
+          captionsRead={**caption_read(734.0, captions=False, counted=True), "at": "2026-09-20T08:00:00Z"})
 
     # --- version two: the director's cut, in two files, both kept next to the package, each under the
     # name the library gives a part. What the names they arrived under and their folder claimed is in labels.
@@ -633,10 +660,13 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
     hls = None
     if platform:
         # both rungs are HEVC in PQ: the init segment of each carries the original's HDR10 static
-        # metadata, the encode's too
+        # metadata, the encode's too; and the stream of each the original's closed captions, the copy's
+        # as they were, the encode's as its encoder wrote them, read at the times of the source's windows,
+        # its timeline the original's
         for v, (label, encoder) in zip(ren["video"], (("source", "copy"), ("1440p", "hevc_nvenc"))):
             v.update(peakBitrateBps=v["bitrateBps"] * 2, videoRange="PQ", label=label, encoder=encoder,
-                     hdr10Metadata=True)
+                     hdr10Metadata=True, closedCaptions=True, captionWindows=caption_read(2700.0)["windows"],
+                     timestampOffset=0.0)
         ren["audio"][0].update(group="audio", name="English")
         ren["audioSurround"] = [{"id": "a1", "dir": "hls/a1", "codec": "ec-3", "language": "eng", "title": "",
                                  "default": True, "channels": 6, "bitrateBps": 640000, "segments": 15, "visible": True,
@@ -655,7 +685,7 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
         # the surround track and the HDR10 metadata of the copied stream are carried: only the codec is lost
         losses = [{"kind": "audio-codec", "detail": "eac3 -> aac/eac3", "sourceStreamIndex": 1}]
         pkg_essence = essence(maxAudioChannels=6, surround=True, maxVideoHeight=2160, videoBitDepth=10,
-                              hdr10Metadata=True, subtitleLanguages=["de"], subtitleTracks=1)
+                              hdr10Metadata=True, subtitleLanguages=["de"], subtitleTracks=1, closedCaptions=True)
         recipe = {"video": "hevc copy, and a 1440p encode", "audio": "aac-lc 2ch 192k, and the 5.1 track copied",
                   "subtitles": "sidecar srt -> webvtt"}
     for r in ren["video"] + ren["audio"] + ren.get("audioSurround", []):
@@ -668,7 +698,8 @@ def episode_version(edir, vid, pid, sid, original, tracks, ladder, created_at, p
 def episode_media(edir, eid, number, kind, covers=()):
     """One original of an episode and the versions made from it. kind says how the original came and
     stayed: kept beside its package; the platform's, established with its original and re-packaged, the
-    original then deleted; or taken in before anything packaged it. covers are the episodes after this one
+    original kept in the first folder for the closed captions its picture carries; or taken in before
+    anything packaged it. covers are the episodes after this one
     its file holds too, so that its source covers them, this episode first, and its name numbers the
     range. Returns the version that plays when the viewer does not choose."""
     sid = uid(eid, "source")
@@ -714,21 +745,23 @@ def episode_media(edir, eid, number, kind, covers=()):
         # package is derived. It was re-packaged into a new folder, which keeps no original — the original
         # stays in the version that holds it — so the new package is canonical, and an event says which
         # one took over. A German subtitle file came with the original: the source folder keeps a copy of
-        # it, and the second package made a subtitle of it. Once the second package was recorded, the
-        # original was deleted from the first folder, as the platform deletes every original after its
-        # package: an event names the version and the source whose original it was.
+        # it, and the second package made a subtitle of it. Its picture carries closed captions, an A53
+        # cc_data with each picture as broadcast sends them, which its caption windows showed (the probe
+        # beside the record says nothing of them): the deletion gate keeps an original that has them, so it
+        # stays in the first folder, though the platform deletes an original once its package is recorded.
         copy = sidecar("de")
-        finish_source(edir, src)
+        src["streams"][0].update(closedCaptions=True, **picture_read(2700.0, counted=True))
+        src["essence"].update(closedCaptions=True, closedCaptionsKnown=True)
         old, old_pkg = uid(eid, "version", "first"), uid(eid, "package", "first")
         primary, new_pkg = uid(eid, "version", "repackaged"), uid(eid, "package", "repackaged")
-        episode_version(edir, old, old_pkg, sid, src["file"]["name"], tracks, False, VERSIONED, PACKAGED, "derived")
+        original = place_original(os.path.join(edir, "versions", old), src, f"Example Show, {token}")
+        finish_source(edir, src)
+        episode_version(edir, old, old_pkg, sid, original, tracks, False, VERSIONED, PACKAGED, "derived")
         episode_version(edir, primary, new_pkg, sid, None, tracks, True, REPACKAGED, REPACKAGED, "canonical",
                         platform=copy)
         event(edir, SUPERSEDED, "package-superseded", by="packager example", versionId=old,
               packageId=old_pkg, supersededBy={"versionId": primary, "packageId": new_pkg},
               reason="re-packaged with a second rung")
-        event(edir, ORIGINAL_RETIRED, "original-deleted", by="catalog example (originals are deleted after packaging)",
-              versionId=old, sourceId=sid, reason="the package is the record once it is recorded", accepted=[])
     else:
         # taken in before anything packaged it: the version is its record and its original alone — no
         # package, no checksums, no .complete — until its first package is added to it. An English SDH

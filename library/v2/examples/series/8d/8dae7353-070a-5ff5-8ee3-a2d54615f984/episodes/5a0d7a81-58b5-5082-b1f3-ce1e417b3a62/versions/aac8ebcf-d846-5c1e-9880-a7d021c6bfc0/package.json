@@ -30,7 +30,53 @@
         "videoRange": "PQ",
         "label": "source",
         "encoder": "copy",
-        "hdr10Metadata": true
+        "hdr10Metadata": true,
+        "closedCaptions": true,
+        "captionWindows": [
+          {
+            "at": 0.0,
+            "start": 0.0,
+            "end": 2.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.1,
+            "start": 270.0,
+            "end": 272.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.3,
+            "start": 810.0,
+            "end": 812.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.5,
+            "start": 1350.0,
+            "end": 1352.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.7,
+            "start": 1890.0,
+            "end": 1892.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.9,
+            "start": 2430.0,
+            "end": 2432.0,
+            "frames": 48,
+            "captions": true
+          }
+        ],
+        "timestampOffset": 0.0
       },
       {
         "id": "v1",
@@ -49,7 +95,53 @@
         "videoRange": "PQ",
         "label": "1440p",
         "encoder": "hevc_nvenc",
-        "hdr10Metadata": true
+        "hdr10Metadata": true,
+        "closedCaptions": true,
+        "captionWindows": [
+          {
+            "at": 0.0,
+            "start": 0.0,
+            "end": 2.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.1,
+            "start": 270.0,
+            "end": 272.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.3,
+            "start": 810.0,
+            "end": 812.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.5,
+            "start": 1350.0,
+            "end": 1352.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.7,
+            "start": 1890.0,
+            "end": 1892.0,
+            "frames": 48,
+            "captions": true
+          },
+          {
+            "at": 0.9,
+            "start": 2430.0,
+            "end": 2432.0,
+            "frames": 48,
+            "captions": true
+          }
+        ],
+        "timestampOffset": 0.0
       }
     ],
     "audio": [
@@ -174,7 +266,7 @@
     "audioDescriptionTracks": 0,
     "sdhSubtitleLanguages": [],
     "forcedSubtitleLanguages": [],
-    "closedCaptions": false
+    "closedCaptions": true
   },
   "checksums": {
     "file": "checksums.sha256",

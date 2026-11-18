@@ -1,6 +1,8 @@
 {
   "format": {
     "filename": "original.mkv",
+    "format_name": "matroska,webm",
+    "start_time": "0.000000",
     "duration": "2700.0"
   },
   "streams": [
@@ -17,7 +19,11 @@
       },
       "tags": {},
       "width": 3840,
-      "height": 2160
+      "height": 2160,
+      "start_time": "0.000000",
+      "avg_frame_rate": "24/1",
+      "r_frame_rate": "24/1",
+      "field_order": "progressive"
     },
     {
       "index": 1,

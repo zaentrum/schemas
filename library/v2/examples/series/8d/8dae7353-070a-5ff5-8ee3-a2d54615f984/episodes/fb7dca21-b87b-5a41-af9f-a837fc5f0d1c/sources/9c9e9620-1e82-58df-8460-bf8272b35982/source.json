@@ -37,6 +37,7 @@
     "creationTime": null,
     "tags": {}
   },
+  "offList": [],
   "fidelity": {
     "class": "original",
     "fingerprint": "hevc/main10/10bit/hdr10/3840x2160",
@@ -228,7 +229,7 @@
     "version": null,
     "at": "2026-09-18T09:05:00Z",
     "file": "sources/9c9e9620-1e82-58df-8460-bf8272b35982/ffprobe.json",
-    "sha256": "sha256:8c24c343d6300f885a77abc86b0504dfaa0e11e15d52c923b792c5a377d8aa5a",
+    "sha256": "sha256:7b8ed4bd280af6719d457b45d40e7fc56024669de210d34285332e329267f109",
     "note": null
   }
 }

@@ -102,6 +102,37 @@
         "sha256At": { "$ref": "#/$defs/timestamp" }
       }
     },
+    "captionWindow": {
+      "type": "object",
+      "description": "One window a picture was read in for closed captions, by the plan of library/v2/caption-windows.json (libv2_records.caption_windows): the CAPTION_PACKETS packets decoded from the keyframe a seek to its place lands on, over the span the stored probe gives (its picture's start_time + duration) - the start, then 10, 30, 50, 70 and 90 % of it, each but the start at most 30 s short of its end -, a package rendition's at the same presentation times as its source's (moved by its timestampOffset); or the one read of the whole picture (whole: true, at 0, its packets counted), where two places lie closer than a window reaches (48 frame steps, the gop and 0.5 s), as on a span too short for six disjoint windows at most 30 s short of its end. A window that decoded no frame (frames 0) could not be read: the record logic writes it with captions false, a reader may write it with captions null, and either way it is a failed read, never one without captions. Windows tell none only by the plan: the six at their places (each first frame within max(10 s, gop + 0.5 s) of its place, or up to 30 s before it where its keyframe is the last before it (keyframeBefore); of a gop of 0 within one frame step and 0.5 s of it), on frames of their own, each of at least half its packets and 24 frames, or a whole read that decoded every packet but the stream's own leading pictures, of a read whose span is the plan's within one frame step and 0.5 s (libv2_records.windows_tell_none); any other read is not known.",
+      "required": ["at", "start", "end", "frames", "captions"],
+      "dependentRequired": { "whole": ["packets"] },
+      "additionalProperties": false,
+      "properties": {
+        "at": { "type": "number", "minimum": 0, "maximum": 1, "description": "The fraction of the picture's presentation span the window is placed at: 0 (the start, and a whole read), 0.1, 0.3, 0.5, 0.7 and 0.9 by the plan." },
+        "start": { "type": "number", "description": "The presentation time, in seconds on the timeline of the file or the package read, of its first decoded frame; of a window that could not be read, its point." },
+        "end": { "type": "number", "description": "The end of its last decoded frame, in the same seconds; of a window that could not be read, its point." },
+        "frames": { "type": "integer", "minimum": 0, "description": "How many frames it decoded; none: it could not be read." },
+        "captions": { "type": ["boolean", "null"], "description": "Whether a decoded frame exports A53 closed captions. Of a window that decoded none, false or null: it failed, and shows none; never true, and null of none that decoded frames." },
+        "interlacedFrames": { "type": "integer", "minimum": 0, "description": "How many of the frames it decoded were interlaced (ffprobe's interlaced_frame), at most frames. One or more puts a source's picture in fields (essence interlaced), and the deletion gate keeps it. Left out where the reader did not count them." },
+        "repeatFrames": { "type": "integer", "minimum": 0, "description": "How many of the frames it decoded repeat a field (ffprobe's repeat_pict), at most frames: a film carried with its pulldown flagged. Left out where the reader did not count them." },
+        "whole": { "const": true, "description": "A read of the whole picture, every packet decoded: alone, at 0, with its packets and its leading pictures. It stands for the plan's six windows, and tells none only where it is complete: packets - leading <= frames <= packets. Left out of a window." },
+        "packets": { "type": "integer", "minimum": 0, "description": "Of a whole read: the picture's packets, as the read counted them, at least frames." },
+        "leading": { "type": "integer", "minimum": 0, "maximum": 16, "description": "Of a whole read: the stream's own leading pictures - the packets before its first keyframe in decode order and the first gop's packets timed before that keyframe, at most 16. The read is complete where packets - leading <= frames <= packets; one that gives no leading is not complete." },
+        "keyframeBefore": { "type": "boolean", "description": "The packets from the window's seek, none decoded, show the keyframe its first frame was decoded from as the last one before its place: no keyframe lies between. Such a window counts up to 30 s before its place; one without it, within max(10 s, gop + 0.5 s) of it. Left out where the reader did not list them." }
+      }
+    },
+    "captionSpan": {
+      "type": "object",
+      "description": "The presentation span a read of a picture's closed captions measured (libv2_records.caption_windows): the first frame of its start to the end of its last video packet, in seconds on the file's own timeline. The plan of library/v2/caption-windows.json places the windows over the span the stored probe gives (its picture's start_time + duration), and a read whose span differs from it by more than one frame step and 0.5 s, at either end, tells nothing: the validator holds a deletion's read to its record's.",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "number", "description": "The first frame of the read's start, in seconds." },
+        "end": { "type": "number", "description": "The end of the picture's last video packet, in seconds." }
+      }
+    },
+    "captionGop": { "type": "number", "minimum": 0, "description": "The longest run between two keyframes among the picture's first 1200 packets, in seconds at its frame step, as the read found it; 0 where they list fewer than two keyframes. A window counts only where its first frame lies within max(10 s, this + 0.5 s) of its place (up to 30 s before it with keyframeBefore), and of a gop of 0 only at its place; where two places lie closer than 48 frame steps, this and 0.5 s, the picture is read whole." },
     "essence": {
       "type": "object",
       "description": "What a file or package carries, reduced to the properties that cannot be recovered once lost. Comparing a package's essence with its original's is the check before the original is deleted.",
@@ -116,7 +147,7 @@
         "hdr10Metadata": { "type": "boolean" },
         "dolbyVision": { "type": "boolean" },
         "stereo3d": { "type": "boolean" },
-        "interlaced": { "type": "boolean" },
+        "interlaced": { "type": "boolean", "description": "Of a file: its picture is marked as fields (a field order of tt, bb, tb or bt), or a caption window of it counted interlaced frames. The deletion gate keeps an original so marked, one whose picture has any field order but progressive (none given among them), one a package's scan found anything but progressive in, and one off the closed lists of how closed captions and fields are carried that the record logic keeps (libv2_records.CONTAINERS, VIDEO_CODECS, SUBTITLE_CODECS, DATA_CODECS, DATA_TAGS, CAPTION_CODECS, CAPTION_TAGS, the chapter track of an MP4), the same as the analyzer's." },
         "audioLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true },
         "subtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true },
         "subtitleTracks": { "type": "integer", "minimum": 0 },
@@ -129,7 +160,9 @@
         "audioDescriptionTracks": { "type": "integer", "minimum": 0 },
         "sdhSubtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true },
         "forcedSubtitleLanguages": { "type": "array", "items": { "$ref": "#/$defs/language" }, "uniqueItems": true, "description": "Includes signs-and-songs tracks." },
-        "closedCaptions": { "type": "boolean" }
+        "closedCaptions": { "type": "boolean", "description": "Of a file: its picture carries embedded closed captions (CEA-608/708), or a stream of it is closed captions of its own (eia_608, a c608 or c708 track) — of one whose captions are not known (no closedCaptionsKnown), false says none were seen, not that there are none. Of a package: its top video rendition's own stream carries them." },
+        "closedCaptionsKnown": { "const": true, "description": "Of a file: its closed captions are told — a stream of it is closed captions of its own, its picture's packets carry a caption signature (captionSignature), or its picture's caption read tells them: a window shows them, or the read tells none by the plan of library/v2/caption-windows.json, of a file on the closed lists of how closed captions and fields are carried that the record logic keeps (libv2_records.CONTAINERS, VIDEO_CODECS, SUBTITLE_CODECS, DATA_CODECS, DATA_TAGS, CAPTION_CODECS, CAPTION_TAGS, the chapter track of an MP4), the same as the analyzer's —, so closedCaptions is a finding either way; left out otherwise: its windows were not read, one could not be read and none shows them, as of every record written before 2026-11-16, its file is off the lists (a source record's offList), whose captions are unknown, or its picture is HEVC, whose suffix SEI its decoder does not read, and its packets were not read whole for a caption signature (captionSignature false). The deletion gate keeps an original that has closed captions, or whose captions are not known. A package's essence never says it." },
+        "scan": { "type": "string", "minLength": 1, "description": "Of a package: what its scan says was done of its picture as far as fields go (package.schema.json scan.done), in the transcoder's words, one not known here kept as it is. Left out where the package's manifest says nothing of it, and in a file's essence, whose fields are interlaced. Not read by the deletion gate." }
       }
     },
     "ownership": {
